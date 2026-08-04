@@ -4,8 +4,10 @@ using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Infrastructure.DependencyInjection;
 using GymOS.Platform.Infrastructure.DependencyInjection;
 using GymOS.Platform.Infrastructure.Persistence;
+using GymOS.Platform.Infrastructure.Persistence.Seeding;
 using GymOS.WebApi.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
@@ -78,6 +80,20 @@ try
 
     var app = builder.Build();
 
+    // Development convenience: apply migrations at startup when configured
+    // (production applies them from the deployment pipeline). The identity catalog
+    // sync always runs — idempotent, and it skips with a warning when migrations
+    // are pending (AD-22 declare-and-validate).
+    using (IServiceScope startupScope = app.Services.CreateScope())
+    {
+        if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
+        {
+            await startupScope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
+        }
+
+        await startupScope.ServiceProvider.GetRequiredService<PlatformIdentitySeeder>().SeedAsync(CancellationToken.None);
+    }
+
     app.UseMiddleware<CorrelationMiddleware>();
     app.UseSerilogRequestLogging();
 
@@ -85,7 +101,7 @@ try
     app.MapHealthChecks("/health/ready");
     app.MapOpenApi();
 
-    app.Run();
+    await app.RunAsync();
 }
 catch (Exception exception)
 {

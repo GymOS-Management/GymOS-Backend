@@ -34,6 +34,10 @@ dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
 # GymOS is C#-only by policy; the idiomatic names win.
 dotnet_diagnostic.CA1716.severity = none
 
+# CA1711 reserves the 'Permission' suffix for System.Security types; in GymOS,
+# Permission is the ubiquitous-language domain concept (AD-5/AD-22).
+dotnet_code_quality.CA1711.allowed_suffixes = Permission
+
 # var — types must be apparent
 csharp_style_var_for_built_in_types = false:suggestion
 csharp_style_var_when_type_is_apparent = true:suggestion

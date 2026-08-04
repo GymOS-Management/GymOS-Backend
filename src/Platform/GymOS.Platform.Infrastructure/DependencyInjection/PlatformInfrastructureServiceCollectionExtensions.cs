@@ -1,5 +1,7 @@
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence;
+using GymOS.Platform.Infrastructure.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,15 +26,19 @@ public static class PlatformInfrastructureServiceCollectionExtensions
                 "Connection string 'Database' is not configured. Set ConnectionStrings:Database " +
                 "via appsettings, environment (ConnectionStrings__Database), or the secret store.");
 
-        // Scoped: the interceptor reads the per-request ICorrelationContext. The
-        // AddDbContext options callback receives the scoped provider, so resolution
-        // below stays within the current request scope.
+        // Scoped: the outbox interceptor reads the per-request ICorrelationContext.
+        // The AddDbContext options callback receives the scoped provider, so
+        // resolution below stays within the current request scope.
         services.TryAddScoped<OutboxSaveChangesInterceptor>();
+        services.TryAddScoped<AuditableTimestampsInterceptor>();
+        services.TryAddScoped<PlatformIdentitySeeder>();
 
         services.AddDbContext<AppDbContext>((provider, options) => options
             .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
             .UseSnakeCaseNamingConvention()
-            .AddInterceptors(provider.GetRequiredService<OutboxSaveChangesInterceptor>()));
+            .AddInterceptors(
+                provider.GetRequiredService<AuditableTimestampsInterceptor>(),
+                provider.GetRequiredService<OutboxSaveChangesInterceptor>()));
 
         return services;
     }
