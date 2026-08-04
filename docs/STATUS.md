@@ -17,7 +17,7 @@ before resuming work on any machine.
 | **M1.3 — permission pipeline, users/roles endpoints, audit interceptor, OpenAPI diff gate** | ✅ complete + release-reviewed — **256 tests green**, verified live |
 | **Pre-M2 hardening** (write convention, optimistic concurrency, business-rule framework, API standards, playbook) | ✅ complete — **337 tests green**, verified live |
 | **M2 — gym management** (gyms CRUD, suspend/delete, branding, gym detail) | ⬅ **NEXT** — read `docs/M2_READINESS.md` first |
-| **Members domain design** (business specification, no code) | ✅ complete — `docs/Domain/MEMBERS-DOMAIN-DESIGN.md`. **8 blocking product decisions await the owner before Members implementation.** |
+| **Members domain** (business specification, no code) | ✅ **FROZEN** — `docs/Domain/MEMBERS-DOMAIN-DESIGN.md`. 11 product decisions approved 2026-08-05; implementation may begin. 4 legal-review items deferred (mechanism to build, values from counsel). |
 | M3+ — per approved roadmap (subscriptions, feature flags, dashboard, …) | later |
 
 ## M1.2 as built
@@ -177,10 +177,13 @@ Read `docs/M2_READINESS.md` for the full assessment; the short version:
   columns exist is the expensive version.
 - **Write the RLS startup validation (R14) with the first tenant-scoped entity.** R14 has never run;
   a missed policy is a cross-tenant leak.
-- **Resolve the blocking Open Product Decisions** in `docs/Domain/MEMBERS-DOMAIN-DESIGN.md` §20 with
-  the product owner: freeze policy, what counts as one visit, grace periods and door-level financial
-  consequences, upgrade proration, health data, multi-location scope, and cancellation terms. Four of
-  them need legal counsel. Members implementation cannot start without them.
+- **The Members domain is frozen** (`docs/Domain/MEMBERS-DOMAIN-DESIGN.md`). Implementation follows it
+  exactly; a change needs a decision recorded in its §20 register first. Note the guardrails in its
+  §19 — seventeen things an implementation must not quietly undo, chief among them: Membership Type and
+  Membership Instance stay separate, Member Numbers are never derived or reused, no age is hard-coded,
+  and no medical detail is stored anywhere.
+- **Before a live gym uses it:** populate the legal values (§20.1–20.3, §20.6) from counsel, settle
+  merge policy (§20.9), and tell the gym owner in writing about the offline-gateway limitation (§11.10).
 
 ## Standing rules (non-negotiable, enforced)
 
