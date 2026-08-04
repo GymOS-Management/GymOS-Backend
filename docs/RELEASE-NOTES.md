@@ -2,6 +2,68 @@
 
 ---
 
+## Pre-M2 — Engineering Hardening
+
+**Suggested version:** `0.4.0`
+**Status:** complete. Full assessment in [M2_READINESS.md](M2_READINESS.md).
+
+No business module. This milestone finalized the API contract, the concurrency model, and the
+engineering standards *before* the first client is generated — because every change here is free today
+and breaking afterwards.
+
+### Added
+
+- **Optimistic concurrency**: `rowVersion` on mutable resources, strong `ETag`, `If-Match` required on
+  `PUT`, `409` with `retryable: false` on a stale version, `400` on a malformed validator, `428` when
+  the precondition is absent. Backed by PostgreSQL `xmin` rather than a maintained column.
+- **Business rule framework**: `IBusinessRule`, `BusinessRules.Check`/`Validate`,
+  `BusinessRuleViolationException`, and `BusinessRuleAssert` with a code-convention assertion.
+- **`docs/BusinessRules/`** — 11 module documents (Members … Reports), each with Purpose, Entities,
+  Business Rules, Invariants, Future Rules, Dependencies, and Open Questions.
+- **`docs/Engineering/API_STANDARDS.md`** and **`docs/ENGINEERING_PLAYBOOK.md`**.
+- **`DomainEventConventionTests`** enforcing R9 across every production assembly: naming, versioning,
+  per-instance identity, platform-wide uniqueness, past tense, immutability.
+- **`ConcurrencyModelTests`** asserting every mutable entity has a concurrency token, or a reasoned
+  exemption — the gap a behavioral test cannot see.
+
+### Changed
+
+- **Write responses return the resource.** `POST` → `201` + `Location` + resource; `PUT` and action
+  endpoints → `200` + resource; `DELETE` and resource-less actions → `204`. Previously all `204`.
+  Breaking, and made now precisely because it is free before the first generated client.
+- `UserDetail` carries `rowVersion` (additive).
+- `DomainException` is unsealed so `BusinessRuleViolationException` derives from it — one exception
+  strategy, and every existing `catch (DomainException)` keeps working.
+- `User.Create` validates email through the rule framework rather than an inline throw.
+- `PermissionAuthorizationHandler` uses the request's cancellation token.
+
+### Fixed
+
+- **A write that changed only child rows did not advance the aggregate's version**, so two
+  administrators editing the same role set both succeeded — last-write-wins on the operation most
+  likely to be edited concurrently. `MarkAggregateChanged` closes it, and the rule is documented for
+  every future aggregate.
+- An audit entry whose only change was the row timestamp is no longer written; a diff saying "the
+  timestamp moved" tells a reader nothing.
+- The past-tense event-name check rejected `user.locked_out` — the test was wrong about English, not
+  the event.
+
+### Known Limitations
+
+Carried from M1: no outbox processor, no retention job, no account activation, and reverse-proxy
+configuration untested by any automated test. New to note: **`Money` (AD-42) is not built** and must be
+before anything touches currency, and **RLS (R14) has never run** — write its startup validation with
+the first tenant-scoped entity.
+
+### Testing Summary
+
+**337 tests** (up from 256): SharedKernel 30, Domain 42, BuildingBlocks 14, Application 66,
+Architecture 46, Infrastructure 62, Integration 77. All gates green. Write convention and concurrency
+verified live against PostgreSQL 17: `201`+`Location`+`ETag`, `428` without `If-Match`, `200` with a
+fresh version, `409` with `retryable: false` on a stale one, `400` on a weak validator.
+
+---
+
 ## M1 — Identity, Authentication & Access Control
 
 **Milestones:** M1.1 (identity domain) · M1.2 (auth services & endpoints) · M1.3 (permission

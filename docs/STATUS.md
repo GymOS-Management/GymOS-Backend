@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-05 · after the M1.3 release review
+**Last updated:** 2026-08-05 · after the pre-M2 hardening milestone
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -15,7 +15,8 @@ before resuming work on any machine.
 | **M1.1 — identity domain** (User/Role/Permission/RefreshToken aggregates, platform schema migration, declare-and-validate seeder) | ✅ complete — 69 tests green |
 | **M1.2 — auth services & endpoints** (Argon2id, JWT + rotating refresh tokens, `/api/v1/auth`, SuperAdmin seed) | ✅ complete — 159 tests green, verified live |
 | **M1.3 — permission pipeline, users/roles endpoints, audit interceptor, OpenAPI diff gate** | ✅ complete + release-reviewed — **256 tests green**, verified live |
-| **M2 — gym management** (gyms CRUD, suspend/delete, branding, gym detail) | ⬅ **NEXT** |
+| **Pre-M2 hardening** (write convention, optimistic concurrency, business-rule framework, API standards, playbook) | ✅ complete — **337 tests green**, verified live |
+| **M2 — gym management** (gyms CRUD, suspend/delete, branding, gym detail) | ⬅ **NEXT** — read `docs/M2_READINESS.md` first |
 | M3+ — per approved roadmap (subscriptions, feature flags, dashboard, …) | later |
 
 ## M1.2 as built
@@ -150,6 +151,34 @@ Adds two migrations: `AddAuditLog` (creates `platform.audit_logs`) and `Partitio
   not yet authenticated, so `ICurrentUser` is empty. The user is identified by `entity_id`
   and `user_email`. Filtering the trail by `userId` will not return sign-ins.
 
+## Pre-M2 hardening as built
+
+Read `docs/M2_READINESS.md` for the full assessment; the short version:
+
+1. **Write responses** return the resource (`201`/`200`), not `204`. One helper, `WriteResults`,
+   owns the convention. Three documented exceptions.
+2. **Optimistic concurrency** everywhere: `rowVersion` + strong `ETag`, `If-Match` required on PUT
+   (`428` without), `409` with `retryable: false` on a stale version, `400` on a malformed one.
+   **A write that changes only child rows must call `MarkAggregateChanged`** or the aggregate's
+   version never moves — that gap was real and is now covered by a test.
+3. **Business rule framework** in SharedKernel (`IBusinessRule`, `BusinessRules`,
+   `BusinessRuleViolationException`) plus `BusinessRuleAssert`. `DomainException` is unsealed so a
+   broken rule is one exception strategy, not two. Adopted for a real rule, not left speculative.
+4. **`docs/BusinessRules/`** — 11 module documents, drafts with assumptions marked `(?)`.
+5. **`docs/Engineering/API_STANDARDS.md`** and **`docs/ENGINEERING_PLAYBOOK.md`** are the standing
+   references for anything the tests cannot check.
+6. **R9 enforced**: `DomainEventConventionTests` checks event naming, versioning, uniqueness, and
+   immutability across every production assembly.
+
+### Do these before M2 code, in this order
+
+- **Build `Money` (AD-42) before anything touches currency.** Retrofitting it after `decimal`
+  columns exist is the expensive version.
+- **Write the RLS startup validation (R14) with the first tenant-scoped entity.** R14 has never run;
+  a missed policy is a cross-tenant leak.
+- **Answer the Open Questions in `BusinessRules/Members.md` and `Memberships.md`** with the product
+  owner. Several change entity shape, and health data needs legal counsel.
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -181,7 +210,7 @@ git clone https://github.com/GymOS-Management/GymOS-Backend
 cd GymOS-Backend
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d --wait        # PostgreSQL 17
-dotnet test GymOS.Backend.slnx     # expect 256 green (needs Docker for integration tests)
+dotnet test GymOS.Backend.slnx     # expect 337 green (needs Docker for integration tests)
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
