@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-04 · after M1.3 (uncommitted working tree — M1.2 and M1.3 both unstaged)
+**Last updated:** 2026-08-05 · after the M1.3 release review
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -14,7 +14,7 @@ before resuming work on any machine.
 | **M0 — engineering foundation** (skeleton, architecture/package law, kernel + CQRS dispatcher, PostgreSQL/EF/outbox, Docker, logging/correlation/OTel, Testcontainers, CI) | ✅ complete |
 | **M1.1 — identity domain** (User/Role/Permission/RefreshToken aggregates, platform schema migration, declare-and-validate seeder) | ✅ complete — 69 tests green |
 | **M1.2 — auth services & endpoints** (Argon2id, JWT + rotating refresh tokens, `/api/v1/auth`, SuperAdmin seed) | ✅ complete — 159 tests green, verified live |
-| **M1.3 — permission pipeline, users/roles endpoints, audit interceptor, OpenAPI diff gate** | ✅ complete — **220 tests green**, verified live |
+| **M1.3 — permission pipeline, users/roles endpoints, audit interceptor, OpenAPI diff gate** | ✅ complete + release-reviewed — **256 tests green**, verified live |
 | **M2 — gym management** (gyms CRUD, suspend/delete, branding, gym detail) | ⬅ **NEXT** |
 | M3+ — per approved roadmap (subscriptions, feature flags, dashboard, …) | later |
 
@@ -77,7 +77,8 @@ All five agreed items landed. No schema change was needed — M1.1's `users` and
 
 ## M1.3 as built
 
-Adds one migration (`AddAuditLog`) — `platform.audit_logs`.
+Adds two migrations: `AddAuditLog` (creates `platform.audit_logs`) and `PartitionAuditLogs`
+(converts it to monthly range partitions).
 
 1. **Permission pipeline, both layers (AD-5).** Endpoint policies are produced on demand by
    `PermissionPolicyProvider`, so `RequireAuthorization("users.manage")` needs no
@@ -106,6 +107,15 @@ Adds one migration (`AddAuditLog`) — `platform.audit_logs`.
    `git diff contracts/openapi-v1.json`. It fails on *any* change by design — the review is
    the gate, not a tool guessing which changes are breaking.
 6. **Outbox `user_id` is now stamped** from `ICurrentUser` (closes the M1.2 open item).
+7. **Audit partitioning** (added by the release review) — monthly range partitions on
+   `created_at_utc`, a maintenance function creating months ahead of need, and a DEFAULT
+   partition so an audit write can never fail. See `docs/RELEASE-NOTES.md`.
+8. **Account lifecycle** (added by the release review) — `UserStatusTransitions` is now the
+   single transition table; `User` routes every status change through it. `Locked` and
+   `Deleted` are deliberately *not* states, with the reasoning recorded on that type.
+9. **Forwarded headers** (added by the release review) — opt-in, topology-declared, off by
+   default. Required in any proxied deployment or the rate limiter degrades to one bucket for
+   all callers and audit rows all record the proxy's address.
 
 ### Decisions and traps found during M1.3
 
@@ -171,7 +181,7 @@ git clone https://github.com/GymOS-Management/GymOS-Backend
 cd GymOS-Backend
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d --wait        # PostgreSQL 17
-dotnet test GymOS.Backend.slnx     # expect 220 green (needs Docker for integration tests)
+dotnet test GymOS.Backend.slnx     # expect 256 green (needs Docker for integration tests)
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
@@ -198,12 +208,12 @@ matching `docker-compose.yml` (dev-only).
 
 - Outbox **processor** (delivery to handlers with SKIP LOCKED claiming) not built yet —
   capture side only; lands with the first event handler need.
-- **`platform.audit_logs` is not partitioned yet.** ARCHITECTURE.md §2.6 specifies monthly
-  range partitions; the table is created as an ordinary one because partition DDL cannot be
-  expressed through generated EF migrations, and partitioning is only meaningful alongside the
-  retention/purge job that detaches old partitions. Converting later needs a data migration —
-  cheap now (no production data), so **do it with the retention job and before go-live**, not
-  after.
+- **`platform.audit_logs` is partitioned** (monthly range on `created_at_utc`, migration
+  `PartitionAuditLogs`). Future partitions are created by `platform.ensure_audit_log_partitions`,
+  called at startup by `AuditLogPartitionMaintainer`; move that call onto the retention job's
+  schedule when the job runner lands, since creating upcoming partitions and detaching expired
+  ones are two halves of one policy. A DEFAULT partition means an audit write can never fail;
+  rows that land there must be pruned with `DELETE` rather than `DETACH`.
 - **Permission resolution costs one query per authenticated request** (memoized per request).
   Deliberate: it buys immediate revocation. The cache-with-invalidation version belongs with
   the AD-45 settings/cache work, and should not be added before it is measured.
