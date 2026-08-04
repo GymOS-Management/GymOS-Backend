@@ -44,12 +44,41 @@ public sealed class User : AggregateRoot, IAuditable
 
     public string? SuspensionReason { get; private set; }
 
+    /// <summary>
+    /// Consecutive failures since the last success. Reset on a successful sign-in and on any
+    /// password change; cleared when a lockout is applied, so the counter measures the current
+    /// streak rather than accumulating for the life of the account.
+    /// </summary>
     public int FailedLoginAttempts { get; private set; }
 
+    /// <summary>
+    /// End of the current lockout window, or <see langword="null"/> when not locked out.
+    ///
+    /// Lockout is a self-expiring condition, not a lifecycle state — see
+    /// <see cref="UserStatusTransitions"/> for why it is a timestamp and not a
+    /// <see cref="UserStatus"/> member. Read it through <see cref="IsLockedOut"/> so the
+    /// comparison against "now" stays in one place.
+    /// </summary>
     public DateTimeOffset? LockedOutUntilUtc { get; private set; }
 
+    /// <summary>
+    /// Last successful sign-in.
+    ///
+    /// There is deliberately no companion <c>LastActivityAtUtc</c>. Recording it faithfully
+    /// means writing to this row on every authenticated request, which turns every read into a
+    /// write, puts every concurrent request for one administrator in contention on a single row,
+    /// and defeats the request-scoped snapshot that keeps authorization to one query. The
+    /// question it answers is already answerable: <c>platform.audit_logs</c> carries
+    /// <c>user_id</c> and <c>created_at_utc</c>, so "when was this administrator last active"
+    /// is a query against data the platform already keeps. If a live presence indicator is ever
+    /// wanted, the shape is a throttled write or a read model — not a column on the aggregate.
+    /// </summary>
     public DateTimeOffset? LastLoginAtUtc { get; private set; }
 
+    /// <summary>
+    /// When the password was last set. Also the reference point for rejecting access tokens
+    /// issued before a password change, alongside <see cref="SecurityStamp"/>.
+    /// </summary>
     public DateTimeOffset? PasswordChangedAtUtc { get; private set; }
 
     /// <summary>Rotates on password change and suspension — kills all sessions (AD-4).</summary>
@@ -115,9 +144,11 @@ public sealed class User : AggregateRoot, IAuditable
         FailedLoginAttempts = 0;
         LockedOutUntilUtc = null;
 
+        // Setting the first password *is* activation (UserStatusTransitions). For an account
+        // that is already Active this is an ordinary password change and no transition occurs.
         if (Status == UserStatus.PendingActivation)
         {
-            Status = UserStatus.Active;
+            TransitionTo(UserStatus.Active);
         }
 
         Raise(new UserPasswordChanged(Id));
@@ -149,29 +180,35 @@ public sealed class User : AggregateRoot, IAuditable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
-        if (Status == UserStatus.Suspended)
-        {
-            throw new DomainException("The user is already suspended.");
-        }
-
-        Status = UserStatus.Suspended;
+        TransitionTo(UserStatus.Suspended);
         SuspensionReason = reason;
+
+        // Rotating the stamp is what makes suspension immediate: outstanding access tokens stop
+        // validating on their next use rather than surviving to expiry (AD-4).
         SecurityStamp = Guid.NewGuid();
         Raise(new UserSuspended(Id, reason));
     }
 
     public void Reactivate(DateTimeOffset now)
     {
-        if (Status != UserStatus.Suspended)
-        {
-            throw new DomainException("Only a suspended user can be reactivated.");
-        }
+        // Back to where the account was, not blindly to Active: an invitation that was suspended
+        // before it was ever used returns to PendingActivation.
+        TransitionTo(PasswordHash is null ? UserStatus.PendingActivation : UserStatus.Active);
 
-        Status = PasswordHash is null ? UserStatus.PendingActivation : UserStatus.Active;
         SuspensionReason = null;
         FailedLoginAttempts = 0;
         LockedOutUntilUtc = null;
         Raise(new UserReactivated(Id));
+    }
+
+    /// <summary>
+    /// The only place <see cref="Status"/> is assigned, so every change is checked against the
+    /// transition table (<see cref="UserStatusTransitions"/>).
+    /// </summary>
+    private void TransitionTo(UserStatus target)
+    {
+        UserStatusTransitions.EnsureAllowed(Status, target);
+        Status = target;
     }
 
     /// <summary>Idempotent: assigning an already-held role is a no-op (no event).</summary>
