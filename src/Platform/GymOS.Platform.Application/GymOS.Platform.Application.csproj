@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    RESPONSIBILITY: Platform use cases — commands, queries, validators, and DTOs for
+    gym management, subscriptions, platform users, feature flags, settings. (M1+.)
+    DEPENDENCIES: Platform.Domain + BuildingBlocks.Application.
+    Never references any Infrastructure project (rule R7).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\GymOS.Platform.Domain\GymOS.Platform.Domain.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\GymOS.BuildingBlocks.Application\GymOS.BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>

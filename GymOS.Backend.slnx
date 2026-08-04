@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/BuildingBlocks/">
+    <Project Path="src/BuildingBlocks/GymOS.BuildingBlocks.Application/GymOS.BuildingBlocks.Application.csproj" />
+    <Project Path="src/BuildingBlocks/GymOS.BuildingBlocks.Infrastructure/GymOS.BuildingBlocks.Infrastructure.csproj" />
+    <Project Path="src/BuildingBlocks/GymOS.SharedKernel/GymOS.SharedKernel.csproj" />
+  </Folder>
+  <Folder Name="/src/Host/">
+    <Project Path="src/Host/GymOS.WebApi/GymOS.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/src/Platform/">
+    <Project Path="src/Platform/GymOS.Platform.Application/GymOS.Platform.Application.csproj" />
+    <Project Path="src/Platform/GymOS.Platform.Domain/GymOS.Platform.Domain.csproj" />
+    <Project Path="src/Platform/GymOS.Platform.Infrastructure/GymOS.Platform.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GymOS.ArchitectureTests/GymOS.ArchitectureTests.csproj" />
+  </Folder>
+</Solution>

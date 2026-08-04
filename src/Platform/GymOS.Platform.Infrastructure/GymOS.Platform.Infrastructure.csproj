@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    RESPONSIBILITY: Platform persistence and services — EF configurations for the
+    `platform` schema, seeding (roles, permissions, features), identity services
+    (Argon2id, JWT, refresh tokens), settings provider. (M1+.)
+    DEPENDENCIES: Platform.Application (implements its interfaces)
+    + BuildingBlocks.Infrastructure (shared EF conventions, outbox).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\GymOS.Platform.Application\GymOS.Platform.Application.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\GymOS.BuildingBlocks.Infrastructure\GymOS.BuildingBlocks.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

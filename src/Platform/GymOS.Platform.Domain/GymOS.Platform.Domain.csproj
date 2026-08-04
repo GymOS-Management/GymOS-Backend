@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    RESPONSIBILITY: Platform domain — Gym, Subscription, Plan, Invoice, User/Role,
+    Feature, PlatformSetting aggregates and their invariants. (M1+.)
+    DEPENDENCIES: GymOS.SharedKernel only. No Application, no Infrastructure,
+    no EF Core — ever (rule R7, enforced by architecture tests).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\GymOS.SharedKernel\GymOS.SharedKernel.csproj" />
+  </ItemGroup>
+</Project>

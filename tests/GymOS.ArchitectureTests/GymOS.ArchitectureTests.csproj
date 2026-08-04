@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    RESPONSIBILITY: Executable architecture law (rules R6/R7/R8 from
+    ARCHITECTURE-ADDENDUM.md §8). Two enforcement layers:
+      1. LayerDependencyTests  — type-level dependencies via NetArchTest.
+      2. ProjectReferenceTests — csproj-level references against an explicit
+                                 allowed-graph table; unknown projects fail.
+    References every production assembly so all types are inspectable.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="NetArchTest.Rules" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BuildingBlocks\GymOS.SharedKernel\GymOS.SharedKernel.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\GymOS.BuildingBlocks.Application\GymOS.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\GymOS.BuildingBlocks.Infrastructure\GymOS.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Platform\GymOS.Platform.Domain\GymOS.Platform.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Platform\GymOS.Platform.Application\GymOS.Platform.Application.csproj" />
+    <ProjectReference Include="..\..\src\Platform\GymOS.Platform.Infrastructure\GymOS.Platform.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

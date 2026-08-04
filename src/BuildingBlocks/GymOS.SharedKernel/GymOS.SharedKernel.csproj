@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    RESPONSIBILITY: Domain primitives shared by every module — Entity, AggregateRoot,
+    DomainEvent, Result, value objects, and the IModule contract. (Land in M0.2+.)
+    DEPENDENCIES: none, ever. This is the bottom of the dependency graph;
+    enforced by GymOS.ArchitectureTests.
+  -->
+</Project>

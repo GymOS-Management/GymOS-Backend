@@ -1,0 +1,30 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+TestResults/
+*.binlog
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Secrets — never committed; use user-secrets / Key Vault
+*.pfx
+appsettings.*.Local.json
+
+# Frontend (future)
+node_modules/
+.next/
+
+# Docker local state
+.docker-data/

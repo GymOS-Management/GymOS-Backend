@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    RESPONSIBILITY: Application-layer building blocks shared by Platform and all
+    feature modules — ICommand/IQuery + dispatcher, pipeline behaviors, IClock,
+    ICurrentUser, PagedResult, IJobScheduler, IStorageProvider abstractions. (M0.2+.)
+    DEPENDENCIES: GymOS.SharedKernel only. Never references Infrastructure (rule R7).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\GymOS.SharedKernel\GymOS.SharedKernel.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    RESPONSIBILITY: Infrastructure implementations of the building-block seams —
+    outbox processor, module loader, job runner, EF conventions (naming, RLS),
+    storage drivers, SystemClock. (M0.2+.)
+    DEPENDENCIES: GymOS.BuildingBlocks.Application (implements its interfaces).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\GymOS.BuildingBlocks.Application\GymOS.BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>

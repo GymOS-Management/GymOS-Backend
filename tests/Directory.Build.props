@@ -1,0 +1,9 @@
+<Project>
+  <!-- Inherit the backend-wide quality gates, then relax test-only concerns. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))" />
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- CA1707: underscore method names are the standard .NET test naming convention. -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+</Project>
