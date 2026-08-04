@@ -17,11 +17,13 @@ internal sealed class UserQueries : IUserQueries
     private static readonly string[] SortableFields = ["email", "lastName", "status", "lastLoginAtUtc", "createdAtUtc"];
 
     private readonly AppDbContext _dbContext;
+    private readonly IIdentityQueries _identityQueries;
     private readonly IClock _clock;
 
-    public UserQueries(AppDbContext dbContext, IClock clock)
+    public UserQueries(AppDbContext dbContext, IIdentityQueries identityQueries, IClock clock)
     {
         _dbContext = dbContext;
+        _identityQueries = identityQueries;
         _clock = clock;
     }
 
@@ -126,14 +128,12 @@ internal sealed class UserQueries : IUserQueries
 
         // The resolved permission set is shown alongside the roles: "which roles" is not
         // the question an administrator is actually asking when they open this page.
-        var permissions = await _dbContext.Set<UserRole>()
-            .AsNoTracking()
-            .Where(assignment => assignment.UserId == userId)
-            .Join(_dbContext.Set<RolePermission>(), a => a.RoleId, grant => grant.RoleId, (_, grant) => grant.PermissionId)
-            .Join(_dbContext.Set<Permission>(), id => id, permission => permission.Id, (_, permission) => permission.Key)
-            .Distinct()
-            .OrderBy(key => key)
-            .ToListAsync(cancellationToken);
+        //
+        // Delegated rather than re-expressed: if this page and the authorization check computed
+        // effective permissions from two copies of the same joins, they could disagree — and a
+        // console that shows a permission the server refuses is worse than showing nothing.
+        IReadOnlyCollection<string> permissions =
+            await _identityQueries.GetEffectivePermissionsAsync(userId, cancellationToken);
 
         return new UserDetail(
             projection.Id,

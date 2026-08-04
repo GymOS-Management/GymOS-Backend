@@ -73,9 +73,15 @@ public sealed class PermissionPolicyProvider : IAuthorizationPolicyProvider
 public sealed class PermissionAuthorizationHandler : AuthorizationHandler<PermissionRequirement>
 {
     private readonly IPermissionEvaluator _permissionEvaluator;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public PermissionAuthorizationHandler(IPermissionEvaluator permissionEvaluator) =>
+    public PermissionAuthorizationHandler(
+        IPermissionEvaluator permissionEvaluator,
+        IHttpContextAccessor httpContextAccessor)
+    {
         _permissionEvaluator = permissionEvaluator;
+        _httpContextAccessor = httpContextAccessor;
+    }
 
     protected override async Task HandleRequirementAsync(
         AuthorizationHandlerContext context,
@@ -84,7 +90,13 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(requirement);
 
-        if (await _permissionEvaluator.HasPermissionAsync(requirement.Permission, CancellationToken.None)
+        // The framework's authorization API gives the handler no CancellationToken, so it comes
+        // from the request instead: an abandoned request should stop its permission query rather
+        // than hold a connection for a client that has already gone.
+        CancellationToken cancellationToken =
+            _httpContextAccessor.HttpContext?.RequestAborted ?? CancellationToken.None;
+
+        if (await _permissionEvaluator.HasPermissionAsync(requirement.Permission, cancellationToken)
             .ConfigureAwait(false))
         {
             context.Succeed(requirement);

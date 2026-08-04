@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using GymOS.Platform.Domain.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -89,6 +90,32 @@ public sealed class EndpointConventionTests : IAsyncLifetime
             undeclared.Count == 0,
             "Endpoints with no permission policy (rule R11 — declare one, or add it to the " +
             $"exemption list with a reason): {string.Join(", ", undeclared)}");
+    }
+
+    [Fact]
+    public void EveryEndpointPolicyNamesADeclaredPermission()
+    {
+        // PermissionPolicyProvider builds a policy for any name shaped like a permission key, so
+        // a typo in RequireAuthorization("users.mange") produces a requirement nobody can ever
+        // satisfy — a 403 for every caller, on an endpoint that looks correctly protected. There
+        // is no runtime signal for that, which is exactly why it needs a build-time one.
+        var declared = PlatformPermissions.All.Select(permission => permission.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var unknown = ApiEndpoints()
+            .SelectMany(endpoint => endpoint.Metadata.OfType<IAuthorizeData>()
+                .Select(data => data.Policy)
+                .Where(policy => !string.IsNullOrWhiteSpace(policy))
+                .Select(policy => (Endpoint: endpoint.RoutePattern.RawText!, Policy: policy!)))
+            .Where(entry => !declared.Contains(entry.Policy))
+            .Select(entry => $"{entry.Endpoint} → '{entry.Policy}'")
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(
+            unknown.Count == 0,
+            "Endpoints requiring permissions that no module declares (fix the name, or declare " +
+            $"it in PlatformPermissions): {string.Join(", ", unknown)}");
     }
 
     [Fact]

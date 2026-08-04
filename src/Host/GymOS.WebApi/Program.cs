@@ -6,6 +6,7 @@ using GymOS.BuildingBlocks.Infrastructure.DependencyInjection;
 using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Infrastructure.DependencyInjection;
 using GymOS.Platform.Infrastructure.Persistence;
+using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
 using GymOS.WebApi.Auth;
 using GymOS.WebApi.Endpoints;
@@ -13,6 +14,7 @@ using GymOS.WebApi.Extensions;
 using GymOS.WebApi.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
@@ -59,6 +61,7 @@ try
 
     builder.Services.AddGymOSAuthentication();
     builder.Services.AddGymOSRateLimiting(builder.Configuration);
+    builder.Services.AddGymOSForwardedHeaders(builder.Configuration);
 
     // Second enforcement layer (AD-5): no handler runs without the permission its request
     // declares, even if an endpoint mapping forgot its policy.
@@ -127,7 +130,21 @@ try
         // Does nothing unless Seed:SuperAdmin is configured, and never resets an
         // existing account's password.
         await startupScope.ServiceProvider.GetRequiredService<SuperAdminSeeder>().SeedAsync(CancellationToken.None);
+
+        // Monthly audit partitions, created ahead of need (§2.6). Idempotent and
+        // non-fatal: the DEFAULT partition keeps audit writes working if this fails.
+        // Moves onto the retention job's schedule when the job runner lands (AD-23).
+        if (app.Services.GetRequiredService<IOptions<AuditLogPartitionOptions>>().Value.RunOnStartup)
+        {
+            await startupScope.ServiceProvider
+                .GetRequiredService<AuditLogPartitionMaintainer>()
+                .EnsurePartitionsAsync(CancellationToken.None);
+        }
     }
+
+    // First in the pipeline: the rate limiter partitions on the client IP and every audit row
+    // records it, so the address has to be corrected before anything reads it.
+    app.UseGymOSForwardedHeaders(app.Configuration);
 
     app.UseExceptionHandler();
     app.UseStatusCodePages();
