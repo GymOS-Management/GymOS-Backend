@@ -18,6 +18,12 @@ public static class InfrastructureServiceCollectionExtensions
         services.TryAddSingleton<IClock, SystemClock>();
         services.TryAddScoped<CorrelationContext>();
         services.TryAddScoped<ICorrelationContext>(provider => provider.GetRequiredService<CorrelationContext>());
+
+        // Fallback caller for hosts with no request edge (future job runner, outbox
+        // processor, design-time tooling). TryAdd: the web host registers its own
+        // HttpContext-backed implementation before this runs, and that one stands.
+        services.TryAddScoped<ICurrentUser, SystemUser>();
+
         return services;
     }
 }

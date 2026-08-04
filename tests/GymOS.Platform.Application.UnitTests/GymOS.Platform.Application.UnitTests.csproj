@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    RESPONSIBILITY: Use-case tests for the platform Application layer — the
+    authentication handlers and the password policy, driven through in-memory fakes
+    (ARCHITECTURE-ADDENDUM.md §8.2). No database, no HTTP, no container: these run in
+    milliseconds and are where the security decision order is pinned down.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Platform\GymOS.Platform.Application\GymOS.Platform.Application.csproj" />
+    <ProjectReference Include="..\GymOS.TestingSupport\GymOS.TestingSupport.csproj" />
+  </ItemGroup>
+</Project>

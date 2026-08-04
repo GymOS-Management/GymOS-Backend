@@ -12,8 +12,8 @@ namespace GymOS.BuildingBlocks.Infrastructure.Outbox;
 /// rows during SaveChanges — the same transaction commits state, audit, and events
 /// atomically (AD-13). Envelope: identity/name/version from the event, aggregate
 /// id/type from the raising aggregate, occurred-at from <see cref="IClock"/> at
-/// capture (the edge — AD-40). Tenant, user, correlation, and causation depth are
-/// enriched from request context once those seams exist (M0.4 correlation, M1 auth);
+/// capture (the edge — AD-40); acting user and correlation id from the request context.
+/// Tenant and causation depth are enriched when the tenant and automation seams arrive;
 /// the columns are nullable by design — platform events carry no tenant, system
 /// actions no user (AD-14).
 /// </summary>
@@ -23,11 +23,16 @@ public sealed class OutboxSaveChangesInterceptor : SaveChangesInterceptor
 
     private readonly IClock _clock;
     private readonly ICorrelationContext _correlationContext;
+    private readonly ICurrentUser _currentUser;
 
-    public OutboxSaveChangesInterceptor(IClock clock, ICorrelationContext correlationContext)
+    public OutboxSaveChangesInterceptor(
+        IClock clock,
+        ICorrelationContext correlationContext,
+        ICurrentUser currentUser)
     {
         _clock = clock;
         _correlationContext = correlationContext;
+        _currentUser = currentUser;
     }
 
     public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
@@ -75,6 +80,7 @@ public sealed class OutboxSaveChangesInterceptor : SaveChangesInterceptor
                     OccurredAtUtc = capturedAtUtc,
                     AggregateType = aggregate.GetType().Name,
                     AggregateId = aggregate.Id,
+                    UserId = _currentUser.UserId,
                     CorrelationId = _correlationContext.CorrelationId,
                     CausationDepth = 0,
                     Payload = JsonSerializer.Serialize(domainEvent, domainEvent.GetType(), PayloadSerializerOptions),

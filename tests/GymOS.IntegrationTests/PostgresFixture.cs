@@ -25,6 +25,20 @@ public sealed class PostgresFixture : IAsyncLifetime
         }.ConnectionString;
     }
 
+    /// <summary>
+    /// A database nobody else will touch, for suites whose assertions depend on the rows
+    /// present.
+    ///
+    /// xUnit constructs a fresh test-class instance per test method, so a fixed database name
+    /// silently shares state across every method in the class — and a test that counts rows
+    /// then passes or fails on execution order. The suffix makes the isolation real rather
+    /// than assumed.
+    /// </summary>
+    public Task<string> CreateIsolatedDatabaseAsync(string prefix) =>
+        CreateDatabaseAsync($"{prefix}_{Interlocked.Increment(ref _databaseSequence)}");
+
+    private int _databaseSequence;
+
     public Task InitializeAsync() => _container.StartAsync();
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();

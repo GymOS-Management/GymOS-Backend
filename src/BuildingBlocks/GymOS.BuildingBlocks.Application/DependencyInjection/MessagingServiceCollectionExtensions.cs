@@ -1,4 +1,5 @@
 using System.Reflection;
+using GymOS.BuildingBlocks.Application.Behaviors;
 using GymOS.BuildingBlocks.Application.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -50,6 +51,21 @@ public static class MessagingServiceCollectionExtensions
                 }
             }
         }
+
+        return services;
+    }
+
+    /// <summary>
+    /// Adds permission enforcement to the pipeline (AD-5, second enforcement layer).
+    /// Register it before the idempotency and transaction behaviors so an unauthorized
+    /// call claims no key and opens no transaction (AD-39 §1.4).
+    /// </summary>
+    public static IServiceCollection AddAuthorizationBehavior(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddSingleton<RequestPermissionCache>();
+        services.AddPipelineBehavior(typeof(AuthorizationBehavior<,>));
 
         return services;
     }

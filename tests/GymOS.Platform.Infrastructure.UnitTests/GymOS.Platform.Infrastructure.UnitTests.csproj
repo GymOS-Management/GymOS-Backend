@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    RESPONSIBILITY: Adapter tests that need no external dependency — Argon2id hashing
+    and its PHC round-trip, access-token issuing, refresh-token minting. Kept out of
+    the integration suite so the cryptographic behavior is verified without Docker.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Platform\GymOS.Platform.Infrastructure\GymOS.Platform.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

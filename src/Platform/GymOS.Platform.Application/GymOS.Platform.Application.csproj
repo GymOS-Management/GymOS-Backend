@@ -9,4 +9,11 @@
     <ProjectReference Include="..\GymOS.Platform.Domain\GymOS.Platform.Domain.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\GymOS.BuildingBlocks.Application\GymOS.BuildingBlocks.Application.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Abstractions only (dependency policy rule 3): options, DI registration, and
+         logging contracts. No provider SDK, no EF Core, ever. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+  </ItemGroup>
 </Project>

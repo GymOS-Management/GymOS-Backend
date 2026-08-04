@@ -33,8 +33,34 @@ frontend repository.
 ```
 docker compose up -d --wait                      # PostgreSQL 17 (add --profile redis for Redis)
 dotnet ef database update --project src/Platform/GymOS.Platform.Infrastructure --startup-project src/Host/GymOS.WebApi
+
+# An account to sign in with. Skip it and the seeder warns and creates nothing —
+# GymOS never ships a default credential.
+dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"  --project src/Host/GymOS.WebApi
+dotnet user-secrets set "Seed:SuperAdmin:Password" "<12+ chars>"   --project src/Host/GymOS.WebApi
+
 dotnet run --project src/Host/GymOS.WebApi       # http://localhost:5080/health/ready
 ```
+
+Then sign in against `POST /api/v1/auth/login`; the API surface is at
+`http://localhost:5080/openapi/v1.json` (`/auth`, `/users`, `/roles`, `/audit-logs`). The
+development JWT signing key lives in `appsettings.Development.json` and is public by
+design — every other environment must supply `Security:Jwt:SigningKey` (startup fails fast
+without it).
+
+## API contract
+
+`contracts/openapi-v1.json` is the committed shape of v1 and is diffed by the test suite
+(AD-37/R13). Any endpoint change fails that test until the snapshot is regenerated — which
+is the point: the diff goes through review.
+
+```
+UPDATE_OPENAPI_SNAPSHOT=1 dotnet test tests/GymOS.IntegrationTests
+git diff contracts/openapi-v1.json
+```
+
+Additive changes (new endpoint, new optional field) are compatible within a version.
+Removing, renaming, retyping, or changing the meaning of a field needs a new version.
 
 `dotnet ef` is a pinned local tool (`dotnet-tools.json`) — run `dotnet tool restore` on a
 fresh clone. New migrations:

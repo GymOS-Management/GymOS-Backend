@@ -85,6 +85,20 @@ public sealed class User : AggregateRoot, IAuditable
 
     public bool IsLockedOut(DateTimeOffset now) => LockedOutUntilUtc is { } until && until > now;
 
+    /// <summary>
+    /// Changes the display name. Email is deliberately not editable here: it is the login
+    /// identity and the audit trail's denormalized key, so changing it is a separate,
+    /// verified operation rather than a profile edit.
+    /// </summary>
+    public void UpdateProfile(string firstName, string lastName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(firstName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(lastName);
+
+        FirstName = firstName.Trim();
+        LastName = lastName.Trim();
+    }
+
     /// <summary>Sets or changes the password hash; activates pending users and rotates the stamp.</summary>
     public void SetPasswordHash(string passwordHash, DateTimeOffset now)
     {

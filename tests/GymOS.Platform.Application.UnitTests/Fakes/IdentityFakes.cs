@@ -1,0 +1,212 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
+using GymOS.BuildingBlocks.Application.Models;
+using GymOS.Platform.Application.Identity.Abstractions;
+using GymOS.Platform.Domain.Identity;
+
+namespace GymOS.Platform.Application.UnitTests.Fakes;
+
+/// <summary>
+/// In-memory stand-ins for the identity seams. Deliberately behavioral rather than
+/// mocks: they hold real objects and answer real queries, so a test asserts on the
+/// state a handler produced instead of on the calls it made — which keeps the tests
+/// from breaking every time a handler is refactored without changing behavior.
+/// </summary>
+internal sealed class FakeUserRepository : IUserRepository
+{
+    private readonly List<User> _users = [];
+
+    public IReadOnlyList<User> Users => _users;
+
+    public void Seed(User user) => _users.Add(user);
+
+    public Task<User?> FindByNormalizedEmailAsync(string normalizedEmail, CancellationToken cancellationToken) =>
+        Task.FromResult(_users.SingleOrDefault(user =>
+            string.Equals(user.NormalizedEmail, normalizedEmail, StringComparison.Ordinal)));
+
+    public Task<User?> FindByIdAsync(Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult(_users.SingleOrDefault(user => user.Id == userId));
+
+    public void Add(User user) => _users.Add(user);
+}
+
+internal sealed class FakeRefreshTokenRepository : IRefreshTokenRepository
+{
+    private readonly List<RefreshToken> _tokens = [];
+
+    public IReadOnlyList<RefreshToken> Tokens => _tokens;
+
+    public void Seed(RefreshToken token) => _tokens.Add(token);
+
+    public Task<RefreshToken?> FindByHashAsync(string tokenHash, CancellationToken cancellationToken) =>
+        Task.FromResult(_tokens.SingleOrDefault(token =>
+            string.Equals(token.TokenHash, tokenHash, StringComparison.Ordinal)));
+
+    public Task<IReadOnlyList<RefreshToken>> ListByUserAsync(Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<RefreshToken>>(_tokens.Where(token => token.UserId == userId).ToList());
+
+    public void Add(RefreshToken refreshToken) => _tokens.Add(refreshToken);
+}
+
+internal sealed class FakeIdentityQueries : IIdentityQueries
+{
+    public Dictionary<Guid, UserProfile> Profiles { get; } = [];
+
+    public Dictionary<Guid, IReadOnlyCollection<string>> Permissions { get; } = [];
+
+    public Dictionary<Guid, UserSecuritySnapshot> Snapshots { get; } = [];
+
+    public Task<UserProfile?> GetProfileAsync(Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult(Profiles.TryGetValue(userId, out UserProfile? profile) ? profile : null);
+
+    public Task<UserSecuritySnapshot?> GetSecuritySnapshotAsync(
+        Guid userId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(Snapshots.TryGetValue(userId, out UserSecuritySnapshot? snapshot) ? snapshot : null);
+
+    public Task<IReadOnlyCollection<string>> GetEffectivePermissionsAsync(
+        Guid userId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(Permissions.TryGetValue(userId, out IReadOnlyCollection<string>? permissions)
+            ? permissions
+            : []);
+}
+
+/// <summary>
+/// Reversible "hashing" — the point is that verification succeeds for the right input
+/// and fails for the wrong one, not that it is cryptographic. <see cref="HashCallCount"/>
+/// is what lets a test prove the timing-equalizing hash on an unknown email actually
+/// happened, which is invisible in the response.
+/// </summary>
+internal sealed class FakePasswordHasher : IPasswordHasher
+{
+    private const string Prefix = "fake-argon2:";
+
+    public int HashCallCount { get; private set; }
+
+    public int VerifyCallCount { get; private set; }
+
+    public string Hash(string password)
+    {
+        HashCallCount++;
+        return Prefix + password;
+    }
+
+    public bool Verify(string password, string passwordHash)
+    {
+        VerifyCallCount++;
+        return string.Equals(Prefix + password, passwordHash, StringComparison.Ordinal);
+    }
+}
+
+internal sealed class FakeAccessTokenIssuer : IAccessTokenIssuer
+{
+    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
+
+    public List<AccessTokenRequest> Requests { get; } = [];
+
+    public IssuedAccessToken Issue(AccessTokenRequest request)
+    {
+        Requests.Add(request);
+        return new IssuedAccessToken(
+            $"access-token-{request.UserId}-{Requests.Count}",
+            request.IssuedAtUtc.Add(Lifetime));
+    }
+}
+
+/// <summary>Sequential, predictable tokens so a test can name the one it expects.</summary>
+internal sealed class FakeRefreshTokenGenerator : IRefreshTokenGenerator
+{
+    private int _issued;
+
+    public string GenerateRawToken() => $"raw-refresh-{++_issued}";
+
+    public string ComputeHash(string rawToken) => "sha256:" + rawToken;
+}
+
+internal sealed class FakeUnitOfWork : IUnitOfWork
+{
+    public int SaveCount { get; private set; }
+
+    public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        SaveCount++;
+        return Task.FromResult(0);
+    }
+}
+
+internal sealed class FakeRoleRepository : IRoleRepository
+{
+    private readonly List<Role> _roles = [];
+
+    public void Seed(Role role) => _roles.Add(role);
+
+    public Task<IReadOnlyList<Role>> ListByIdsAsync(
+        IReadOnlyCollection<Guid> roleIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Role>>(_roles.Where(role => roleIds.Contains(role.Id)).ToList());
+
+    public Task<Role?> FindPlatformRoleByNameAsync(string roleName, CancellationToken cancellationToken)
+    {
+        string normalized = Role.Normalize(roleName);
+        return Task.FromResult(_roles.SingleOrDefault(role =>
+            string.Equals(role.NormalizedName, normalized, StringComparison.Ordinal)
+            && role.Scope == RoleScope.Platform));
+    }
+}
+
+/// <summary>
+/// Read-side fake. <see cref="ActiveUsersPerRole"/> is what lets a test set up "this is the
+/// only SuperAdmin left" without building a second user graph.
+/// </summary>
+internal sealed class FakeUserQueries : IUserQueries
+{
+    public Dictionary<string, int> ActiveUsersPerRole { get; } = new(StringComparer.Ordinal);
+
+    public Task<PagedResult<UserListItem>> ListAsync(UserListFilter filter, CancellationToken cancellationToken) =>
+        Task.FromResult(PagedResult.Empty<UserListItem>(filter.Page));
+
+    public Task<UserDetail?> GetAsync(Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult<UserDetail?>(null);
+
+    public Task<int> CountActiveUsersInRoleAsync(string roleName, CancellationToken cancellationToken) =>
+        Task.FromResult(ActiveUsersPerRole.TryGetValue(roleName, out int count) ? count : 0);
+}
+
+/// <summary>The acting caller, settable so a test can act as a specific administrator.</summary>
+internal sealed class FakeCurrentUser : ICurrentUser
+{
+    public Guid? UserId { get; set; }
+
+    public string? Email { get; set; }
+
+    public bool IsAuthenticated => UserId is not null;
+
+    public string? IpAddress { get; set; } = "198.51.100.10";
+
+    public string? UserAgent { get; set; } = "integration-test/1.0";
+}
+
+/// <summary>Permission set the caller holds, independent of any role graph.</summary>
+internal sealed class FakePermissionEvaluator : IPermissionEvaluator
+{
+    public HashSet<string> Granted { get; } = new(StringComparer.Ordinal);
+
+    public Task<bool> HasPermissionAsync(string permission, CancellationToken cancellationToken) =>
+        Task.FromResult(Granted.Contains(permission));
+
+    public Task<IReadOnlyCollection<string>> GetPermissionsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<string>>(Granted.ToList());
+}
+
+internal sealed class FakeAuditTrail : IAuditTrail
+{
+    public List<(string Action, string? EntityType, Guid? EntityId, IReadOnlyDictionary<string, string?>? Details, string? SubjectEmail)> Entries { get; } = [];
+
+    public void Record(
+        string action,
+        string? entityType = null,
+        Guid? entityId = null,
+        IReadOnlyDictionary<string, string?>? details = null,
+        string? subjectEmail = null) =>
+        Entries.Add((action, entityType, entityId, details, subjectEmail));
+}

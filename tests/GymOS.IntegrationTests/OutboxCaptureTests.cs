@@ -83,7 +83,8 @@ public sealed class OutboxCaptureTests : IAsyncLifetime
 
     private IntegrationDbContext CreateContext(CorrelationContext correlationContext)
     {
-        var interceptor = new OutboxSaveChangesInterceptor(new FakeClock(KnownInstant), correlationContext);
+        var interceptor = new OutboxSaveChangesInterceptor(
+            new FakeClock(KnownInstant), correlationContext, new SystemUser());
         DbContextOptions<IntegrationDbContext> options = new DbContextOptionsBuilder<IntegrationDbContext>()
             .UseNpgsql(_connectionString)
             .UseSnakeCaseNamingConvention()

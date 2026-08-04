@@ -38,7 +38,7 @@ public sealed class IdentitySeedingTests : IAsyncLifetime
             .UseSnakeCaseNamingConvention()
             .AddInterceptors(
                 new AuditableTimestampsInterceptor(clock),
-                new OutboxSaveChangesInterceptor(clock, new CorrelationContext()))
+                new OutboxSaveChangesInterceptor(clock, new CorrelationContext(), new SystemUser()))
             .Options;
         return new AppDbContext(options);
     }

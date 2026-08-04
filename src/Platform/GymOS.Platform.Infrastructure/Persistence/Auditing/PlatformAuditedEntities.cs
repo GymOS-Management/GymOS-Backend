@@ -1,0 +1,31 @@
+using GymOS.BuildingBlocks.Infrastructure.Auditing;
+using GymOS.Platform.Domain.Identity;
+
+namespace GymOS.Platform.Infrastructure.Persistence.Auditing;
+
+/// <summary>
+/// What the platform module audits (AD-7). Declared, not inferred — adding a table to the
+/// trail is a decision, and this list is the one place to review what the trail covers.
+/// (Moves onto the <c>IModule</c> manifest when the module loader lands, like permissions.)
+/// </summary>
+public static class PlatformAuditedEntities
+{
+    public static IReadOnlyList<AuditedEntity> All =>
+    [
+        // password_hash and security_stamp are masked by the name heuristic; listing them
+        // anyway makes the intent explicit at the point someone reviews this file.
+        AuditedEntity.Of<User>("user", alwaysRedacted: [nameof(User.PasswordHash), nameof(User.SecurityStamp)]),
+
+        AuditedEntity.Of<Role>("role"),
+        AuditedEntity.Of<UserRole>("user_role"),
+        AuditedEntity.Of<RolePermission>("role_permission"),
+
+        // Deliberately absent:
+        //   RefreshToken — every sign-in and rotation writes one, so auditing rows here
+        //     would bury the administrative actions the log exists for. Sessions are
+        //     recorded as explicit `auth.*` entries instead.
+        //   Permission — the catalog is code-canonical and reconciled at startup; a diff
+        //     against the deployed code, not an operator's action.
+        //   AuditLog — auditing the audit log is a recursion with no reader.
+    ];
+}

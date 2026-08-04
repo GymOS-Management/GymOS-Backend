@@ -44,6 +44,7 @@ no vendor types outside adapters) · ADR-CHANGELOG.md (change process)
 | `Microsoft.NET.Test.Sdk` | MIT | tests | Test host |
 | `xunit`, `xunit.runner.visualstudio` | Apache-2.0 | tests | Approved test framework (ARCHITECTURE.md §6) |
 | `NetArchTest.Rules` | MIT | tests | Architecture rule enforcement (AD-49) |
+| `Microsoft.IdentityModel.*`, `System.IdentityModel.Tokens.Jwt` | MIT | Infrastructure / Host / tests | **Approved M1.2.** Issuing and validating the access tokens AD-4 mandates. Microsoft-maintained, MIT, the same family `Microsoft.AspNetCore.Authentication.JwtBearer` (already approved under the `Microsoft.AspNetCore.` family) resolves transitively — declaring it directly keeps issue and validate on one pinned version instead of an implicit transitive one. Treated as a **provider SDK**: barred from Domain and Application, so no JWT type reaches a handler. Implements AD-4, changes no decision — no ADR required |
 
 ## Pre-approved — enter with their milestone (already vetted by the frozen spec)
 

@@ -43,6 +43,13 @@ jobs:
         shell: pwsh
         run: ./build/audit-transitive-packages.ps1
 
-      # OpenAPI breaking-change gate (AD-37): activates when the first versioned
-      # endpoints land in M1 — the generated document is diffed against the
-      # committed snapshot per API version.
+      # OpenAPI breaking-change gate (AD-37/R13) is active as of M1.3 and runs inside the
+      # test step above: OpenApiContractTests diffs the generated document against the
+      # committed contracts/openapi-v1.json. It lives in the test suite rather than in a
+      # separate CI step so it fails the same way locally as it does here.
+      #
+      # When it fails: regenerate and read the diff.
+      #   UPDATE_OPENAPI_SNAPSHOT=1 dotnet test tests/GymOS.IntegrationTests
+      #   git diff contracts/openapi-v1.json
+      # Additive changes are compatible within a version; anything that removes, renames,
+      # retypes, or changes the meaning of a field needs a new version instead.

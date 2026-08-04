@@ -30,5 +30,8 @@ public sealed class AppDbContext : DbContext
 
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(OutboxMessage).Assembly);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+
+        // Last: entities assign their own ids, so no Guid key is store-generated.
+        modelBuilder.ApplyClientAssignedKeys();
     }
 }

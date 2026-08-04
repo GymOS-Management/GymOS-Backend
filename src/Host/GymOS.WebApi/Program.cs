@@ -1,10 +1,15 @@
 using System.Globalization;
+using Asp.Versioning;
 using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Infrastructure.DependencyInjection;
+using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Infrastructure.DependencyInjection;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
+using GymOS.WebApi.Auth;
+using GymOS.WebApi.Endpoints;
+using GymOS.WebApi.Extensions;
 using GymOS.WebApi.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
@@ -48,11 +53,36 @@ try
 
     builder.Services.AddBuildingBlocksInfrastructure();
     builder.Services.AddCqrsDispatcher();
+    builder.Services.AddPlatformApplication();
     builder.Services.AddPlatformPersistence(builder.Configuration);
+    builder.Services.AddPlatformIdentity(builder.Configuration);
 
-    // OpenAPI document generation (AD-12/AD-37): the contract-first seam. Versioned
-    // endpoint groups and the CI breaking-change gate land with the first v1 endpoints.
-    builder.Services.AddOpenApi();
+    builder.Services.AddGymOSAuthentication();
+    builder.Services.AddGymOSRateLimiting(builder.Configuration);
+
+    // Second enforcement layer (AD-5): no handler runs without the permission its request
+    // declares, even if an endpoint mapping forgot its policy.
+    builder.Services.AddAuthorizationBehavior();
+
+    // URL-segment versioning (AD-37): /api/v1/…. Unversioned callers are not guessed
+    // at — an explicit version is part of the contract.
+    builder.Services.AddApiVersioning(options =>
+    {
+        options.ApiVersionReader = new UrlSegmentApiVersionReader();
+        options.DefaultApiVersion = new ApiVersion(1, 0);
+        options.AssumeDefaultVersionWhenUnspecified = false;
+        options.ReportApiVersions = true;
+    });
+
+    // RFC 7807 for every error response, including the ones the framework produces
+    // (404, 405, 415) — one error shape across the whole API (ARCHITECTURE.md §3).
+    builder.Services.AddProblemDetails();
+    builder.Services.AddGymOSExceptionHandling();
+
+    // OpenAPI document generation (AD-12/AD-37): the contract-first seam, one document
+    // per API version. The CI breaking-change gate diffs it against its committed
+    // snapshot (M1.3).
+    builder.Services.AddGymOSOpenApi("v1");
 
     // Readiness gates on the database only (AD-48); liveness has no dependencies.
     builder.Services.AddHealthChecks()
@@ -92,14 +122,30 @@ try
         }
 
         await startupScope.ServiceProvider.GetRequiredService<PlatformIdentitySeeder>().SeedAsync(CancellationToken.None);
+
+        // Runs after the catalog sync: the SuperAdmin needs its role to exist first.
+        // Does nothing unless Seed:SuperAdmin is configured, and never resets an
+        // existing account's password.
+        await startupScope.ServiceProvider.GetRequiredService<SuperAdminSeeder>().SeedAsync(CancellationToken.None);
     }
+
+    app.UseExceptionHandler();
+    app.UseStatusCodePages();
 
     app.UseMiddleware<CorrelationMiddleware>();
     app.UseSerilogRequestLogging();
 
+    app.UseRateLimiter();
+    app.UseAuthentication();
+    app.UseAuthorization();
+
     app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/ready");
     app.MapOpenApi();
+    app.MapAuthEndpoints();
+    app.MapUserEndpoints();
+    app.MapRoleEndpoints();
+    app.MapAuditLogEndpoints();
 
     await app.RunAsync();
 }

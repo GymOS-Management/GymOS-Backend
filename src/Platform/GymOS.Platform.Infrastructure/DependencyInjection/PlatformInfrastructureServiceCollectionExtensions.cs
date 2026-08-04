@@ -1,6 +1,9 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
+using GymOS.BuildingBlocks.Infrastructure.Auditing;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence;
+using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -31,13 +34,27 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         // resolution below stays within the current request scope.
         services.TryAddScoped<OutboxSaveChangesInterceptor>();
         services.TryAddScoped<AuditableTimestampsInterceptor>();
+        services.TryAddScoped<AuditSaveChangesInterceptor>();
         services.TryAddScoped<PlatformIdentitySeeder>();
+
+        // The audited-entity declaration never changes at runtime, so the policy is a
+        // singleton built once from the module's list (AD-7).
+        services.TryAddSingleton(new AuditPolicy(PlatformAuditedEntities.All));
+
+        services.TryAddScoped<IAuditTrail>(provider => new AuditTrail(
+            provider.GetRequiredService<AppDbContext>(),
+            provider.GetRequiredService<IClock>(),
+            provider.GetRequiredService<ICurrentUser>(),
+            provider.GetRequiredService<ICorrelationContext>()));
 
         services.AddDbContext<AppDbContext>((provider, options) => options
             .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
             .UseSnakeCaseNamingConvention()
+            // Order matters: timestamps are stamped before the audit interceptor reads
+            // values, so created_at/updated_at appear in the captured diff.
             .AddInterceptors(
                 provider.GetRequiredService<AuditableTimestampsInterceptor>(),
+                provider.GetRequiredService<AuditSaveChangesInterceptor>(),
                 provider.GetRequiredService<OutboxSaveChangesInterceptor>()));
 
         return services;

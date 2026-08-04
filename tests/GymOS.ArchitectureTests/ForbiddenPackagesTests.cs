@@ -46,6 +46,7 @@ public sealed class ForbiddenPackagesTests
         "OpenTelemetry",
         "Testcontainers",
         "Azure.",
+        "Microsoft.IdentityModel.", // JWT issue/validate (AD-4) — provider-restricted below
     ];
 
     /// <summary>Banned packages (prefix match) with the reason surfaced in the failure message.</summary>
@@ -79,6 +80,8 @@ public sealed class ForbiddenPackagesTests
         "Anthropic",
         "OpenAI",
         "Konscious.",
+        "Microsoft.IdentityModel.",
+        "System.IdentityModel.",
     ];
 
     /// <summary>The only packages an Application-layer project may reference.</summary>

@@ -10,7 +10,15 @@
     <ProjectReference Include="..\..\Platform\GymOS.Platform.Infrastructure\GymOS.Platform.Infrastructure.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\GymOS.BuildingBlocks.Infrastructure\GymOS.BuildingBlocks.Infrastructure.csproj" />
   </ItemGroup>
+  <PropertyGroup>
+    <!-- Local secret store for the JWT signing key and the initial SuperAdmin
+         credential: `dotnet user-secrets` writes outside the repository, so a
+         developer secret cannot be committed by accident. -->
+    <UserSecretsId>gymos-backend-webapi</UserSecretsId>
+  </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Asp.Versioning.Http" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
