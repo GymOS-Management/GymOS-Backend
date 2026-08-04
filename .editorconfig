@@ -28,7 +28,11 @@ csharp_prefer_braces = true:warning
 csharp_style_expression_bodied_methods = when_on_single_line:suggestion
 csharp_style_expression_bodied_properties = true:suggestion
 dotnet_style_readonly_field = true:warning
-dotnet_style_require_accessibility_modifiers = always:warning
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+
+# CA1716 protects Visual Basic consumers from VB keyword collisions ('Error', 'Next').
+# GymOS is C#-only by policy; the idiomatic names win.
+dotnet_diagnostic.CA1716.severity = none
 
 # var — types must be apparent
 csharp_style_var_for_built_in_types = false:suggestion

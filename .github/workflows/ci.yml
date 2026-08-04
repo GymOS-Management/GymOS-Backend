@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest # Docker available — Testcontainers integration tests run here
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET (pinned by global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore local tools (dotnet-ef)
+        run: dotnet tool restore
+
+      - name: Restore
+        run: dotnet restore GymOS.Backend.slnx
+
+      # Full solution build BEFORE tests: `dotnet test` alone does not build the
+      # host project (nothing test-side depends on it at compile time) — a broken
+      # Program.cs must fail here, not hide behind green tests.
+      - name: Build (full solution, warnings are errors)
+        run: dotnet build GymOS.Backend.slnx --configuration Release --no-restore
+
+      - name: Format check
+        run: dotnet format GymOS.Backend.slnx --verify-no-changes --no-restore
+
+      - name: Tests (unit + architecture + integration via Testcontainers)
+        run: dotnet test GymOS.Backend.slnx --configuration Release --no-build --verbosity normal
+
+      - name: Transitive dependency audit (banned packages)
+        shell: pwsh
+        run: ./build/audit-transitive-packages.ps1
+
+      # OpenAPI breaking-change gate (AD-37): activates when the first versioned
+      # endpoints land in M1 — the generated document is diffed against the
+      # committed snapshot per API version.

@@ -37,6 +37,10 @@ no vendor types outside adapters) · ADR-CHANGELOG.md (change process)
 
 | Package | License | Layer | Why |
 |---|---|---|---|
+| `Microsoft.CodeAnalysis.BannedApiAnalyzers` | MIT | all (build-time, `GlobalPackageReference`) | Enforces rule R2: direct clock reads fail the build (`BannedSymbols.txt`) |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` | MIT | Application / Infrastructure | DI registration for the CQRS dispatcher and seam implementations |
+| `Microsoft.Extensions.DependencyInjection` | MIT | tests / Host | Concrete container for dispatcher tests and host composition |
+| `Microsoft.OpenApi` | MIT | transitive pin (central only) | Security pin: `Microsoft.AspNetCore.OpenApi` resolves a vulnerable 2.0.0 (GHSA-v5pm-xwqc-g5wc); pinned to patched 2.x |
 | `Microsoft.NET.Test.Sdk` | MIT | tests | Test host |
 | `xunit`, `xunit.runner.visualstudio` | Apache-2.0 | tests | Approved test framework (ARCHITECTURE.md §6) |
 | `NetArchTest.Rules` | MIT | tests | Architecture rule enforcement (AD-49) |
@@ -47,7 +51,7 @@ no vendor types outside adapters) · ADR-CHANGELOG.md (change process)
 |---|---|---|---|
 | `Microsoft.Extensions.*` | MIT | Application (abstractions) / Infrastructure / Host | DI, options, logging, resilience primitives |
 | `Microsoft.EntityFrameworkCore.*` | MIT | Infrastructure only | ORM (AD-3) |
-| `Npgsql.EntityFrameworkCore.PostgreSQL`, `Npgsql` | PostgreSQL license | Infrastructure only | PostgreSQL provider |
+| `Npgsql.EntityFrameworkCore.PostgreSQL`, `Npgsql`, `Npgsql.OpenTelemetry` | PostgreSQL license | Infrastructure / Host | PostgreSQL provider + its OTel instrumentation |
 | `EFCore.NamingConventions` | Apache-2.0 | Infrastructure only | snake_case mapping (M0.3) |
 | `FluentValidation`, `FluentValidation.DependencyInjectionExtensions` | Apache-2.0 | Application | Command/query validators (AD-10) |
 | `Serilog.*` | Apache-2.0 | Host / Infrastructure | Structured logging (AD-38) |
@@ -65,7 +69,7 @@ no vendor types outside adapters) · ADR-CHANGELOG.md (change process)
 |---|---|---|
 | `MediatR` (any) | Commercial license from v13 (AD-1); older versions = frozen dead end | In-house `ICommandHandler`/`IQueryHandler` dispatcher |
 | `AutoMapper` (any) | Commercial license from v15 (AD-1); implicit mapping hides bugs | Explicit `ToDto()` mapping extensions |
-| `Newtonsoft.Json` | Redundant: `System.Text.Json` is the platform standard; duplicate serializers cause subtle contract drift. Approval only via explicit ADR (e.g. a dependency that hard-requires it) | `System.Text.Json` |
+| `Newtonsoft.Json` | Redundant: `System.Text.Json` is the platform standard; duplicate serializers cause subtle contract drift. Approval only via explicit ADR (e.g. a dependency that hard-requires it). *Documented tooling exemption:* it arrives transitively via `Microsoft.EntityFrameworkCore.Design` (design-time, PrivateAssets) and `Microsoft.NET.Test.Sdk` (test host) — the CI audit permits those paths **and verifies on every run that no Newtonsoft assembly ships in the publish output** | `System.Text.Json` |
 | `FluentAssertions` | Commercial license from v8 | xunit assertions |
 | `Moq` | SponsorLink telemetry incident eroded trust; ecosystem moved on | `NSubstitute` |
 | `Hangfire.*` | Core is LGPL-3.0 + commercial tiers; requires license ADR before the AD-23 adapter decision is made | v1 DB-leased runner; `Quartz` (Apache-2.0) is the pre-cleared adapter candidate |

@@ -1,0 +1,48 @@
+# GymOS local development environment.
+# One command:   docker compose up -d
+# With Redis:    docker compose --profile redis up -d   (disabled by default)
+name: gymos
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: gymos-postgres
+    environment:
+      POSTGRES_DB: gymos
+      POSTGRES_USER: gymos
+      POSTGRES_PASSWORD: gymos_dev_password # local development only — production uses Azure-managed credentials
+    ports:
+      - "5432:5432"
+    volumes:
+      - gymos-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gymos -d gymos"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      - gymos
+
+  redis:
+    image: redis:7-alpine
+    container_name: gymos-redis
+    profiles: ["redis"] # optional — no GymOS component requires Redis yet
+    ports:
+      - "6379:6379"
+    volumes:
+      - gymos-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      - gymos
+
+volumes:
+  gymos-pgdata:
+  gymos-redisdata:
+
+networks:
+  gymos:
+    name: gymos

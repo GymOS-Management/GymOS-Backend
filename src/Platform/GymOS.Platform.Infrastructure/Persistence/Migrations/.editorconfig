@@ -1,0 +1,6 @@
+# EF Core migrations are generated code (rule R17: never hand-edited after merge).
+# Style and quality analyzers do not apply here; the migration content itself is
+# reviewed at generation time.
+[*.cs]
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none

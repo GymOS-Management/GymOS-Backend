@@ -8,4 +8,8 @@
   <ItemGroup>
     <ProjectReference Include="..\GymOS.BuildingBlocks.Application\GymOS.BuildingBlocks.Application.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
 </Project>

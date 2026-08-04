@@ -15,5 +15,9 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/GymOS.ArchitectureTests/GymOS.ArchitectureTests.csproj" />
+    <Project Path="tests/GymOS.BuildingBlocks.UnitTests/GymOS.BuildingBlocks.UnitTests.csproj" />
+    <Project Path="tests/GymOS.IntegrationTests/GymOS.IntegrationTests.csproj" />
+    <Project Path="tests/GymOS.SharedKernel.UnitTests/GymOS.SharedKernel.UnitTests.csproj" />
+    <Project Path="tests/GymOS.TestingSupport/GymOS.TestingSupport.csproj" />
   </Folder>
 </Solution>

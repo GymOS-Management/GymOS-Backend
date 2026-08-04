@@ -15,4 +15,8 @@
     <Deterministic>true</Deterministic>
     <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Rule R2: direct clock reads are build errors (BannedApiAnalyzers, RS0030). -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
+  </ItemGroup>
 </Project>

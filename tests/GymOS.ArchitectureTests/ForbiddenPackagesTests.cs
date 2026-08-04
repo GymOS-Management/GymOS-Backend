@@ -16,7 +16,9 @@ public sealed class ForbiddenPackagesTests
     private static readonly HashSet<string> ApprovedPackages = new(StringComparer.OrdinalIgnoreCase)
     {
         // In use now
+        "Microsoft.CodeAnalysis.BannedApiAnalyzers",
         "Microsoft.NET.Test.Sdk",
+        "Microsoft.OpenApi", // transitive security pin — see Directory.Packages.props comment
         "NetArchTest.Rules",
         "xunit",
         "xunit.runner.visualstudio",
@@ -24,6 +26,7 @@ public sealed class ForbiddenPackagesTests
         // Pre-approved, enter with their milestone
         "Npgsql",
         "Npgsql.EntityFrameworkCore.PostgreSQL",
+        "Npgsql.OpenTelemetry",
         "EFCore.NamingConventions",
         "FluentValidation",
         "FluentValidation.DependencyInjectionExtensions",
@@ -100,7 +103,8 @@ public sealed class ForbiddenPackagesTests
             Path.Combine(SolutionLocator.BackendRoot.FullName, "Directory.Packages.props"));
 
         var unapproved = XDocument.Load(packagesProps.FullName)
-            .Descendants("PackageVersion")
+            .Descendants()
+            .Where(element => element.Name.LocalName is "PackageVersion" or "GlobalPackageReference")
             .Select(element => element.Attribute("Include")?.Value)
             .OfType<string>()
             .Where(id => !IsApproved(id))
