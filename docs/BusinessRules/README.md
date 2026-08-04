@@ -3,18 +3,23 @@
 One document per planned module, written **before** implementation so the rules are argued about while
 they are still cheap to change.
 
-**These are drafts, not specifications.** They record what the frozen architecture already decides,
+**Members, Memberships, and Attendance are now specified** in
+[`docs/Domain/MEMBERS-DOMAIN-DESIGN.md`](../Domain/MEMBERS-DOMAIN-DESIGN.md) — the authoritative
+business design for that domain, including the Open Product Decisions that block M2 implementation.
+Their entries below remain as the questions that fed it.
+
+**The rest are drafts, not specifications.** They record what the frozen architecture already decides,
 what is assumed (marked `(?)`), and what is genuinely unanswered. The Golden Rule
 (GymOS-Specification/PRODUCT-PRINCIPLES.md) is the scope authority: a rule listed here is not a
 commitment to build the feature it belongs to.
 
 | Module | Document | Notes |
 |---|---|---|
-| Members | [Members.md](Members.md) | Foundation for every gym-facing module. Health data needs a legal basis first. |
-| Memberships | [Memberships.md](Memberships.md) | Entitlement rules; the most-asked-about module. |
+| Members | **[Domain design](../Domain/MEMBERS-DOMAIN-DESIGN.md)** · [draft](Members.md) | **Specified.** Health data, minors, and retention need legal counsel. |
+| Memberships | **[Domain design](../Domain/MEMBERS-DOMAIN-DESIGN.md)** · [draft](Memberships.md) | **Specified.** Freeze policy and visit definition are blocking decisions. |
 | Payments | [Payments.md](Payments.md) | Least tolerance for a wrong rule. Idempotency is mandatory. |
 | Scheduling | [Scheduling.md](Scheduling.md) | Already architecturally designed (AD-25); DST rules matter. |
-| Attendance | [Attendance.md](Attendance.md) | Most exposed to offline and untrusted hardware clocks. |
+| Attendance | **[Domain design](../Domain/MEMBERS-DOMAIN-DESIGN.md)** · [draft](Attendance.md) | **Specified.** Offline conflicts are surfaced, never resolved silently. |
 | Inventory | [Inventory.md](Inventory.md) | Serves POS. May not be MVP. |
 | POS | [POS.md](POS.md) | Fiscal/receipt law constrains the schema — answer that first. |
 | Trainer | [Trainer.md](Trainer.md) | Golden Rule bites hardest: must beat paper. |

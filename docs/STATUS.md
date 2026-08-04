@@ -17,6 +17,7 @@ before resuming work on any machine.
 | **M1.3 — permission pipeline, users/roles endpoints, audit interceptor, OpenAPI diff gate** | ✅ complete + release-reviewed — **256 tests green**, verified live |
 | **Pre-M2 hardening** (write convention, optimistic concurrency, business-rule framework, API standards, playbook) | ✅ complete — **337 tests green**, verified live |
 | **M2 — gym management** (gyms CRUD, suspend/delete, branding, gym detail) | ⬅ **NEXT** — read `docs/M2_READINESS.md` first |
+| **Members domain design** (business specification, no code) | ✅ complete — `docs/Domain/MEMBERS-DOMAIN-DESIGN.md`. **8 blocking product decisions await the owner before Members implementation.** |
 | M3+ — per approved roadmap (subscriptions, feature flags, dashboard, …) | later |
 
 ## M1.2 as built
@@ -176,8 +177,10 @@ Read `docs/M2_READINESS.md` for the full assessment; the short version:
   columns exist is the expensive version.
 - **Write the RLS startup validation (R14) with the first tenant-scoped entity.** R14 has never run;
   a missed policy is a cross-tenant leak.
-- **Answer the Open Questions in `BusinessRules/Members.md` and `Memberships.md`** with the product
-  owner. Several change entity shape, and health data needs legal counsel.
+- **Resolve the blocking Open Product Decisions** in `docs/Domain/MEMBERS-DOMAIN-DESIGN.md` §20 with
+  the product owner: freeze policy, what counts as one visit, grace periods and door-level financial
+  consequences, upgrade proration, health data, multi-location scope, and cancellation terms. Four of
+  them need legal counsel. Members implementation cannot start without them.
 
 ## Standing rules (non-negotiable, enforced)
 

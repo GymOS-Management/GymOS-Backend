@@ -7,6 +7,11 @@
   confirmed with the product owner before it is implemented. Rules marked (?) are assumptions.
 -->
 
+> **Superseded for this domain.** The authoritative business specification is
+> [`docs/Domain/MEMBERS-DOMAIN-DESIGN.md`](../Domain/MEMBERS-DOMAIN-DESIGN.md). That document decides
+> what this draft only listed, and carries the Open Product Decisions that block implementation.
+> This file is kept for the questions it raised; where the two disagree, the domain design wins.
+
 # Memberships — Business Rules
 
 **Module:** `GymOS.Modules.Memberships` · schema `memberships` · tenant-scoped
