@@ -1,6 +1,8 @@
 using GymOS.Platform.Domain.Identity.Events;
+using GymOS.Platform.Domain.Identity.Rules;
 using GymOS.SharedKernel;
 using GymOS.SharedKernel.Entities;
+using GymOS.SharedKernel.Rules;
 
 namespace GymOS.Platform.Domain.Identity;
 
@@ -96,10 +98,10 @@ public sealed class User : AggregateRoot, IAuditable
         ArgumentException.ThrowIfNullOrWhiteSpace(firstName);
         ArgumentException.ThrowIfNullOrWhiteSpace(lastName);
 
-        if (!email.Contains('@', StringComparison.Ordinal))
-        {
-            throw new DomainException($"'{email}' is not a valid email address.");
-        }
+        // Through the rule framework rather than an inline throw: the rule is named, has a stable
+        // code, and is tested on its own (BusinessRules / EmailMustBeWellFormed). Still a
+        // DomainException underneath, so callers that already catch that are unaffected.
+        BusinessRules.Check(new EmailMustBeWellFormed(email));
 
         var user = new User(Guid.NewGuid(), email.Trim(), firstName.Trim(), lastName.Trim());
         user.Raise(new UserCreated(user.Id, user.Email));

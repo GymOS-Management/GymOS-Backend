@@ -6,5 +6,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\BuildingBlocks\GymOS.SharedKernel\GymOS.SharedKernel.csproj" />
+    <ProjectReference Include="..\GymOS.TestingSupport\GymOS.TestingSupport.csproj" />
   </ItemGroup>
 </Project>

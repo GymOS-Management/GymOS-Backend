@@ -6,5 +6,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Platform\GymOS.Platform.Domain\GymOS.Platform.Domain.csproj" />
+    <ProjectReference Include="..\GymOS.TestingSupport\GymOS.TestingSupport.csproj" />
   </ItemGroup>
 </Project>

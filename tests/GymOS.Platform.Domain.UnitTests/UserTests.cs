@@ -1,6 +1,9 @@
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Identity.Events;
+using GymOS.Platform.Domain.Identity.Rules;
 using GymOS.SharedKernel;
+using GymOS.SharedKernel.Rules;
+using GymOS.TestingSupport;
 using Xunit;
 
 namespace GymOS.Platform.Domain.UnitTests;
@@ -26,7 +29,37 @@ public sealed class UserTests
     [Fact]
     public void Create_RejectsAnObviouslyInvalidEmail()
     {
-        Assert.Throws<DomainException>(() => User.Create("not-an-email", "Ada", "Admin"));
+        // ThrowsAny, not Throws: the rule framework raises the more specific
+        // BusinessRuleViolationException, and what callers depend on is that it is still a
+        // DomainException — which is exactly what every `catch (DomainException)` site relies on.
+        BusinessRuleViolationException violation = Assert.ThrowsAny<BusinessRuleViolationException>(
+            () => User.Create("not-an-email", "Ada", "Admin"));
+
+        Assert.IsAssignableFrom<DomainException>(violation);
+        Assert.Equal("identity.email_malformed", violation.Code);
+    }
+
+    [Theory]
+    [InlineData("no-at-sign")]
+    [InlineData("no@domain")]
+    [InlineData("@example.com")]
+    [InlineData("spaces in@example.com")]
+    [InlineData("two@@example.com")]
+    public void Create_RejectsMalformedEmails(string email)
+    {
+        // Through the rule object, so the cases live next to the rule rather than being rediscovered
+        // per call site.
+        BusinessRuleAssert.Broken(new EmailMustBeWellFormed(email), "identity.email_malformed");
+        Assert.ThrowsAny<DomainException>(() => User.Create(email, "Ada", "Admin"));
+    }
+
+    [Theory]
+    [InlineData("someone@example.com")]
+    [InlineData("first.last+tag@sub.example.co.uk")]
+    public void Create_AcceptsPlausibleEmails(string email)
+    {
+        BusinessRuleAssert.Satisfied(new EmailMustBeWellFormed(email));
+        Assert.Equal(email, User.Create(email, "Ada", "Admin").Email);
     }
 
     [Fact]
