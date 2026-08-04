@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using GymOS.BuildingBlocks.Application.Abstractions;
+using GymOS.SharedKernel.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -93,9 +94,11 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
                 _ => ("updated", ChangedOnly(entry, declared, current: false), ChangedOnly(entry, declared, current: true)),
             };
 
-        // A "modification" that changed nothing but the row timestamp is not an event
-        // worth a permanent record.
-        if (entry.State == EntityState.Modified && newValues?.Count is null or 0)
+        // A "modification" that changed nothing but the row timestamp is not an event worth a
+        // permanent record. This covers two real cases: a save where no value actually differed,
+        // and a deliberate version bump on an aggregate whose children changed — the child rows
+        // carry their own entries, so a parent entry holding one timestamp adds only noise.
+        if (entry.State == EntityState.Modified && CarriesNoBusinessChange(newValues))
         {
             return null;
         }
@@ -115,6 +118,10 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
             CreatedAtUtc = capturedAtUtc,
         };
     }
+
+    private static bool CarriesNoBusinessChange(Dictionary<string, string?>? newValues) =>
+        newValues is null or { Count: 0 } ||
+        (newValues.Count == 1 && newValues.ContainsKey(nameof(IAuditable.UpdatedAtUtc)));
 
     private Dictionary<string, string?> Snapshot(EntityEntry entry, AuditedEntity declared, bool current) =>
         entry.Properties

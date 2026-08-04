@@ -49,10 +49,11 @@ public sealed class AuditCaptureTests : IAsyncLifetime
     {
         Guid userId = await InviteAsync("rename.me@gymos.test");
 
-        using HttpResponseMessage updated = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/users/{userId}", UriKind.Relative),
-            new { firstName = "Renamed", lastName = "Person" });
-        Assert.Equal(HttpStatusCode.NoContent, updated.StatusCode);
+        using HttpResponseMessage updated = await PutAsync(
+            $"/api/v1/users/{userId}",
+            new { firstName = "Renamed", lastName = "Person" },
+            await CurrentRowVersionAsync(userId));
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
 
         AuditRow entry = await LatestAsync("user.updated", userId);
 
@@ -75,13 +76,15 @@ public sealed class AuditCaptureTests : IAsyncLifetime
         Guid userId = await InviteAsync("unchanged@gymos.test");
         int before = await CountAsync("user.updated", userId);
 
-        // Same values as the invite created, twice.
+        // Same values as the invite created, twice. The version is re-read each time because a
+        // no-op update still touches the row's timestamp, and therefore its version.
         for (int attempt = 0; attempt < 2; attempt++)
         {
-            using HttpResponseMessage response = await _client.PutAsJsonAsync(
-                new Uri($"/api/v1/users/{userId}", UriKind.Relative),
-                new { firstName = "Test", lastName = "Invitee" });
-            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            using HttpResponseMessage response = await PutAsync(
+                $"/api/v1/users/{userId}",
+                new { firstName = "Test", lastName = "Invitee" },
+                await CurrentRowVersionAsync(userId));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
 
         // EF marks a property modified when it is *assigned*, not when the value differs. Without
@@ -96,15 +99,17 @@ public sealed class AuditCaptureTests : IAsyncLifetime
         Guid userId = await InviteAsync("role.audited@gymos.test");
         Guid roleId = await RoleIdAsync(SystemRoles.SupportAgent);
 
-        using HttpResponseMessage granted = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/users/{userId}/roles", UriKind.Relative),
-            new { roleIds = new[] { roleId } });
-        Assert.Equal(HttpStatusCode.NoContent, granted.StatusCode);
+        using HttpResponseMessage granted = await PutAsync(
+            $"/api/v1/users/{userId}/roles",
+            new { roleIds = new[] { roleId } },
+            await CurrentRowVersionAsync(userId));
+        Assert.Equal(HttpStatusCode.OK, granted.StatusCode);
 
-        using HttpResponseMessage revoked = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/users/{userId}/roles", UriKind.Relative),
-            new { roleIds = Array.Empty<Guid>() });
-        Assert.Equal(HttpStatusCode.NoContent, revoked.StatusCode);
+        using HttpResponseMessage revoked = await PutAsync(
+            $"/api/v1/users/{userId}/roles",
+            new { roleIds = Array.Empty<Guid>() },
+            await CurrentRowVersionAsync(userId));
+        Assert.Equal(HttpStatusCode.OK, revoked.StatusCode);
 
         // "Who granted whom which role, and when" is the question an access review asks, so the
         // join row is audited in its own right rather than folded into the user.
@@ -194,6 +199,26 @@ public sealed class AuditCaptureTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+    }
+
+    private async Task<HttpResponseMessage> PutAsync(string path, object body, string rowVersion)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(path, UriKind.Relative))
+        {
+            Content = JsonContent.Create(body),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
+
+        return await _client.SendAsync(request);
+    }
+
+    private async Task<string> CurrentRowVersionAsync(Guid userId)
+    {
+        using HttpResponseMessage response = await _client.GetAsync(
+            new Uri($"/api/v1/users/{userId}", UriKind.Relative));
+        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        return body.RootElement.GetProperty("rowVersion").GetString()!;
     }
 
     private async Task<Guid> RoleIdAsync(string roleName)

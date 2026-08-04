@@ -23,10 +23,14 @@ public static class ResultExtensions
 
         Error error = result.Error!;
 
+        int statusCode = StatusCodeByErrorCode.TryGetValue(error.Code, out int mapped)
+            ? mapped
+            : StatusCodeFor(error.Kind);
+
         return Results.Problem(
-            title: TitleFor(error.Kind),
+            title: TitleFor(statusCode, error.Kind),
             detail: error.Message,
-            statusCode: StatusCodeFor(error.Kind),
+            statusCode: statusCode,
             // The stable machine-readable code, in the RFC 7807 extension member
             // clients are meant to branch on. `detail` is for humans and may be reworded.
             extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -34,6 +38,18 @@ public static class ResultExtensions
                 ["code"] = error.Code,
             });
     }
+
+    /// <summary>
+    /// Codes that map to a status their <see cref="ErrorKind"/> alone cannot express. Kept as an
+    /// explicit, tiny table rather than widening ErrorKind: 428 is a fact about HTTP preconditions,
+    /// not a new category of business failure the domain should learn about.
+    /// </summary>
+    private static readonly Dictionary<string, int> StatusCodeByErrorCode = new(StringComparer.Ordinal)
+    {
+        // "Send the precondition and try again" — distinct from 409, which means "you sent one and
+        // it was stale". Telling those apart is the difference between a client bug and a race.
+        ["concurrency.version_required"] = StatusCodes.Status428PreconditionRequired,
+    };
 
     private static int StatusCodeFor(ErrorKind kind) => kind switch
     {
@@ -44,6 +60,11 @@ public static class ResultExtensions
         ErrorKind.Conflict => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status400BadRequest,
     };
+
+    private static string TitleFor(int statusCode, ErrorKind kind) =>
+        statusCode == StatusCodes.Status428PreconditionRequired
+            ? "Precondition required"
+            : TitleFor(kind);
 
     private static string TitleFor(ErrorKind kind) => kind switch
     {

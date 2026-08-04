@@ -15,13 +15,21 @@ namespace GymOS.Platform.Application.Identity.Users;
 /// on a state instead of composing into one nobody chose, and the endpoint is naturally
 /// idempotent.
 /// </summary>
+/// <param name="ExpectedRowVersion">
+/// The version the caller read, from <c>If-Match</c>. Required: the request replaces a role set the
+/// caller previously read, so without it two concurrent edits silently discard one another.
+/// </param>
 [RequiresPermission(PlatformPermissions.UsersManage)]
-public sealed record SetUserRolesCommand(Guid UserId, IReadOnlyCollection<Guid> RoleIds) : ICommand<Result>;
+public sealed record SetUserRolesCommand(
+    Guid UserId,
+    IReadOnlyCollection<Guid> RoleIds,
+    string? ExpectedRowVersion) : ICommand<Result<UserDetail>>;
 
-internal sealed class SetUserRolesCommandHandler : ICommandHandler<SetUserRolesCommand, Result>
+internal sealed class SetUserRolesCommandHandler : ICommandHandler<SetUserRolesCommand, Result<UserDetail>>
 {
     private readonly IUserRepository _users;
     private readonly IRoleRepository _roles;
+    private readonly IUserQueries _userQueries;
     private readonly SuperAdminGuard _superAdminGuard;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICurrentUser _currentUser;
@@ -29,18 +37,22 @@ internal sealed class SetUserRolesCommandHandler : ICommandHandler<SetUserRolesC
     public SetUserRolesCommandHandler(
         IUserRepository users,
         IRoleRepository roles,
+        IUserQueries userQueries,
         SuperAdminGuard superAdminGuard,
         IUnitOfWork unitOfWork,
         ICurrentUser currentUser)
     {
         _users = users;
         _roles = roles;
+        _userQueries = userQueries;
         _superAdminGuard = superAdminGuard;
         _unitOfWork = unitOfWork;
         _currentUser = currentUser;
     }
 
-    public async Task<Result> HandleAsync(SetUserRolesCommand command, CancellationToken cancellationToken)
+    public async Task<Result<UserDetail>> HandleAsync(
+        SetUserRolesCommand command,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
 
@@ -49,13 +61,13 @@ internal sealed class SetUserRolesCommandHandler : ICommandHandler<SetUserRolesC
         // will have to restore by hand.
         if (_currentUser.UserId == command.UserId)
         {
-            return Result.Failure(UserErrors.CannotChangeOwnRoles);
+            return Result.Failure<UserDetail>(UserErrors.CannotChangeOwnRoles);
         }
 
         User? user = await _users.FindByIdAsync(command.UserId, cancellationToken);
         if (user is null)
         {
-            return Result.Failure(UserErrors.NotFound(command.UserId));
+            return Result.Failure<UserDetail>(UserErrors.NotFound(command.UserId));
         }
 
         var requestedRoleIds = (command.RoleIds ?? []).Distinct().ToList();
@@ -64,20 +76,27 @@ internal sealed class SetUserRolesCommandHandler : ICommandHandler<SetUserRolesC
         var missing = requestedRoleIds.Where(id => requestedRoles.All(role => role.Id != id)).ToList();
         if (missing.Count > 0)
         {
-            return Result.Failure(UserErrors.UnknownRole(missing[0]));
+            return Result.Failure<UserDetail>(UserErrors.UnknownRole(missing[0]));
         }
 
         Role? tenantScoped = requestedRoles.FirstOrDefault(role => role.Scope != RoleScope.Platform);
         if (tenantScoped is not null)
         {
-            return Result.Failure(UserErrors.TenantRoleNotAssignable(tenantScoped.Name));
+            return Result.Failure<UserDetail>(UserErrors.TenantRoleNotAssignable(tenantScoped.Name));
         }
 
         Result guard = await _superAdminGuard.EnsureRoleChangeKeepsASuperAdminAsync(
             user, requestedRoleIds, cancellationToken);
         if (guard.IsFailure)
         {
-            return guard;
+            return Result.Failure<UserDetail>(guard.Error!);
+        }
+
+        Result version = UserWrites.ApplyExpectedVersion(
+            _users, user, command.ExpectedRowVersion, versionRequired: true);
+        if (version.IsFailure)
+        {
+            return Result.Failure<UserDetail>(version.Error!);
         }
 
         // The delta is computed up front, against a snapshot of the current assignments:
@@ -99,7 +118,16 @@ internal sealed class SetUserRolesCommandHandler : ICommandHandler<SetUserRolesC
             user.AssignRole(roleId);
         }
 
+        // Role rows live in a child table, so without this the users row is never updated and its
+        // version never moves — leaving concurrent role edits unprotected. Only when something
+        // actually changed: a no-op PUT should not invent a new version for clients to chase.
+        if (!currentRoleIds.ToHashSet().SetEquals(requestedRoleIds))
+        {
+            _users.MarkAggregateChanged(user);
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        return Result.Success();
+
+        return await UserWrites.ReadBackAsync(_userQueries, command.UserId, cancellationToken);
     }
 }

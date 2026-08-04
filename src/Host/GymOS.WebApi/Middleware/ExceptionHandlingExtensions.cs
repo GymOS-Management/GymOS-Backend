@@ -1,5 +1,7 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Security;
 using GymOS.SharedKernel;
+using GymOS.SharedKernel.Rules;
 using Microsoft.AspNetCore.Diagnostics;
 
 namespace GymOS.WebApi.Middleware;
@@ -9,9 +11,9 @@ namespace GymOS.WebApi.Middleware;
 /// lets everything else fall through to the framework's 500.
 ///
 /// The list is short on purpose. Business failures are <c>Result</c> values, not exceptions
-/// (house pattern), so only two kinds reach here: a permission check the endpoint policy
-/// should already have made, and a domain invariant breach — which is a defect, reported as
-/// one.
+/// (house pattern), so only three kinds reach here: a permission check the endpoint policy should
+/// already have made, a concurrency conflict the store detected below any handler, and a domain
+/// invariant breach — which is a defect, reported as one.
 /// </summary>
 public static class ExceptionHandlingExtensions
 {
@@ -20,9 +22,50 @@ public static class ExceptionHandlingExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddExceptionHandler<PermissionDeniedExceptionHandler>();
+        services.AddExceptionHandler<ConcurrencyConflictExceptionHandler>();
         services.AddExceptionHandler<DomainExceptionHandler>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Someone else changed the resource between the caller's read and their write
+    /// (ARCHITECTURE.md §3).
+    ///
+    /// The response says what to do about it, because "409 Conflict" alone leaves a client
+    /// guessing whether to retry, and a blind retry loop against a stale version never succeeds.
+    /// </summary>
+    private sealed class ConcurrencyConflictExceptionHandler : IExceptionHandler
+    {
+        public async ValueTask<bool> TryHandleAsync(
+            HttpContext httpContext,
+            Exception exception,
+            CancellationToken cancellationToken)
+        {
+            if (exception is not ConcurrencyConflictException)
+            {
+                return false;
+            }
+
+            await Results.Problem(
+                title: "Conflict",
+                detail:
+                    "The resource changed after you read it, so the update was not applied. " +
+                    "Re-read the resource, re-apply your change to the current state, and retry " +
+                    "with the new rowVersion. Retrying with the same version will always fail.",
+                statusCode: StatusCodes.Status409Conflict,
+                extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["code"] = "concurrency.conflict",
+
+                    // Explicitly false: a conflict is not transient, and a client that retries
+                    // unchanged will loop forever.
+                    ["retryable"] = false,
+                })
+                .ExecuteAsync(httpContext).ConfigureAwait(false);
+
+            return true;
+        }
     }
 
     /// <summary>
@@ -72,10 +115,15 @@ public static class ExceptionHandlingExtensions
             Exception exception,
             CancellationToken cancellationToken)
         {
-            if (exception is not DomainException)
+            if (exception is not DomainException domainException)
             {
                 return false;
             }
+
+            // A broken business rule that reached here was not validated by the handler that should
+            // have — still our defect, still a 500, but naming the rule turns an opaque incident
+            // into a one-line diagnosis.
+            string? brokenRule = (domainException as BusinessRuleViolationException)?.Code;
 
             await Results.Problem(
                 title: "Unexpected error",
@@ -84,6 +132,7 @@ public static class ExceptionHandlingExtensions
                 extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
                     ["code"] = "server.invariant_violation",
+                    ["brokenRule"] = brokenRule,
                 })
                 .ExecuteAsync(httpContext).ConfigureAwait(false);
 

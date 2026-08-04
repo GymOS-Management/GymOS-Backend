@@ -58,8 +58,9 @@ public static class UserEndpoints
             .WithSummary("Create an administrator account")
             .WithDescription(
                 "The account is created without a password, in PendingActivation, and cannot " +
-                "sign in until its owner sets one. No administrator ever sets another's password.")
-            .Produces<CreatedResourceResponse>(StatusCodes.Status201Created)
+                "sign in until its owner sets one. No administrator ever sets another's password. " +
+                "Returns the created administrator and its `ETag`, so no follow-up GET is needed.")
+            .Produces<UserDetail>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -69,11 +70,17 @@ public static class UserEndpoints
             .RequireAuthorization(PlatformPermissions.UsersManage)
             .WithName("UpdateUser")
             .WithSummary("Change an administrator's name")
-            .WithDescription("Email is not editable here — it is the login identity and the audit key.")
-            .Produces(StatusCodes.Status204NoContent)
+            .WithDescription(
+                "Email is not editable here — it is the login identity and the audit key. " +
+                "Requires `If-Match` carrying the `rowVersion` you read: without it the request " +
+                "is refused with 428, and a stale version with 409. Returns the updated " +
+                "administrator and its new `ETag`.")
+            .Produces<UserDetail>()
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound);
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         group.MapPost("/{userId:guid}/suspend", SuspendAsync)
             .RequireAuthorization(PlatformPermissions.UsersManage)
@@ -82,8 +89,10 @@ public static class UserEndpoints
             .WithDescription(
                 "Rotates the security stamp and revokes every refresh token, so access ends " +
                 "immediately rather than at token expiry. Refused for your own account, and " +
-                "for the last active SuperAdmin.")
-            .Produces(StatusCodes.Status204NoContent)
+                "for the last active SuperAdmin. `If-Match` is honored when supplied but not " +
+                "required — the lifecycle transition rules already refuse the unsafe orderings. " +
+                "Returns the updated administrator.")
+            .Produces<UserDetail>()
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -95,8 +104,9 @@ public static class UserEndpoints
             .WithSummary("Lift a suspension")
             .WithDescription(
                 "An account that never set a password returns to PendingActivation rather " +
-                "than becoming usable.")
-            .Produces(StatusCodes.Status204NoContent)
+                "than becoming usable. `If-Match` is honored when supplied but not required. " +
+                "Returns the updated administrator.")
+            .Produces<UserDetail>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);
@@ -107,12 +117,14 @@ public static class UserEndpoints
             .WithSummary("Replace an administrator's roles")
             .WithDescription(
                 "Declarative: send the complete set. Refused for your own account, and refused " +
-                "when it would remove the role from the last active SuperAdmin.")
-            .Produces(StatusCodes.Status204NoContent)
+                "when it would remove the role from the last active SuperAdmin. Requires " +
+                "`If-Match` carrying the `rowVersion` you read. Returns the updated administrator.")
+            .Produces<UserDetail>()
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict);
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         return endpoints;
     }
@@ -141,7 +153,9 @@ public static class UserEndpoints
     {
         Result<UserDetail> result = await dispatcher.QueryAsync(new GetUserQuery(userId), cancellationToken);
 
-        return result.IsSuccess ? TypedResults.Ok(result.Value) : result.ToProblem();
+        // This ETag is exactly what a client sends back as If-Match, so read and write share one
+        // version token rather than two representations that could drift.
+        return WriteResults.Read(result, result.IsSuccess ? result.Value.RowVersion : null);
     }
 
     private static async Task<IResult> InviteAsync(
@@ -149,61 +163,75 @@ public static class UserEndpoints
         IDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        Result<Guid> result = await dispatcher.SendAsync(
+        Result<UserDetail> result = await dispatcher.SendAsync(
             new InviteUserCommand(request.Email, request.FirstName, request.LastName, request.RoleIds ?? []),
             cancellationToken);
 
-        return result.IsSuccess
-            ? TypedResults.Created($"/api/v1/users/{result.Value}", new CreatedResourceResponse(result.Value))
-            : result.ToProblem();
+        return WriteResults.Created(
+            result,
+            location: result.IsSuccess ? $"/api/v1/users/{result.Value.Id}" : string.Empty,
+            rowVersion: result.IsSuccess ? result.Value.RowVersion : null);
     }
 
     private static async Task<IResult> UpdateAsync(
         Guid userId,
         UpdateUserRequest request,
+        HttpContext httpContext,
         IDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        Result result = await dispatcher.SendAsync(
-            new UpdateUserCommand(userId, request.FirstName, request.LastName),
+        Result<UserDetail> result = await dispatcher.SendAsync(
+            new UpdateUserCommand(
+                userId,
+                request.FirstName,
+                request.LastName,
+                PreconditionHeaders.IfMatch(httpContext.Request)),
             cancellationToken);
 
-        return result.IsSuccess ? TypedResults.NoContent() : result.ToProblem();
+        return WriteResults.Updated(result, result.IsSuccess ? result.Value.RowVersion : null);
     }
 
     private static async Task<IResult> SuspendAsync(
         Guid userId,
         SuspendUserRequest request,
+        HttpContext httpContext,
         IDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        Result result = await dispatcher.SendAsync(
-            new SuspendUserCommand(userId, request.Reason),
+        Result<UserDetail> result = await dispatcher.SendAsync(
+            new SuspendUserCommand(userId, request.Reason, PreconditionHeaders.IfMatch(httpContext.Request)),
             cancellationToken);
 
-        return result.IsSuccess ? TypedResults.NoContent() : result.ToProblem();
+        return WriteResults.Updated(result, result.IsSuccess ? result.Value.RowVersion : null);
     }
 
     private static async Task<IResult> ReactivateAsync(
         Guid userId,
+        HttpContext httpContext,
         IDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        Result result = await dispatcher.SendAsync(new ReactivateUserCommand(userId), cancellationToken);
+        Result<UserDetail> result = await dispatcher.SendAsync(
+            new ReactivateUserCommand(userId, PreconditionHeaders.IfMatch(httpContext.Request)),
+            cancellationToken);
 
-        return result.IsSuccess ? TypedResults.NoContent() : result.ToProblem();
+        return WriteResults.Updated(result, result.IsSuccess ? result.Value.RowVersion : null);
     }
 
     private static async Task<IResult> SetRolesAsync(
         Guid userId,
         SetUserRolesRequest request,
+        HttpContext httpContext,
         IDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        Result result = await dispatcher.SendAsync(
-            new SetUserRolesCommand(userId, request.RoleIds ?? []),
+        Result<UserDetail> result = await dispatcher.SendAsync(
+            new SetUserRolesCommand(
+                userId,
+                request.RoleIds ?? [],
+                PreconditionHeaders.IfMatch(httpContext.Request)),
             cancellationToken);
 
-        return result.IsSuccess ? TypedResults.NoContent() : result.ToProblem();
+        return WriteResults.Updated(result, result.IsSuccess ? result.Value.RowVersion : null);
     }
 }

@@ -1,5 +1,6 @@
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
+using GymOS.Platform.Application.Identity.Abstractions;
 using GymOS.Platform.Application.Identity.Users;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
@@ -24,7 +25,7 @@ public sealed class AuthorizationBehaviorTests
         // misconfigured, and a defect should be loud rather than shaped like a normal answer.
         PermissionDeniedException denied = await Assert.ThrowsAsync<PermissionDeniedException>(() =>
             context.Dispatcher.SendAsync(
-                new UpdateUserCommand(Guid.NewGuid(), "New", "Name"), CancellationToken.None));
+                new UpdateUserCommand(Guid.NewGuid(), "New", "Name", "1"), CancellationToken.None));
 
         Assert.Equal(PlatformPermissions.UsersManage, denied.Permission);
         Assert.Equal(nameof(UpdateUserCommand), denied.RequestName);
@@ -37,8 +38,8 @@ public sealed class AuthorizationBehaviorTests
         User target = context.GivenActiveUser("target@gymos.test");
         context.ActingAs(Guid.NewGuid(), PlatformPermissions.UsersManage);
 
-        Result result = await context.Dispatcher.SendAsync(
-            new UpdateUserCommand(target.Id, "Renamed", "Administrator"), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new UpdateUserCommand(target.Id, "Renamed", "Administrator", "1"), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal("Renamed", target.FirstName);
@@ -53,7 +54,7 @@ public sealed class AuthorizationBehaviorTests
         // the behavior refuses without a lookup.
         await Assert.ThrowsAsync<PermissionDeniedException>(() =>
             context.Dispatcher.SendAsync(
-                new SuspendUserCommand(Guid.NewGuid(), "because"), CancellationToken.None));
+                new SuspendUserCommand(Guid.NewGuid(), "because", "1"), CancellationToken.None));
     }
 
     [Fact]
@@ -66,7 +67,7 @@ public sealed class AuthorizationBehaviorTests
         // (AD-22: no wildcards, because a hierarchy makes "who can do X?" unanswerable).
         await Assert.ThrowsAsync<PermissionDeniedException>(() =>
             context.Dispatcher.SendAsync(
-                new UpdateUserCommand(Guid.NewGuid(), "New", "Name"), CancellationToken.None));
+                new UpdateUserCommand(Guid.NewGuid(), "New", "Name", "1"), CancellationToken.None));
     }
 
     [Fact]

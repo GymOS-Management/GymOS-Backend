@@ -84,7 +84,14 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
         });
 
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        Guid invitedId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        // 201 carries the created resource and its ETag, so a client needs no follow-up read.
+        JsonElement createdBody = await created.Content.ReadFromJsonAsync<JsonElement>();
+        Guid invitedId = createdBody.GetProperty("id").GetGuid();
+        Assert.Equal(nameof(UserStatus.PendingActivation), createdBody.GetProperty("status").GetString());
+        Assert.NotNull(created.Headers.ETag);
+        Assert.Equal($"\"{createdBody.GetProperty("rowVersion").GetString()}\"", created.Headers.ETag!.ToString());
+        Assert.Equal($"/api/v1/users/{invitedId}", created.Headers.Location!.ToString());
 
         using HttpResponseMessage detail = await _client.GetAsync(
             new Uri($"/api/v1/users/{invitedId}", UriKind.Relative));
@@ -171,7 +178,7 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
         using HttpResponseMessage suspended = await _client.PostAsJsonAsync(
             new Uri($"/api/v1/users/{victimId}/suspend", UriKind.Relative),
             new { reason = "Compromised credentials" });
-        Assert.Equal(HttpStatusCode.NoContent, suspended.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, suspended.StatusCode);
 
         // The access token is still signed and unexpired — and refused, because suspension
         // rotated the security stamp the validator checks (AD-4).
@@ -320,22 +327,43 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
             roleIds = Array.Empty<Guid>(),
         });
 
-        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        Assert.True(
+            created.StatusCode == HttpStatusCode.Created,
+            $"Expected 201 inviting {email}, got {(int)created.StatusCode}: " +
+            await created.Content.ReadAsStringAsync());
+
         return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
     }
 
     private async Task SetRolesAsync(Guid userId, params Guid[] roleIds)
     {
-        using HttpResponseMessage response = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/users/{userId}/roles", UriKind.Relative),
-            new { roleIds });
+        // Read first for the version: the endpoint requires If-Match, which is the point.
+        string rowVersion = await CurrentRowVersionAsync(userId);
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, new Uri($"/api/v1/users/{userId}/roles", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { roleIds }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
+
+        using HttpResponseMessage response = await _client.SendAsync(request);
 
         // Body included in the message: a helper that fails with a bare status code sends the
         // reader hunting through logs for the reason.
         Assert.True(
-            response.StatusCode == HttpStatusCode.NoContent,
-            $"Expected 204 setting roles, got {(int)response.StatusCode}: " +
+            response.StatusCode == HttpStatusCode.OK,
+            $"Expected 200 setting roles, got {(int)response.StatusCode}: " +
             await response.Content.ReadAsStringAsync());
+    }
+
+    private async Task<string> CurrentRowVersionAsync(Guid userId)
+    {
+        using HttpResponseMessage response = await _client.GetAsync(
+            new Uri($"/api/v1/users/{userId}", UriKind.Relative));
+        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        return body.RootElement.GetProperty("rowVersion").GetString()!;
     }
 
     private async Task<Guid> FindUserIdAsync(string email)

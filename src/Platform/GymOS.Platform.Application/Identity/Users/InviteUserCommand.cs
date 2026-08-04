@@ -21,28 +21,34 @@ public sealed record InviteUserCommand(
     string Email,
     string FirstName,
     string LastName,
-    IReadOnlyCollection<Guid> RoleIds) : ICommand<Result<Guid>>;
+    IReadOnlyCollection<Guid> RoleIds) : ICommand<Result<UserDetail>>;
 
-internal sealed class InviteUserCommandHandler : ICommandHandler<InviteUserCommand, Result<Guid>>
+internal sealed class InviteUserCommandHandler : ICommandHandler<InviteUserCommand, Result<UserDetail>>
 {
     private readonly IUserRepository _users;
     private readonly IRoleRepository _roles;
+    private readonly IUserQueries _userQueries;
     private readonly IUnitOfWork _unitOfWork;
 
-    public InviteUserCommandHandler(IUserRepository users, IRoleRepository roles, IUnitOfWork unitOfWork)
+    public InviteUserCommandHandler(
+        IUserRepository users,
+        IRoleRepository roles,
+        IUserQueries userQueries,
+        IUnitOfWork unitOfWork)
     {
         _users = users;
         _roles = roles;
+        _userQueries = userQueries;
         _unitOfWork = unitOfWork;
     }
 
-    public async Task<Result<Guid>> HandleAsync(InviteUserCommand command, CancellationToken cancellationToken)
+    public async Task<Result<UserDetail>> HandleAsync(InviteUserCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
 
         if (string.IsNullOrWhiteSpace(command.Email) || !command.Email.Contains('@', StringComparison.Ordinal))
         {
-            return Result.Failure<Guid>(UserErrors.InvalidEmail(command.Email ?? string.Empty));
+            return Result.Failure<UserDetail>(UserErrors.InvalidEmail(command.Email ?? string.Empty));
         }
 
         string normalizedEmail = User.Normalize(command.Email);
@@ -51,13 +57,13 @@ internal sealed class InviteUserCommandHandler : ICommandHandler<InviteUserComma
         // than a database exception, and the index remains the actual guarantee under a race.
         if (await _users.FindByNormalizedEmailAsync(normalizedEmail, cancellationToken) is not null)
         {
-            return Result.Failure<Guid>(UserErrors.EmailTaken(command.Email));
+            return Result.Failure<UserDetail>(UserErrors.EmailTaken(command.Email));
         }
 
         Result<IReadOnlyList<Role>> roles = await ResolveRolesAsync(command.RoleIds, cancellationToken);
         if (roles.IsFailure)
         {
-            return Result.Failure<Guid>(roles.Error!);
+            return Result.Failure<UserDetail>(roles.Error!);
         }
 
         User user;
@@ -69,11 +75,11 @@ internal sealed class InviteUserCommandHandler : ICommandHandler<InviteUserComma
         {
             // Blank names reach the domain as an argument violation; report it as input
             // validation rather than letting it surface as a 500.
-            return Result.Failure<Guid>(Error.Validation("users.invalid_input", exception.Message));
+            return Result.Failure<UserDetail>(Error.Validation("users.invalid_input", exception.Message));
         }
         catch (DomainException exception)
         {
-            return Result.Failure<Guid>(Error.Validation("users.invalid_input", exception.Message));
+            return Result.Failure<UserDetail>(Error.Validation("users.invalid_input", exception.Message));
         }
 
         foreach (Role role in roles.Value)
@@ -84,7 +90,14 @@ internal sealed class InviteUserCommandHandler : ICommandHandler<InviteUserComma
         _users.Add(user);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return Result.Success(user.Id);
+        // Read back rather than mapping the aggregate: the response then carries the same shape,
+        // resolved permissions, and row version a subsequent GET would return, so a client never
+        // has to reconcile two representations of the resource it just created.
+        UserDetail? created = await _userQueries.GetAsync(user.Id, cancellationToken);
+
+        return created is null
+            ? Result.Failure<UserDetail>(UserErrors.NotFound(user.Id))
+            : Result.Success(created);
     }
 
     private async Task<Result<IReadOnlyList<Role>>> ResolveRolesAsync(

@@ -43,6 +43,21 @@ public static class UserErrors
         "users.cannot_change_own_roles",
         "You cannot change your own roles. Ask another administrator.");
 
+    /// <summary>
+    /// A PUT arrived with no <c>If-Match</c>. Refused rather than defaulted, because defaulting to
+    /// "overwrite whatever is there" is last-write-wins with extra steps. 428 at the HTTP edge —
+    /// the status that exists to say "send the precondition and try again".
+    /// </summary>
+    public static Error VersionRequired => Error.Conflict(
+        "concurrency.version_required",
+        "This update requires an If-Match header carrying the rowVersion you read. " +
+        "Re-read the resource and send its version.");
+
+    public static Error MalformedVersion => Error.Validation(
+        "concurrency.malformed_version",
+        "The If-Match header is not a version token issued by this API. " +
+        "Send the rowVersion from the resource, quoted, without a weak (W/) prefix.");
+
     public static Error NotSuspended => Error.Conflict(
         "users.not_suspended",
         "Only a suspended administrator can be reactivated.");

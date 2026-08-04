@@ -3,6 +3,7 @@ using GymOS.BuildingBlocks.Application.Models;
 using GymOS.Platform.Application.Identity.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
+using RowVersion = GymOS.BuildingBlocks.Application.Abstractions.RowVersion;
 
 namespace GymOS.Platform.Infrastructure.Persistence.Queries;
 
@@ -110,6 +111,10 @@ internal sealed class UserQueries : IUserQueries
                 user.LockedOutUntilUtc,
                 user.PasswordChangedAtUtc,
                 user.CreatedAtUtc,
+
+                // PostgreSQL's own row version, mapped as a shadow concurrency token. Read here
+                // rather than maintained by hand, so it cannot drift from what the store enforces.
+                RowVersion = EF.Property<uint>(user, "xmin"),
                 Roles = _dbContext.Set<UserRole>()
                     .Where(assignment => assignment.UserId == user.Id)
                     .Join(
@@ -147,7 +152,8 @@ internal sealed class UserQueries : IUserQueries
             projection.PasswordChangedAtUtc,
             projection.CreatedAtUtc,
             projection.Roles,
-            permissions);
+            permissions,
+            RowVersion.ToToken(projection.RowVersion));
     }
 
     public async Task<int> CountActiveUsersInRoleAsync(string roleName, CancellationToken cancellationToken)

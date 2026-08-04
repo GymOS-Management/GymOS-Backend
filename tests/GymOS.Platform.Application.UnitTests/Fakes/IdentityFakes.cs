@@ -27,6 +27,31 @@ internal sealed class FakeUserRepository : IUserRepository
         Task.FromResult(_users.SingleOrDefault(user => user.Id == userId));
 
     public void Add(User user) => _users.Add(user);
+
+    /// <summary>
+    /// Records the expectation and, when <see cref="ConflictingVersion"/> matches it, simulates the
+    /// store refusing the write. The real check happens in PostgreSQL, so this is the only way a
+    /// handler test can cover the conflict path at all.
+    /// </summary>
+    public void ExpectVersion(User user, uint expectedVersion)
+    {
+        ExpectedVersions[user.Id] = expectedVersion;
+
+        if (ConflictingVersion == expectedVersion)
+        {
+            throw new ConcurrencyConflictException();
+        }
+    }
+
+    public Dictionary<Guid, uint> ExpectedVersions { get; } = [];
+
+    /// <summary>Ids whose aggregate version was deliberately advanced.</summary>
+    public HashSet<Guid> AggregateChanges { get; } = [];
+
+    public void MarkAggregateChanged(User user) => AggregateChanges.Add(user.Id);
+
+    /// <summary>Set to make <see cref="ExpectVersion"/> behave as a stale-version write.</summary>
+    public uint? ConflictingVersion { get; set; }
 }
 
 internal sealed class FakeRefreshTokenRepository : IRefreshTokenRepository
@@ -160,13 +185,44 @@ internal sealed class FakeRoleRepository : IRoleRepository
 /// </summary>
 internal sealed class FakeUserQueries : IUserQueries
 {
+    private readonly FakeUserRepository _users;
+
+    /// <summary>
+    /// Projects from the same in-memory aggregates the write side mutates, so a handler that
+    /// returns the resource it just changed is checked against real state rather than a fixture
+    /// that could disagree with it.
+    /// </summary>
+    public FakeUserQueries(FakeUserRepository users) => _users = users;
+
     public Dictionary<string, int> ActiveUsersPerRole { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Incremented on each read, so a "version changed" assertion has something to see.</summary>
+    public uint RowVersion { get; set; } = 1;
 
     public Task<PagedResult<UserListItem>> ListAsync(UserListFilter filter, CancellationToken cancellationToken) =>
         Task.FromResult(PagedResult.Empty<UserListItem>(filter.Page));
 
-    public Task<UserDetail?> GetAsync(Guid userId, CancellationToken cancellationToken) =>
-        Task.FromResult<UserDetail?>(null);
+    public Task<UserDetail?> GetAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        User? user = _users.Users.SingleOrDefault(candidate => candidate.Id == userId);
+
+        return Task.FromResult(user is null
+            ? null
+            : new UserDetail(
+                user.Id,
+                user.Email,
+                user.FirstName,
+                user.LastName,
+                user.Status.ToString(),
+                user.SuspensionReason,
+                user.LastLoginAtUtc,
+                user.LockedOutUntilUtc,
+                user.PasswordChangedAtUtc,
+                user.CreatedAtUtc,
+                user.Roles.Select(role => new RoleSummary(role.RoleId, "role", "seeded")).ToList(),
+                [],
+                RowVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+    }
 
     public Task<int> CountActiveUsersInRoleAsync(string roleName, CancellationToken cancellationToken) =>
         Task.FromResult(ActiveUsersPerRole.TryGetValue(roleName, out int count) ? count : 0);

@@ -33,6 +33,8 @@ internal sealed class IdentityTestContext
         configurePolicy?.Invoke(policy);
         Policy = policy;
 
+        UserQueries = new FakeUserQueries(Users);
+
         var services = new ServiceCollection();
 
         services.AddCqrsDispatcher();
@@ -80,7 +82,7 @@ internal sealed class IdentityTestContext
 
     public FakeRoleRepository Roles { get; } = new();
 
-    public FakeUserQueries UserQueries { get; } = new();
+    public FakeUserQueries UserQueries { get; }
 
     public FakeCurrentUser CurrentUser { get; } = new();
 

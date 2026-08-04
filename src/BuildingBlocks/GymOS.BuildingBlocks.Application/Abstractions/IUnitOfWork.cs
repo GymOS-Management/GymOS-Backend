@@ -9,5 +9,10 @@ namespace GymOS.BuildingBlocks.Application.Abstractions;
 /// </summary>
 public interface IUnitOfWork
 {
+    /// <exception cref="ConcurrencyConflictException">
+    /// A row carrying a concurrency token changed after it was read. Implementations translate
+    /// the provider's own concurrency failure into this, so no handler and no endpoint has to
+    /// know what the persistence layer throws.
+    /// </exception>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 }

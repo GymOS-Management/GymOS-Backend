@@ -1,5 +1,6 @@
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.Platform.Application.Identity;
+using GymOS.Platform.Application.Identity.Abstractions;
 using GymOS.Platform.Application.Identity.Users;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
@@ -21,7 +22,7 @@ public sealed class UserManagementTests
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
         Role admin = context.GivenPlatformRole(SystemRoles.PlatformAdmin);
 
-        Result<Guid> result = await context.Dispatcher.SendAsync(
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand("new.admin@gymos.test", "New", "Admin", [admin.Id]),
             CancellationToken.None);
 
@@ -39,7 +40,7 @@ public sealed class UserManagementTests
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
         User existing = context.GivenActiveUser("taken@gymos.test");
 
-        Result<Guid> result = await context.Dispatcher.SendAsync(
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand(existing.Email.ToUpperInvariant(), "Someone", "Else", []),
             CancellationToken.None);
 
@@ -55,7 +56,7 @@ public sealed class UserManagementTests
     {
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
 
-        Result<Guid> result = await context.Dispatcher.SendAsync(
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand(email, "New", "Admin", []),
             CancellationToken.None);
 
@@ -68,7 +69,7 @@ public sealed class UserManagementTests
     {
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
 
-        Result<Guid> result = await context.Dispatcher.SendAsync(
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand("new.admin@gymos.test", "New", "Admin", [Guid.NewGuid()]),
             CancellationToken.None);
 
@@ -83,7 +84,7 @@ public sealed class UserManagementTests
         Role tenantRole = Role.Create("Reception", "Front desk", RoleScope.Tenant, tenantId: Guid.NewGuid());
         context.Roles.Seed(tenantRole);
 
-        Result<Guid> result = await context.Dispatcher.SendAsync(
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand("new.admin@gymos.test", "New", "Admin", [tenantRole.Id]),
             CancellationToken.None);
 
@@ -99,8 +100,8 @@ public sealed class UserManagementTests
         RefreshToken session = context.GivenRefreshToken(target.Id, "raw-target");
         Guid stampBefore = target.SecurityStamp;
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SuspendUserCommand(target.Id, "Left the company"), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SuspendUserCommand(target.Id, "Left the company", "1"), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(UserStatus.Suspended, target.Status);
@@ -118,8 +119,8 @@ public sealed class UserManagementTests
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
         User target = context.GivenActiveUser("target@gymos.test");
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SuspendUserCommand(target.Id, "   "), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SuspendUserCommand(target.Id, "   ", "1"), CancellationToken.None);
 
         Assert.Equal("users.reason_required", result.Error!.Code);
         Assert.Equal(UserStatus.Active, target.Status);
@@ -132,8 +133,8 @@ public sealed class UserManagementTests
         User self = context.GivenActiveUser("self@gymos.test");
         context.ActingAs(self.Id, Manage);
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SuspendUserCommand(self.Id, "Oops"), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SuspendUserCommand(self.Id, "Oops", "1"), CancellationToken.None);
 
         // Recoverable only by another administrator — and possibly by nobody.
         Assert.Equal(UserErrors.CannotSuspendSelf, result.Error);
@@ -149,8 +150,8 @@ public sealed class UserManagementTests
         target.AssignRole(superAdmin.Id);
         context.UserQueries.ActiveUsersPerRole[SystemRoles.SuperAdmin] = 1;
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SuspendUserCommand(target.Id, "Cleaning up"), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SuspendUserCommand(target.Id, "Cleaning up", "1"), CancellationToken.None);
 
         Assert.Equal(UserErrors.LastSuperAdmin, result.Error);
         Assert.Equal(UserStatus.Active, target.Status);
@@ -165,8 +166,8 @@ public sealed class UserManagementTests
         target.AssignRole(superAdmin.Id);
         context.UserQueries.ActiveUsersPerRole[SystemRoles.SuperAdmin] = 2;
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SuspendUserCommand(target.Id, "Leave of absence"), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SuspendUserCommand(target.Id, "Leave of absence", "1"), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(UserStatus.Suspended, target.Status);
@@ -180,8 +181,8 @@ public sealed class UserManagementTests
         invited.Suspend("Invited then suspended", IdentityTestContext.Start);
         context.Users.Seed(invited);
 
-        Result result = await context.Dispatcher.SendAsync(
-            new ReactivateUserCommand(invited.Id), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new ReactivateUserCommand(invited.Id, "1"), CancellationToken.None);
 
         // Reactivating must not hand out a working login the owner never had.
         Assert.True(result.IsSuccess);
@@ -194,8 +195,8 @@ public sealed class UserManagementTests
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
         User target = context.GivenActiveUser("active@gymos.test");
 
-        Result result = await context.Dispatcher.SendAsync(
-            new ReactivateUserCommand(target.Id), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new ReactivateUserCommand(target.Id, "1"), CancellationToken.None);
 
         Assert.Equal(UserErrors.NotSuspended, result.Error);
     }
@@ -209,8 +210,8 @@ public sealed class UserManagementTests
         User target = context.GivenActiveUser("target@gymos.test");
         target.AssignRole(support.Id);
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SetUserRolesCommand(target.Id, [billing.Id]), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SetUserRolesCommand(target.Id, [billing.Id], "1"), CancellationToken.None);
 
         // Declarative: the sent set is the resulting set, so two clients converge instead of
         // composing into a state neither chose.
@@ -226,8 +227,8 @@ public sealed class UserManagementTests
         User target = context.GivenActiveUser("target@gymos.test");
         target.AssignRole(support.Id);
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SetUserRolesCommand(target.Id, []), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SetUserRolesCommand(target.Id, [], "1"), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Empty(target.Roles);
@@ -241,8 +242,8 @@ public sealed class UserManagementTests
         User self = context.GivenActiveUser("self@gymos.test");
         context.ActingAs(self.Id, Manage);
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SetUserRolesCommand(self.Id, [superAdmin.Id]), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SetUserRolesCommand(self.Id, [superAdmin.Id], "1"), CancellationToken.None);
 
         // Blocks self-elevation and self-demotion in one rule.
         Assert.Equal(UserErrors.CannotChangeOwnRoles, result.Error);
@@ -259,8 +260,8 @@ public sealed class UserManagementTests
         target.AssignRole(superAdmin.Id);
         context.UserQueries.ActiveUsersPerRole[SystemRoles.SuperAdmin] = 1;
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SetUserRolesCommand(target.Id, [support.Id]), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SetUserRolesCommand(target.Id, [support.Id], "1"), CancellationToken.None);
 
         Assert.Equal(UserErrors.LastSuperAdmin, result.Error);
         Assert.Contains(target.Roles, assignment => assignment.RoleId == superAdmin.Id);
@@ -276,8 +277,8 @@ public sealed class UserManagementTests
         target.AssignRole(superAdmin.Id);
         context.UserQueries.ActiveUsersPerRole[SystemRoles.SuperAdmin] = 1;
 
-        Result result = await context.Dispatcher.SendAsync(
-            new SetUserRolesCommand(target.Id, [superAdmin.Id, billing.Id]), CancellationToken.None);
+        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+            new SetUserRolesCommand(target.Id, [superAdmin.Id, billing.Id], "1"), CancellationToken.None);
 
         // The guard protects the role, not the row: an edit that keeps SuperAdmin is fine.
         Assert.True(result.IsSuccess);
@@ -291,11 +292,11 @@ public sealed class UserManagementTests
         var absent = Guid.NewGuid();
 
         Result update = await context.Dispatcher.SendAsync(
-            new UpdateUserCommand(absent, "A", "B"), CancellationToken.None);
+            new UpdateUserCommand(absent, "A", "B", "1"), CancellationToken.None);
         Result suspend = await context.Dispatcher.SendAsync(
-            new SuspendUserCommand(absent, "reason"), CancellationToken.None);
+            new SuspendUserCommand(absent, "reason", "1"), CancellationToken.None);
         Result roles = await context.Dispatcher.SendAsync(
-            new SetUserRolesCommand(absent, []), CancellationToken.None);
+            new SetUserRolesCommand(absent, [], "1"), CancellationToken.None);
 
         Assert.All(
             new[] { update, suspend, roles },

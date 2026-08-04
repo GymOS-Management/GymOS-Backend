@@ -20,6 +20,3 @@ public sealed record SuspendUserRequest(string Reason);
 /// removes every role.
 /// </param>
 public sealed record SetUserRolesRequest(IReadOnlyCollection<Guid> RoleIds);
-
-/// <summary>Identifies a newly created resource without echoing a body the caller already has.</summary>
-public sealed record CreatedResourceResponse(Guid Id);

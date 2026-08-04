@@ -143,18 +143,6 @@
         ],
         "type": "object"
       },
-      "CreatedResourceResponse": {
-        "properties": {
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "type": "object"
-      },
       "CurrentUserResponse": {
         "properties": {
           "email": {
@@ -535,6 +523,9 @@
             },
             "type": "array"
           },
+          "rowVersion": {
+            "type": "string"
+          },
           "status": {
             "type": "string"
           },
@@ -557,7 +548,8 @@
           "passwordChangedAtUtc",
           "createdAtUtc",
           "roles",
-          "permissions"
+          "permissions",
+          "rowVersion"
         ],
         "type": "object"
       },
@@ -1220,7 +1212,7 @@
         ]
       },
       "post": {
-        "description": "The account is created without a password, in PendingActivation, and cannot sign in until its owner sets one. No administrator ever sets another\u0027s password.",
+        "description": "The account is created without a password, in PendingActivation, and cannot sign in until its owner sets one. No administrator ever sets another\u0027s password. Returns the created administrator and its \u0060ETag\u0060, so no follow-up GET is needed.",
         "operationId": "InviteUser",
         "requestBody": {
           "content": {
@@ -1237,7 +1229,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreatedResourceResponse"
+                  "$ref": "#/components/schemas/UserDetail"
                 }
               }
             },
@@ -1353,7 +1345,7 @@
         ]
       },
       "put": {
-        "description": "Email is not editable here \u2014 it is the login identity and the audit key.",
+        "description": "Email is not editable here \u2014 it is the login identity and the audit key. Requires \u0060If-Match\u0060 carrying the \u0060rowVersion\u0060 you read: without it the request is refused with 428, and a stale version with 409. Returns the updated administrator and its new \u0060ETag\u0060.",
         "operationId": "UpdateUser",
         "parameters": [
           {
@@ -1377,8 +1369,15 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": "No Content"
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDetail"
+                }
+              }
+            },
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1409,6 +1408,26 @@
               }
             },
             "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "428": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Precondition Required"
           }
         },
         "summary": "Change an administrator\u0027s name",
@@ -1419,7 +1438,7 @@
     },
     "/api/v1/users/{userId}/reactivate": {
       "post": {
-        "description": "An account that never set a password returns to PendingActivation rather than becoming usable.",
+        "description": "An account that never set a password returns to PendingActivation rather than becoming usable. \u0060If-Match\u0060 is honored when supplied but not required. Returns the updated administrator.",
         "operationId": "ReactivateUser",
         "parameters": [
           {
@@ -1433,8 +1452,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "No Content"
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDetail"
+                }
+              }
+            },
+            "description": "OK"
           },
           "403": {
             "content": {
@@ -1475,7 +1501,7 @@
     },
     "/api/v1/users/{userId}/roles": {
       "put": {
-        "description": "Declarative: send the complete set. Refused for your own account, and refused when it would remove the role from the last active SuperAdmin.",
+        "description": "Declarative: send the complete set. Refused for your own account, and refused when it would remove the role from the last active SuperAdmin. Requires \u0060If-Match\u0060 carrying the \u0060rowVersion\u0060 you read. Returns the updated administrator.",
         "operationId": "SetUserRoles",
         "parameters": [
           {
@@ -1499,8 +1525,15 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": "No Content"
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDetail"
+                }
+              }
+            },
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1541,6 +1574,16 @@
               }
             },
             "description": "Conflict"
+          },
+          "428": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Precondition Required"
           }
         },
         "summary": "Replace an administrator\u0027s roles",
@@ -1551,7 +1594,7 @@
     },
     "/api/v1/users/{userId}/suspend": {
       "post": {
-        "description": "Rotates the security stamp and revokes every refresh token, so access ends immediately rather than at token expiry. Refused for your own account, and for the last active SuperAdmin.",
+        "description": "Rotates the security stamp and revokes every refresh token, so access ends immediately rather than at token expiry. Refused for your own account, and for the last active SuperAdmin. \u0060If-Match\u0060 is honored when supplied but not required \u2014 the lifecycle transition rules already refuse the unsafe orderings. Returns the updated administrator.",
         "operationId": "SuspendUser",
         "parameters": [
           {
@@ -1575,8 +1618,15 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": "No Content"
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDetail"
+                }
+              }
+            },
+            "description": "OK"
           },
           "400": {
             "content": {

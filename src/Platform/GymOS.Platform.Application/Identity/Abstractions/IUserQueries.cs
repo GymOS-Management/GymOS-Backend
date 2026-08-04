@@ -13,7 +13,14 @@ public sealed record UserListItem(
     bool IsLockedOut,
     IReadOnlyCollection<string> Roles);
 
-/// <summary>A single administrator, with the operational detail the console shows.</summary>
+/// <summary>
+/// A single administrator, with the operational detail the console shows.
+/// </summary>
+/// <param name="RowVersion">
+/// Opaque version token. Echo it in <c>If-Match</c> when updating so the write is refused if
+/// someone else changed the account in the meantime (ARCHITECTURE.md §3). Also returned as the
+/// response <c>ETag</c>; the body copy exists for clients that would rather not read headers.
+/// </param>
 public sealed record UserDetail(
     Guid Id,
     string Email,
@@ -26,7 +33,8 @@ public sealed record UserDetail(
     DateTimeOffset? PasswordChangedAtUtc,
     DateTimeOffset CreatedAtUtc,
     IReadOnlyCollection<RoleSummary> Roles,
-    IReadOnlyCollection<string> Permissions);
+    IReadOnlyCollection<string> Permissions,
+    string RowVersion);
 
 /// <param name="Status">Optional exact-match filter on <c>UserStatus</c>, by name.</param>
 public sealed record UserListFilter(PageRequest Page, string? Status);
