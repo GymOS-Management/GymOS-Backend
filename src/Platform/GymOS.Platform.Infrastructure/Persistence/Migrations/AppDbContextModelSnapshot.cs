@@ -25,9 +25,12 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.BuildingBlocks.Infrastructure.Auditing.AuditLog", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
 
                     b.Property<string>("Action")
                         .IsRequired()
@@ -38,10 +41,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CorrelationId")
                         .HasColumnType("uuid")
                         .HasColumnName("correlation_id");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
 
                     b.Property<Guid?>("EntityId")
                         .HasColumnType("uuid")
@@ -79,7 +78,7 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("user_id");
 
-                    b.HasKey("Id")
+                    b.HasKey("Id", "CreatedAtUtc")
                         .HasName("pk_audit_logs");
 
                     b.HasIndex("Action")
@@ -101,7 +100,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.BuildingBlocks.Infrastructure.Outbox.OutboxDelivery", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
@@ -152,7 +150,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.BuildingBlocks.Infrastructure.Outbox.OutboxMessage", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
@@ -228,7 +225,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.Permission", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
@@ -271,7 +267,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
@@ -338,7 +333,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.Role", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
@@ -420,7 +414,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.User", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
@@ -509,7 +502,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.UserRole", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 

@@ -41,6 +41,13 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         // singleton built once from the module's list (AD-7).
         services.TryAddSingleton(new AuditPolicy(PlatformAuditedEntities.All));
 
+        services.AddOptions<AuditLogPartitionOptions>()
+            .Bind(configuration.GetSection(AuditLogPartitionOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.TryAddScoped<AuditLogPartitionMaintainer>();
+
         services.TryAddScoped<IAuditTrail>(provider => new AuditTrail(
             provider.GetRequiredService<AppDbContext>(),
             provider.GetRequiredService<IClock>(),
