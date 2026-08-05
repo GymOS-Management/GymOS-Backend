@@ -124,20 +124,68 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         (newValues.Count == 1 && newValues.ContainsKey(nameof(IAuditable.UpdatedAtUtc)));
 
     private Dictionary<string, string?> Snapshot(EntityEntry entry, AuditedEntity declared, bool current) =>
-        entry.Properties
-            .Where(property => IsCapturable(property))
+        CapturableProperties(entry)
             .ToDictionary(
-                property => property.Metadata.Name,
-                property => Render(declared, property, current),
+                captured => captured.Name,
+                captured => Render(declared, captured, current),
                 StringComparer.Ordinal);
 
     private Dictionary<string, string?> ChangedOnly(EntityEntry entry, AuditedEntity declared, bool current) =>
-        entry.Properties
-            .Where(property => IsCapturable(property) && property.IsModified && HasChanged(property))
+        CapturableProperties(entry)
+            .Where(captured => captured.Property.IsModified && HasChanged(captured.Property))
             .ToDictionary(
-                property => property.Metadata.Name,
-                property => Render(declared, property, current),
+                captured => captured.Name,
+                captured => Render(declared, captured, current),
                 StringComparer.Ordinal);
+
+    /// <summary>
+    /// Every auditable scalar on the entity, <b>including the members of complex properties</b>.
+    ///
+    /// <para>The complex-property walk is not an embellishment. <c>EntityEntry.Properties</c> omits them
+    /// entirely — they live under <see cref="EntityEntry.ComplexProperties"/> — so an entity whose only
+    /// change was inside one (a <c>Money</c> amount, say) arrives here with an empty change set, gets
+    /// treated as "nothing but a timestamp moved", and is dropped from the trail. A subscription price
+    /// edited from €50.00 to €59.99 was silently unaudited until this walked both.</para>
+    ///
+    /// <para>Names carry their path — <c>Price.Amount</c>, not <c>Amount</c> — so a diff stays readable
+    /// when two complex properties share a member name (an invoice's <c>Net.Amount</c> and
+    /// <c>Tax.Amount</c>), and so redaction rules can target a nested field precisely.</para>
+    /// </summary>
+    private static IEnumerable<CapturedProperty> CapturableProperties(EntityEntry entry)
+    {
+        foreach (PropertyEntry property in entry.Properties.Where(IsCapturable))
+        {
+            yield return new CapturedProperty(property.Metadata.Name, property);
+        }
+
+        foreach (ComplexPropertyEntry complex in entry.ComplexProperties)
+        {
+            foreach (CapturedProperty nested in Flatten(complex, complex.Metadata.Name))
+            {
+                yield return nested;
+            }
+        }
+    }
+
+    private static IEnumerable<CapturedProperty> Flatten(ComplexPropertyEntry complex, string path)
+    {
+        foreach (PropertyEntry property in complex.Properties.Where(IsCapturable))
+        {
+            yield return new CapturedProperty($"{path}.{property.Metadata.Name}", property);
+        }
+
+        // Nested complex types are legal in EF, so the walk recurses rather than assuming one level.
+        foreach (ComplexPropertyEntry deeper in complex.ComplexProperties)
+        {
+            foreach (CapturedProperty nested in Flatten(deeper, $"{path}.{deeper.Metadata.Name}"))
+            {
+                yield return nested;
+            }
+        }
+    }
+
+    /// <summary>A capturable value and the name it appears under in the diff.</summary>
+    private readonly record struct CapturedProperty(string Name, PropertyEntry Property);
 
     /// <summary>
     /// EF marks a property modified when it was *assigned*, not when the value differs.
@@ -149,9 +197,14 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
     private static bool IsCapturable(PropertyEntry property) =>
         !property.Metadata.IsShadowProperty() && !property.Metadata.IsConcurrencyToken;
 
-    private string? Render(AuditedEntity declared, PropertyEntry property, bool current)
+    private string? Render(AuditedEntity declared, CapturedProperty captured, bool current)
     {
-        if (_policy.ShouldRedact(declared.ClrType, property.Metadata.Name))
+        PropertyEntry property = captured.Property;
+
+        // Redaction is checked against both the member name and its full path, so a rule written for
+        // `Secret` still masks `Credentials.Secret` and a rule can also name the path exactly.
+        if (_policy.ShouldRedact(declared.ClrType, property.Metadata.Name) ||
+            _policy.ShouldRedact(declared.ClrType, captured.Name))
         {
             return AuditPolicy.RedactedMarker;
         }
