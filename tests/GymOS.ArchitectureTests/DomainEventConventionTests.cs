@@ -81,6 +81,20 @@ public sealed partial class DomainEventConventionTests
         Assert.True(duplicates.Count == 0, "Duplicate event names: " + string.Join("; ", duplicates));
     }
 
+    /// <summary>
+    /// Past participles the <c>-ed</c>/<c>-en</c> test cannot see, because English does not conjugate
+    /// them: "the price was <b>set</b>" is past tense with no suffix to look for.
+    ///
+    /// <para>Listed rather than worked around by renaming the event. <c>plan.price_set</c> is the accurate
+    /// name for an upsert — the price was set, whether or not one existed before — and
+    /// <c>price_changed</c> would misdescribe the first time one is added. When this list grows, it is
+    /// the checker learning English, not the events drifting.</para>
+    /// </summary>
+    private static readonly HashSet<string> IrregularPastParticiples = new(StringComparer.Ordinal)
+    {
+        "set", "sent", "built", "split", "read", "left", "lost", "paid", "put", "spent",
+    };
+
     [Fact]
     public void EventNamesUseThePastTense()
     {
@@ -95,7 +109,8 @@ public sealed partial class DomainEventConventionTests
                 .Split('_')
                 .Any(word =>
                     word.EndsWith("ed", StringComparison.Ordinal) ||
-                    word.EndsWith("en", StringComparison.Ordinal)))
+                    word.EndsWith("en", StringComparison.Ordinal) ||
+                    IrregularPastParticiples.Contains(word)))
             .ToList();
 
         Assert.True(

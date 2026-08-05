@@ -25,6 +25,15 @@ public static class PlatformPermissions
     public const string RolesManage = "roles.manage";
     public const string AuditRead = "audit.read";
 
+    /// <summary>
+    /// The billing catalogue: plans, their prices, and (from M3.3) invoices. One permission pair for the
+    /// commercial surface, matching §3.4's `billing.manage` on invoices — assigning a plan to a gym is
+    /// the separate `subscriptions.manage`, because deciding what to sell and deciding what one customer
+    /// pays are different authorities.
+    /// </summary>
+    public const string BillingRead = "billing.read";
+    public const string BillingManage = "billing.manage";
+
     public static readonly IReadOnlyList<PermissionDefinition> All =
     [
         new(GymsRead, ModuleName, "View gyms and their details"),
@@ -37,5 +46,7 @@ public static class PlatformPermissions
         new(RolesRead, ModuleName, "View roles and their permission grants"),
         new(RolesManage, ModuleName, "Create roles and change permission grants"),
         new(AuditRead, ModuleName, "Read the audit log"),
+        new(BillingRead, ModuleName, "View subscription plans and prices"),
+        new(BillingManage, ModuleName, "Create and edit subscription plans and prices"),
     ];
 }

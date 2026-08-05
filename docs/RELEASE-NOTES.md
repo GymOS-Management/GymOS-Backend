@@ -2,6 +2,67 @@
 
 ---
 
+## M3.1 — Subscription plan catalogue
+
+**Suggested version:** `0.6.0`
+**Status:** complete, awaiting review. Business rules: [BusinessRules/Subscriptions.md](BusinessRules/Subscriptions.md).
+
+The price list the rest of M3 bills against, and `Money`'s first real consumer.
+
+**M3 is four increments, because three of its four parts have prerequisites that do not exist yet:**
+subscription assignment (M3.2) needs this catalogue; invoices (M3.3) need the **AD-39 idempotency
+framework**, since a retried "mark paid" must not pay twice; renewal and overdue jobs (M3.4) need a **job
+runner**. Neither is built, and building either as a side effect of a billing feature would be the wrong
+way to get them. `plan_features` moves to M4 with the `features` catalogue it points at.
+
+### Added
+
+- **`subscription_plans` and `plan_prices`** (migration `AddSubscriptionPlans`). Platform-scoped.
+- **`SubscriptionPlan` aggregate** — code, name, trial, capacity limits, sort order, plus `IsActive`
+  (assignable) and `IsPublic` (advertised) as the two separate questions they are.
+- **`PlanPrice`** holding a `Money`: one row per (cycle, currency), so offering annual billing or a second
+  currency is data entry rather than a migration. `PUT /plans/{id}/prices` is an upsert — "the annual euro
+  price is €480" is one intent.
+- **`BillingCycle`** whose numeric values are month counts (Monthly=1, Quarterly=3, Yearly=12), so a
+  period's length is the enum value itself.
+- **`/api/v1/plans`** — list, detail, create, update, set price, remove price, deactivate, activate.
+  There is deliberately **no delete**: `DELETE` returns 405, and the API test asserts it.
+- **Permissions `billing.read` / `billing.manage`**, granted to the seeded roles. `PlatformAdmin` gets
+  read but not manage — what the platform charges is a commercial decision, not day-to-day admin.
+- Plans and prices are **audited**.
+
+### Fixed
+
+- **A change confined to a `Money` value was silently unaudited.** `EntityEntry.Properties` omits
+  complex-type members, so the audit interceptor saw an empty change set, concluded "nothing but a
+  timestamp moved", and dropped the entry — meaning a plan repriced from €50.00 to €59.99 left **no record
+  of who repriced it**. The interceptor now walks complex properties recursively and names fields by path
+  (`Price.Amount`), which also keeps an invoice's future `Net.Amount` and `Tax.Amount` distinguishable.
+  Found during the live run, pinned by an integration test.
+- **The integration suite exhausted PostgreSQL's connection limit** as it grew: each test host opened a
+  default 100-connection Npgsql pool against a container allowing 100 clients, surfacing as
+  `53300: sorry, too many clients already` in whichever unrelated test ran when the limit was hit. Pools
+  are now capped at 5 per host and the container allows 300.
+
+### Changed
+
+- **Rule R4 is now enforced against real money-shaped members.** Three are exempted with reasons: a domain
+  event payload and two API DTOs, all serialisation boundaries where an amount travels beside an explicit
+  currency code. `Money` has **no defined wire form** — `Currency` keeps its code in a private field
+  behind a property that throws when unset, so System.Text.Json would quietly produce a default rather
+  than fail. A `JsonConverter` belongs with the first consumer that actually needs one.
+- The domain-event past-tense check learned irregular participles, so `plan.price_set` passes. "Set" is
+  past tense; renaming the event to `price_changed` would have misdescribed the first-time add.
+- `PlanPrice` is exempted from the concurrency-token requirement, with its reason: it is only ever written
+  through `SubscriptionPlan`, whose token guards it and whose `ETag` is the one a caller can actually send.
+
+### Upgrade notes
+
+- Run `AddSubscriptionPlans`. Two new tables; nothing existing is touched.
+- No breaking API change. `billing.read`/`billing.manage` appear on existing roles after one startup.
+
+---
+
 ## `Money` (AD-42)
 
 **Suggested version:** `0.5.1`

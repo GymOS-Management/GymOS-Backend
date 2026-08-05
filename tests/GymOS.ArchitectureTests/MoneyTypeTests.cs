@@ -44,6 +44,24 @@ public sealed class MoneyTypeTests
         "GymOS.SharedKernel.Currencies.Money.Of",
         "GymOS.SharedKernel.Currencies.Money.FromMinorUnits",
         "GymOS.SharedKernel.Currencies.Money.ToMinorUnits",
+
+        // ── Serialisation boundaries ────────────────────────────────────────────────
+        //
+        // Money is for arithmetic *inside* the process. Where a value is serialised — a domain event
+        // bound for the outbox, or a DTO bound for JSON — money travels as an amount plus an ISO
+        // currency code, side by side, and is rebuilt into a Money on the way back in.
+        //
+        // Not a workaround but the current truth: `Money` has no defined wire form. `Currency` keeps its
+        // code in a private field behind a property that throws when unset, so System.Text.Json can
+        // neither round-trip it nor fail loudly about it — it would quietly produce a default. Putting
+        // Money in a payload needs a JsonConverter first, and that belongs with the first consumer that
+        // actually wants one (see docs/RELEASE-NOTES.md).
+        //
+        // What makes these safe is that every one of them sits beside an explicit currency field, so no
+        // amount here is ever a number without its unit.
+        "GymOS.Platform.Domain.Subscriptions.Events.PlanPriceSet.Amount",
+        "GymOS.Platform.Application.Subscriptions.SetPlanPriceCommand.Amount",
+        "GymOS.Platform.Application.Subscriptions.Abstractions.PlanPriceDetail.Amount",
     };
 
     [Fact]

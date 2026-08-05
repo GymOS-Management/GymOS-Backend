@@ -183,7 +183,7 @@ Honest list. None of it blocks M2.
 | AD-41 Wall-clock scheduling, DST policy | ⚠️ platform time service exists; no scheduled entity yet |
 | AD-42 `Money` value object | ✅ built after M2 (currency-checked arithmetic, explicit rounding policies, largest-remainder `Allocate`, EF complex-type mapping). `ApplyTax` deferred to Payments — see RELEASE-NOTES. |
 | AD-48 Hierarchical health | ⚠️ readiness gates on DB only, as specified; contributors arrive with their subsystems |
-| AD-49 R1–R17 | R1 ✅ · R2 ✅ · **R4 ✅ (new — `Money` gave it a subject)** · R6/R7 ✅ · R9 ✅ · R11 ✅ · R12 ✅ · R13 ✅ · R15 ✅ · R17 ✅. R3/R5/R8/R10/R14/R16 have no subject yet |
+| AD-49 R1–R17 | R1 ✅ · R2 ✅ · **R4 ✅** (enforced, with three documented serialisation-boundary exemptions) · R6/R7 ✅ · R9 ✅ · R11 ✅ · R12 ✅ · R13 ✅ · R15 ✅ · R17 ✅. R3/R5/R8/R10/R14/R16 have no subject yet — **R5 (idempotency) gets one at M3.3** |
 | ADR-50 .NET 10 · ADR-52 single backend repo | ✅ |
 
 **No ADR was changed, superseded, or added. No framework was introduced.** Changes were confined to

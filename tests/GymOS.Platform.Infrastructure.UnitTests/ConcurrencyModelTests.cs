@@ -2,6 +2,7 @@ using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.Platform.Domain.Identity;
+using GymOS.Platform.Domain.Subscriptions;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -41,6 +42,12 @@ public sealed class ConcurrencyModelTests
         // deleted, and both are guarded by the parent aggregate's own token.
         [typeof(UserRole)] = "insert/delete only, guarded by the User aggregate",
         [typeof(RolePermission)] = "insert/delete only, guarded by the Role aggregate",
+
+        // Prices *are* updated in place, unlike the assignment rows above — but only ever through
+        // SubscriptionPlan, whose handler calls MarkAggregateChanged so the plan's own token moves on
+        // every price write. A second token here would be a version a caller never sees and could not
+        // send back, since the plan is the resource the API exposes and the ETag belongs to it.
+        [typeof(PlanPrice)] = "updated only through the SubscriptionPlan aggregate, whose token guards it",
 
         // Reconciled from code at startup; not editable through any API.
         [typeof(Permission)] = "code-canonical catalog, no API writes",

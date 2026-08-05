@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-05 · after M2 (gym management) and `Money` (AD-42)
+**Last updated:** 2026-08-05 · after M3.1 (subscription plan catalogue)
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -19,7 +19,10 @@ before resuming work on any machine.
 | **M2 — gym management** (gyms CRUD, lifecycle, branding, gym detail) | ✅ complete — 541 tests green at the time, verified live · ⬅ **awaiting review** |
 | **`Money` (AD-42)** — currency-checked arithmetic, explicit rounding, largest-remainder `Allocate`, EF mapping, rule R4 | ✅ complete — **645 tests green**, storage contract checked against PostgreSQL · ⬅ **awaiting review** |
 | **Members domain** (business specification, no code) | ✅ **FROZEN** — `docs/Domain/MEMBERS-DOMAIN-DESIGN.md`. 11 product decisions approved 2026-08-05; implementation may begin. 4 legal-review items deferred (mechanism to build, values from counsel). |
-| M3+ — per approved roadmap (subscriptions, feature flags, dashboard, …) | later |
+| **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — **734 tests green**, verified live · ⬅ **awaiting review** |
+| M3.2 — subscription assignment · M3.3 — invoices · M3.4 — renewal/overdue jobs | next; M3.3 and M3.4 are **blocked** (see below) |
+| **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
+| M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
 
 ## M1.2 as built
 
@@ -293,9 +296,69 @@ dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTest
 ```
 
 Full counts per project, for checking a run was complete: SharedKernel 126 · BuildingBlocks 14 ·
-Architecture 70 · Domain 163 · Application 103 · Infrastructure 67 · Integration 102 = **645**.
+Architecture 88 · Domain 193 · Application 128 · Infrastructure 67 · Integration 118 = **734**.
 
-### Still owed before M3 / Members, in this order
+Capping the test connection pools (above) may also have helped here — the last several full runs completed
+first time, where they previously needed retries.
+
+## M3.1 as built
+
+One migration: `AddSubscriptionPlans` (`platform.subscription_plans` + `platform.plan_prices`). Rules and
+the full deferral list: **`docs/BusinessRules/Subscriptions.md`**.
+
+**M3 is four increments, and that scoping is the main decision here.** Three of its four parts have
+prerequisites that do not exist:
+
+| Increment | State | Blocked on |
+|---|---|---|
+| M3.1 plans + prices | ✅ built | — |
+| M3.2 subscription assignment | next | M3.1 only |
+| M3.3 invoices | blocked | **AD-39 idempotency framework.** A retried "mark invoice paid" must not pay twice; this is the first genuinely qualifying command the platform has had. |
+| M3.4 renewal / overdue jobs | blocked | **A job runner.** Nothing yet runs work on a schedule. |
+
+`plan_features` (§2.3) moves to **M4**: it points at the `features` catalogue, which does not exist.
+
+1. **`SubscriptionPlan`** — code (immutable, upper-case identifier), name, description, trial days,
+   nullable capacity limits, sort order, and `IsActive`/`IsPublic` as separate questions: inactive means
+   "cannot be newly assigned", unlisted means "assignable but not advertised" (a negotiated plan).
+2. **`PlanPrice` holds a `Money`** — one row per (cycle, currency). `PUT /plans/{id}/prices` upserts,
+   because "the annual euro price is €480" is one intent and making the caller check first invites the
+   race where two operators both add a row.
+3. **`BillingCycle` values are month counts** (1/3/12), so a period's length is the enum value itself.
+4. **Plans are never deleted** — §3.4's "delete = deactivate only". `DELETE /plans/{id}` is 405, asserted.
+5. **`billing.read` / `billing.manage`** — `PlatformAdmin` gets read but not manage; `BillingAdmin` gets
+   both. What the platform charges is a commercial decision, not day-to-day administration.
+
+### Decisions and traps found during M3.1
+
+- **A `Money` change was silently unaudited — found in the live run, now fixed.**
+  `EntityEntry.Properties` **omits complex-type members**; they live under `ComplexProperties`. So a write
+  that only changed a price left the interceptor with an empty change set, which its
+  "nothing but a timestamp moved" suppression then dropped. A plan repriced €50.00 → €59.99 had **no record
+  of who did it** — the exact gap the audit trail exists to prevent, in the exact place I had claimed it
+  mattered. The interceptor now walks complex properties recursively and names fields by path
+  (`Price.Amount`), which also keeps a future invoice's `Net.Amount` and `Tax.Amount` apart. Pinned by an
+  integration test that fails without the fix.
+- **EF cannot index inside a complex property.** `HasIndex(..., "Price_Currency")` fails with "no
+  corresponding CLR property or field", so the (plan, cycle, currency) unique index is **raw SQL in the
+  migration**, documented there and asserted by a test that reads `pg_indexes`. Any future change to the
+  price key must be made the same way.
+- **`Money` has no wire form, and that is why R4 has three exemptions.** `Currency` keeps its code in a
+  private field behind a property that throws when unset, so System.Text.Json would quietly produce a
+  default rather than fail. At serialisation boundaries — event payloads, API DTOs — money travels as an
+  amount beside an explicit currency code. A `JsonConverter` belongs with the first consumer that needs one.
+- **The integration suite outgrew PostgreSQL's connection limit.** Each test host opened a default
+  100-connection pool against a container allowing 100 clients; the symptom was
+  `53300: sorry, too many clients already` in whichever unrelated test ran when the ceiling was reached.
+  Pools are capped at 5 per host and the container now allows 300. Worth remembering as the suite grows.
+- **`dotnet run` ignores `ASPNETCORE_URLS`** when `launchSettings.json` is present — it listened on 5080
+  while I polled 5081. Pass `--no-launch-profile`, or just use 5080.
+- **`launchSettings` aside: a leftover `GymOS.WebApi` process locks the build output.** Two builds failed
+  with MSB3027 until it was killed. If a build suddenly cannot copy DLLs, look for a running host first.
+- **The verify harness (`verify.sh`) runs `--no-build`** — build first, or it tests stale binaries and
+  reports failures that no longer exist. That cost two rounds of confusion.
+
+### Still owed, in this order
 
 - **Write the RLS startup validation (R14) with the first tenant-scoped entity.** R14 has never run;
   a missed policy is a cross-tenant leak.
@@ -338,7 +401,7 @@ git clone https://github.com/GymOS-Management/GymOS-Backend
 cd GymOS-Backend
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d --wait        # PostgreSQL 17
-dotnet test GymOS.Backend.slnx     # expect 645 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 734 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi

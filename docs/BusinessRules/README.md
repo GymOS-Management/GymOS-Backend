@@ -11,6 +11,10 @@ Their entries below remain as the questions that fed it.
 **Gyms is implemented** — [`Gyms.md`](Gyms.md) records the rules M2 actually enforces, including what
 was deliberately deferred to M3–M6.
 
+**The subscription plan catalogue is implemented** — [`Subscriptions.md`](Subscriptions.md) records M3.1
+as built, and why invoices and renewal jobs wait on the idempotency framework and a job runner
+respectively.
+
 **The rest are drafts, not specifications.** They record what the frozen architecture already decides,
 what is assumed (marked `(?)`), and what is genuinely unanswered. The Golden Rule
 (GymOS-Specification/PRODUCT-PRINCIPLES.md) is the scope authority: a rule listed here is not a
@@ -19,6 +23,7 @@ commitment to build the feature it belongs to.
 | Module | Document | Notes |
 |---|---|---|
 | Gyms | **[Gyms.md](Gyms.md)** | **Implemented (M2).** A specification, not a draft: it records the rules as built. |
+| Subscriptions & Billing | **[Subscriptions.md](Subscriptions.md)** | **Plan catalogue implemented (M3.1).** Records why M3 is four increments and what each waits on. |
 | Members | **[Domain design](../Domain/MEMBERS-DOMAIN-DESIGN.md)** · [draft](Members.md) | **Specified.** Health data, minors, and retention need legal counsel. |
 | Memberships | **[Domain design](../Domain/MEMBERS-DOMAIN-DESIGN.md)** · [draft](Memberships.md) | **Specified.** Freeze policy and visit definition are blocking decisions. |
 | Payments | [Payments.md](Payments.md) | Least tolerance for a wrong rule. Idempotency is mandatory. |

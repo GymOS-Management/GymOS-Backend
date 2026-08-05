@@ -36,17 +36,33 @@ public static class SystemRoles
                 PlatformPermissions.UsersManage,
                 PlatformPermissions.RolesRead,
                 PlatformPermissions.AuditRead,
+
+                // Read, deliberately not manage: what the platform charges is a commercial decision,
+                // not day-to-day administration.
+                PlatformPermissions.BillingRead,
             ]),
         new(
             SupportAgent,
             "Support: read users and audit trails",
             GrantsAllPermissions: false,
-            [PlatformPermissions.GymsRead, PlatformPermissions.UsersRead, PlatformPermissions.AuditRead]),
+            [
+                PlatformPermissions.GymsRead,
+                PlatformPermissions.UsersRead,
+                PlatformPermissions.AuditRead,
+
+                // A support agent answering "what am I paying for?" needs the catalogue.
+                PlatformPermissions.BillingRead,
+            ]),
         new(
             BillingAdmin,
-            "Billing operations (billing permissions arrive with M3)",
+            "Billing operations: the plan catalogue and its prices",
             GrantsAllPermissions: false,
-            [PlatformPermissions.GymsRead, PlatformPermissions.UsersRead]),
+            [
+                PlatformPermissions.GymsRead,
+                PlatformPermissions.UsersRead,
+                PlatformPermissions.BillingRead,
+                PlatformPermissions.BillingManage,
+            ]),
         new(
             ReadOnly,
             "Read-only access across the platform",
@@ -56,6 +72,7 @@ public static class SystemRoles
                 PlatformPermissions.UsersRead,
                 PlatformPermissions.RolesRead,
                 PlatformPermissions.AuditRead,
+                PlatformPermissions.BillingRead,
             ]),
     ];
 }

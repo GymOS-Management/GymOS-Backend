@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Identity;
+using GymOS.Platform.Domain.Subscriptions;
 
 namespace GymOS.Platform.Infrastructure.Persistence.Auditing;
 
@@ -25,6 +26,11 @@ public static class PlatformAuditedEntities
         // questions a support conversation or a billing dispute turns on.
         AuditedEntity.Of<Gym>("gym"),
         AuditedEntity.Of<GymBranding>("gym_branding"),
+
+        // What the platform charges, and when it changed. A price edit is the entry a billing dispute
+        // turns on, and "who withdrew this plan" is the other half of that conversation.
+        AuditedEntity.Of<SubscriptionPlan>("subscription_plan"),
+        AuditedEntity.Of<PlanPrice>("plan_price"),
 
         // Deliberately absent:
         //   RefreshToken — every sign-in and rotation writes one, so auditing rows here
