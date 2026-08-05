@@ -11,18 +11,47 @@ namespace GymOS.IntegrationTests;
 /// </summary>
 public sealed class PostgresFixture : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder("postgres:17-alpine").Build();
+    /// <summary>
+    /// Each test host gets a small pool, and the server allows more clients than the default.
+    ///
+    /// <para>Both halves are needed, and the suite outgrew the defaults rather than misusing them. Every
+    /// <c>WebApplicationFactory</c> host opens its own Npgsql pool, whose default ceiling is 100
+    /// connections — for a suite that boots a fresh host per test class (and a second one whenever it
+    /// needs an administrator in a given role), that adds up to far more than PostgreSQL's default
+    /// <c>max_connections</c> of 100. The symptom is
+    /// <c>53300: sorry, too many clients already</c> arriving in whichever test happens to run when the
+    /// limit is reached — so it reads as a flaky failure in unrelated code.</para>
+    ///
+    /// <para>A five-connection pool is ample: these hosts serve one request at a time.</para>
+    /// </summary>
+    private const int MaxPoolSizePerHost = 5;
+
+    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder("postgres:17-alpine")
+        .WithCommand("-c", "max_connections=300")
+        .Build();
 
     /// <summary>Connection string of the container's default database.</summary>
-    public string ConnectionString => _container.GetConnectionString();
+    public string ConnectionString => Pooled(_container.GetConnectionString());
 
     public async Task<string> CreateDatabaseAsync(string databaseName)
     {
         await _container.ExecScriptAsync($"CREATE DATABASE {databaseName};");
-        return new NpgsqlConnectionStringBuilder(_container.GetConnectionString())
+        return Pooled(_container.GetConnectionString(), databaseName);
+    }
+
+    private static string Pooled(string baseConnectionString, string? databaseName = null)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(baseConnectionString)
         {
-            Database = databaseName,
-        }.ConnectionString;
+            MaxPoolSize = MaxPoolSizePerHost,
+        };
+
+        if (databaseName is not null)
+        {
+            builder.Database = databaseName;
+        }
+
+        return builder.ConnectionString;
     }
 
     /// <summary>
