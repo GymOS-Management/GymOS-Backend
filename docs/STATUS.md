@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-05 · after the pre-M2 hardening milestone
+**Last updated:** 2026-08-05 · after M2 (gym management) and `Money` (AD-42)
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -16,7 +16,8 @@ before resuming work on any machine.
 | **M1.2 — auth services & endpoints** (Argon2id, JWT + rotating refresh tokens, `/api/v1/auth`, SuperAdmin seed) | ✅ complete — 159 tests green, verified live |
 | **M1.3 — permission pipeline, users/roles endpoints, audit interceptor, OpenAPI diff gate** | ✅ complete + release-reviewed — **256 tests green**, verified live |
 | **Pre-M2 hardening** (write convention, optimistic concurrency, business-rule framework, API standards, playbook) | ✅ complete — **337 tests green**, verified live |
-| **M2 — gym management** (gyms CRUD, suspend/delete, branding, gym detail) | ⬅ **NEXT** — read `docs/M2_READINESS.md` first |
+| **M2 — gym management** (gyms CRUD, lifecycle, branding, gym detail) | ✅ complete — 541 tests green at the time, verified live · ⬅ **awaiting review** |
+| **`Money` (AD-42)** — currency-checked arithmetic, explicit rounding, largest-remainder `Allocate`, EF mapping, rule R4 | ✅ complete — **645 tests green**, storage contract checked against PostgreSQL · ⬅ **awaiting review** |
 | **Members domain** (business specification, no code) | ✅ **FROZEN** — `docs/Domain/MEMBERS-DOMAIN-DESIGN.md`. 11 product decisions approved 2026-08-05; implementation may begin. 4 legal-review items deferred (mechanism to build, values from counsel). |
 | M3+ — per approved roadmap (subscriptions, feature flags, dashboard, …) | later |
 
@@ -171,10 +172,131 @@ Read `docs/M2_READINESS.md` for the full assessment; the short version:
 6. **R9 enforced**: `DomainEventConventionTests` checks event naming, versioning, uniqueness, and
    immutability across every production assembly.
 
-### Do these before M2 code, in this order
+## M2 as built
 
-- **Build `Money` (AD-42) before anything touches currency.** Retrofitting it after `decimal`
-  columns exist is the expensive version.
+One migration: `AddGyms` (`platform.gyms` + `platform.gym_branding`). Business rules and the deferral
+list live in **`docs/BusinessRules/Gyms.md`** — a specification, not a draft.
+
+1. **`Gym` aggregate** (platform schema, **no `tenant_id`** — a gym *is* the tenant, so the row is the
+   tenant's definition rather than a row belonging to one). `GymStatusTransitions` is the single
+   transition table, tested as an exhaustive matrix. `Deleted` is terminal, per §2.2.
+2. **`GymBranding` as its own aggregate**, 1:1 by `GymId`. Branding is edited by different people at
+   different times than the gym's commercial details, every field is optional while none of the gym's
+   are, and a logo change should not appear in the trail as a change to ownership. It is created empty
+   alongside the gym, so no caller needs a create-or-update path.
+3. **`/api/v1/gyms`** — list (paged, filtered by status/country/search, deleted excluded by default),
+   detail, provision, update, `activate`, `suspend`, `reactivate`, `DELETE`, `PUT /branding`. All seven
+   value rules are rule objects with stable codes (`gyms.*`), so a form can highlight the field that
+   failed.
+4. **`X-Confirm-Action` is now plumbed** (AD-6, its first use): `ConfirmationHeaders.ConfirmAction`
+   reads it, and the handler compares it to the gym's slug — a header, not a body field, so it survives
+   `DELETE` and so a replayed script that never saw the resource cannot satisfy it.
+5. **`Gym` and `GymBranding` are audited** (`PlatformAuditedEntities`). Verified live: the four
+   `gym.updated` entries are activate/suspend/reactivate/delete, and the branding-only write correctly
+   produced *no* bare-timestamp entry on the gym while recording `gym_branding.updated`.
+6. **Permissions**: `gyms.read|create|update|suspend|delete`. `PlatformAdmin` deliberately holds
+   suspend but **not** delete — suspension is reversible and deletion is not.
+
+### Decisions and traps found during M2
+
+- **`POST /gyms/{id}/activate` is not in the architecture's endpoint table**, which lists only
+  suspend/reactivate/delete. It exists because `Provisioning=1` is a real state in the frozen schema and
+  something must move a gym out of it; without it, `Provisioning` would be a dead value no gym could
+  leave. When subscription assignment lands in M3 it becomes the natural completion of provisioning.
+  This is an addition to a summary table, not a change to a decision — no ADR needed.
+- **`DELETE` returns 204, not the soft-deleted resource.** The convention (API_STANDARDS.md §2) says
+  `DELETE` → 204, and adding an exception needs a better reason than "the row still exists". `GET` on a
+  deleted gym still resolves, which is where an operator sees the recorded deletion.
+- **Rules must run on the normalized value, not the raw one.** `Gym.Provision` originally validated
+  `owner.Email` before `Normalized()`, so an address pasted with a trailing space was rejected as
+  malformed. Caught by a test; the fix normalizes first in both `Provision` and `UpdateDetails`. Worth
+  remembering for every future aggregate that trims input.
+- **`varchar`, not `char(n)`, for ISO codes.** `bpchar` compares ignoring trailing spaces, so a padded
+  value would equal a clean one in an index. Length is a domain rule.
+- **`citext` was not adopted for the slug.** Lowercase-by-construction + a unique index + a
+  `slug = lower(slug)` CHECK satisfies "unique, URL-safe, immutable" without adding an extension to
+  every environment. §2.2 says `citext`; this is an implementation detail meeting the stated property.
+- **`dotnet ef migrations remove` needs a reachable database** — it connects to check whether the
+  migration was applied. With no database up, restore `AppDbContextModelSnapshot.cs` from git and delete
+  the two migration files by hand, or the next `add` produces an empty migration.
+- **A hard-coded count in a test is a liability.** `IdentitySeedingTests` asserted SupportAgent had
+  exactly 2 permissions and broke when it gained `gyms.read` — a correct change. It now compares against
+  `SystemRoles.Definitions`, so it verifies the seeder reproduced the declaration instead of failing
+  because a number moved.
+- **`Money` (AD-42) was not needed and is still owed before M3.** A gym's currency is an ISO *code*,
+  not an amount; nothing in M2 holds a monetary value. Subscriptions do.
+- **RLS (R14) was not needed and is still owed with the first tenant-scoped entity.** Gyms are
+  platform-scope and carry no `tenant_id`, so there is no policy to write here. Members is where R14
+  first has to run.
+
+## `Money` (AD-42) as built
+
+No migration and no consumer yet — deliberately. Built while no table holds a monetary column, because
+that is the only time the shape is free to change.
+
+1. **`Currency`** — ISO 4217 code plus **minor units**, which is the fact the code alone does not carry.
+   The exception table lists every currency that is *not* hundredths (JPY 0, KWD 3, CLF 4); everything
+   else defaults to 2. A test restates that list independently, so two lists must agree.
+2. **`Money`** — `readonly record struct`, rounded to minor units on construction, currency-checked
+   arithmetic (`CurrencyMismatchException` on EUR + USD), `Multiply` with a **required**
+   `RoundingPolicy`, and `Allocate(params int[])` by largest remainder.
+3. **`Allocate` is the reason this type exists.** €100 three ways is 33.34/33.33/33.33; the property
+   `sum(parts) == whole` is asserted over amounts smaller than the part count, negatives, zero, lopsided
+   ratios, and currencies with 0 and 3 decimals. A credit splits as the exact negation of the charge it
+   reverses, so the spare cent lands on the same party both times.
+4. **Persistence** — `MoneyConventions.HasMoney(…, "total")` maps an EF **complex type** to
+   `total_amount numeric(14,4)` + `total_currency varchar(3)`. Currency stores only the code; minor units
+   are derived, because a stored copy could go stale and claim EUR has three decimals.
+5. **R4 is now enforced** (`MoneyTypeTests`) — its first subject. A `decimal` member named like money
+   outside `Money` fails the build. **Verified by introducing a violation and watching it fail**, then
+   removing it; an architecture rule nobody has seen fail is a rule nobody knows works.
+
+### Decisions taken while building `Money`
+
+- **`Currency.Of` validates shape, not membership.** Three ASCII letters, no list of currencies that
+  exist — a membership check would refuse a real currency the day ISO adds one, and an invented code
+  fails everywhere else anyway. The risk worth guarding is a *real* currency with the wrong number of
+  decimals, which is what the exception table is for.
+- **Arithmetic is methods, comparison is operators.** `a + b` reads as something that cannot fail;
+  `a.Add(b)` reads as something with a rule behind it. Comparison has no policy to choose, so `<` stays.
+- **No currency-less zero.** `Money.Zero(currency)` requires one, because a currency-less zero would be
+  the single value addable to anything — exactly the silent coercion AD-42 exists to stop.
+- **A `default(Money)` throws rather than behaving like €0.** A struct field initialises to it with no
+  constructor running, and "no currency" must not round or compare.
+- **Deferred with reasons:** `ApplyTax` / `TaxRate` / `TaxRoundingPolicy` (AD-42 names them) — the
+  per-line-versus-per-total distinction cannot be honoured by a method on a *single* amount, so it
+  belongs where invoice lines exist, and the jurisdiction rules need accounting counsel first.
+  Intermediate 4-decimal precision likewise waits for its first producer (currency conversion, AD-43);
+  the column already has the room, so adding it is additive. `ICurrencyService` and
+  `IExchangeRateProvider` (AD-43) are untouched — the first conversion is platform MRR normalization
+  in M5.
+### ⚠️ The test host on this machine aborts intermittently — read before trusting a test run
+
+`dotnet test` dies with `Internal CLR error (0x80131506)` partway through a run. **Confirmed not ours:**
+`git stash -u` back to the last commit reproduces it identically, and it survives
+`DOTNET_TieredCompilation=0`. SDK 10.0.201, runtimes 10.0.3 and 10.0.5 both installed.
+
+Two traps it sets:
+
+1. **The crash stack names whichever test was mid-flight**, which looks exactly like a bug in that code.
+   It pointed at `UpdateGymBrandingCommandHandler` on one run and at an untouched M1 test on the next.
+   Do not debug the named method before reproducing it in a *completed* run.
+2. **An aborted run still prints `Passed!` with a truncated count.** `Passed! … Total: 18` on a project
+   with 103 tests is a crash, not a pass. **A run is only trustworthy if its output contains no
+   `Aborted`** and the total matches the project's known count.
+
+Longer runs fail more often, so the two largest projects (`Platform.Application.UnitTests` 103,
+`IntegrationTests` 102) rarely finish in one go. Verify them class by class:
+
+```
+dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTests"
+```
+
+Full counts per project, for checking a run was complete: SharedKernel 126 · BuildingBlocks 14 ·
+Architecture 70 · Domain 163 · Application 103 · Infrastructure 67 · Integration 102 = **645**.
+
+### Still owed before M3 / Members, in this order
+
 - **Write the RLS startup validation (R14) with the first tenant-scoped entity.** R14 has never run;
   a missed policy is a cross-tenant leak.
 - **The Members domain is frozen** (`docs/Domain/MEMBERS-DOMAIN-DESIGN.md`). Implementation follows it
@@ -216,7 +338,7 @@ git clone https://github.com/GymOS-Management/GymOS-Backend
 cd GymOS-Backend
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d --wait        # PostgreSQL 17
-dotnet test GymOS.Backend.slnx     # expect 337 green (needs Docker for integration tests)
+dotnet test GymOS.Backend.slnx     # expect 645 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi

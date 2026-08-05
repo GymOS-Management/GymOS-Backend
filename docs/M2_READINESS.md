@@ -181,9 +181,9 @@ Honest list. None of it blocks M2.
 | AD-39 Idempotency | ⚠️ designed, not built — no qualifying command exists |
 | AD-40 `IClock` only, time flows inward | ✅ analyzer-enforced |
 | AD-41 Wall-clock scheduling, DST policy | ⚠️ platform time service exists; no scheduled entity yet |
-| AD-42 `Money` value object | ⚠️ not built — nothing handles money yet. **Build before Payments.** |
+| AD-42 `Money` value object | ✅ built after M2 (currency-checked arithmetic, explicit rounding policies, largest-remainder `Allocate`, EF complex-type mapping). `ApplyTax` deferred to Payments — see RELEASE-NOTES. |
 | AD-48 Hierarchical health | ⚠️ readiness gates on DB only, as specified; contributors arrive with their subsystems |
-| AD-49 R1–R17 | R1 ✅ · R2 ✅ · R6/R7 ✅ · R9 ✅ (new) · R11 ✅ · R12 ✅ · R13 ✅ · R15 ✅ · R17 ✅. R3/R4/R5/R8/R10/R14/R16 have no subject yet |
+| AD-49 R1–R17 | R1 ✅ · R2 ✅ · **R4 ✅ (new — `Money` gave it a subject)** · R6/R7 ✅ · R9 ✅ · R11 ✅ · R12 ✅ · R13 ✅ · R15 ✅ · R17 ✅. R3/R5/R8/R10/R14/R16 have no subject yet |
 | ADR-50 .NET 10 · ADR-52 single backend repo | ✅ |
 
 **No ADR was changed, superseded, or added. No framework was introduced.** Changes were confined to
@@ -262,8 +262,9 @@ block shipping it to a paying gym.
 
 Before M2 implementation starts, three things are worth doing first because they are cheaper now:
 
-1. **Build `Money` (AD-42) before anything touches currency.** Retrofitting it into Payments after
-   `decimal` columns exist is the expensive version.
+1. ~~**Build `Money` (AD-42) before anything touches currency.**~~ **Done** — built immediately after
+   M2, while no table held a monetary column, which is exactly the point. The EF mapping was proven
+   against the model before any entity used it.
 2. **Write the RLS startup validation (R14) with the first tenant-scoped entity**, not after. It has
    never run, and a missed policy is a cross-tenant leak.
 3. **Answer the Open Questions in `BusinessRules/Members.md` and `Memberships.md`** with the product

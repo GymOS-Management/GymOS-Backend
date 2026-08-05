@@ -2,6 +2,103 @@
 
 ---
 
+## `Money` (AD-42)
+
+**Suggested version:** `0.5.1`
+**Status:** complete, awaiting review. No migration; no consumer yet, deliberately.
+
+Built in the window where it is free: after M2, before any table holds a monetary column. Retrofitting a
+money type onto existing `decimal` columns means a migration per table and a re-reading of every figure
+already stored.
+
+### Added
+
+- **`Currency`** — ISO 4217 code plus minor-unit count. The count is the point: JPY has none, KWD has
+  three, and treating either as hundredths creates or destroys money at every rounding step.
+- **`Money`** — immutable, currency-checked, rounded to minor units on construction.
+  `Add`/`Subtract`/`Multiply`/`Negate`/`Abs`, comparison operators, and minor-unit conversion for
+  payment providers. `Multiply` takes a **required** `RoundingPolicy` — who absorbs half a cent is a
+  commercial decision, not a default.
+- **`Money.Allocate(params int[] ratios)`** — largest-remainder distribution guaranteeing
+  `sum(parts) == whole`. €100 three ways is 33.34/33.33/33.33, and a credit splits as the exact negation
+  of the charge it reverses.
+- **`CurrencyMismatchException`** — a `DomainException`, because adding euros to dollars is a defect in
+  the code that did it, not a user-facing outcome.
+- **`RoundingPolicy`** — `HalfEven`, `HalfUp`, `TowardZero`, `Down`, `Up`, named for the commercial
+  decision rather than the BCL enum member.
+- **`MoneyConventions.HasMoney`** — EF complex-type mapping to `{prefix}_amount numeric(14,4)` +
+  `{prefix}_currency varchar(3)`, proven against the EF model before any entity uses it.
+- **Rule R4 enforced** (`MoneyTypeTests`): a `decimal` member named like money outside `Money` fails the
+  build. R4 had no subject until now. The enforcer was verified by introducing a violation and confirming
+  it fails.
+
+### Deliberately not in this release
+
+- **`ApplyTax` / `TaxRate` / `TaxRoundingPolicy`** — named in AD-42, deferred to Payments. The
+  per-line-versus-per-total rounding choice cannot be honoured by a method on a single amount, and EU VAT
+  practice varies by jurisdiction (the spec itself calls it configuration pending accounting counsel).
+- **Intermediate 4-decimal precision.** `Of` rounds to minor units, as specified. The `numeric(14,4)`
+  column already carries the headroom, so the first producer of unrounded values — currency conversion —
+  adds it without a migration.
+- **`ICurrencyService` and `IExchangeRateProvider` (AD-43)** — the first conversion is platform MRR
+  normalization, which arrives with analytics in M5.
+
+---
+
+## M2 — Gym Management
+
+**Suggested version:** `0.5.0`
+**Status:** complete, awaiting review. Business rules: [BusinessRules/Gyms.md](BusinessRules/Gyms.md).
+
+The first business module. A gym is also a tenant, so this is the row every future gym-facing module
+points at — which is why the lifecycle is a guarded transition table rather than a status column.
+
+### Added
+
+- **`platform.gyms` and `platform.gym_branding`** (migration `AddGyms`). Platform-scoped: a gym carries
+  no `tenant_id`, because the row *is* the tenant's definition.
+- **`Gym` aggregate** with a four-state lifecycle — `Provisioning → Active ⇄ Suspended`, and soft
+  `Deleted` from any of them — enforced by `GymStatusTransitions` and covered as an exhaustive matrix.
+  `Deleted` is terminal, as §2.2 requires.
+- **`GymBranding` as a separate aggregate** (1:1). All fields optional; replaced wholesale rather than
+  merged, so two editors converge on a state one of them chose.
+- **`/api/v1/gyms`** — list, detail, provision, update, `activate`, `suspend`, `reactivate`, `DELETE`,
+  `PUT /branding`. Deleted gyms are excluded from the list unless asked for, and still resolve on `GET`.
+- **Seven gym value rules** as rule objects with stable codes: slug shape, ISO country and currency,
+  IANA time zone (shape only), hex colour, hostname, owner email.
+- **`X-Confirm-Action` support** (AD-6, first use). `DELETE /gyms/{id}` requires the header to carry the
+  gym's slug; `ConfirmationHeaders` reads it and the handler verifies it against the loaded gym.
+- **Permissions `gyms.read|create|update|suspend|delete`**, assigned to the seeded roles.
+  `PlatformAdmin` holds suspend but **not** delete.
+- **Gym and branding changes are audited**, including who suspended a tenant and why.
+
+### Changed
+
+- `SupportAgent`, `BillingAdmin`, and `ReadOnly` gain `gyms.read`; `PlatformAdmin` gains
+  `gyms.read|create|update|suspend`. The startup seeder reconciles existing databases automatically.
+- `contracts/openapi-v1.json` regenerated: six new paths, no change to any existing operation.
+- `IdentitySeedingTests` compares SupportAgent's grants against `SystemRoles.Definitions` instead of a
+  hard-coded count, so a deliberate grant change no longer reads as a failure.
+
+### Fixed
+
+- **`Gym.Provision` validated the owner's email before normalizing it**, so an address pasted with a
+  trailing space was rejected as malformed. Both `Provision` and `UpdateDetails` now normalize first.
+
+### Deliberately not in this release
+
+Subscription, resolved feature flags, aggregate stats, and the device summary are named on the gym detail
+view in §3.3 and are absent here: each belongs to a module that does not exist yet (M3, M4, M5, M6).
+Adding a field later is compatible within v1; a field that always reads zero teaches operators to
+distrust the screen.
+
+### Upgrade notes
+
+- Run the `AddGyms` migration. It creates two new tables and touches nothing existing.
+- No breaking API change. New permissions appear on existing roles after one startup.
+
+---
+
 ## Pre-M2 — Engineering Hardening
 
 **Suggested version:** `0.4.0`

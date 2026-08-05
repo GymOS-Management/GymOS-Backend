@@ -11,22 +11,12 @@ namespace GymOS.ArchitectureTests;
 /// </summary>
 public sealed class LayerDependencyTests
 {
-    private static readonly Assembly SharedKernel = typeof(GymOS.SharedKernel.AssemblyMarker).Assembly;
-    private static readonly Assembly BuildingBlocksApplication = typeof(GymOS.BuildingBlocks.Application.AssemblyMarker).Assembly;
-    private static readonly Assembly BuildingBlocksInfrastructure = typeof(GymOS.BuildingBlocks.Infrastructure.AssemblyMarker).Assembly;
-    private static readonly Assembly PlatformDomain = typeof(GymOS.Platform.Domain.AssemblyMarker).Assembly;
-    private static readonly Assembly PlatformApplication = typeof(GymOS.Platform.Application.AssemblyMarker).Assembly;
-    private static readonly Assembly PlatformInfrastructure = typeof(GymOS.Platform.Infrastructure.AssemblyMarker).Assembly;
+    private static readonly Assembly SharedKernel = ProductionAssemblies.SharedKernel;
+    private static readonly Assembly BuildingBlocksApplication = ProductionAssemblies.BuildingBlocksApplication;
+    private static readonly Assembly PlatformDomain = ProductionAssemblies.PlatformDomain;
+    private static readonly Assembly PlatformApplication = ProductionAssemblies.PlatformApplication;
 
-    private static readonly Assembly[] AllProductionAssemblies =
-    [
-        SharedKernel,
-        BuildingBlocksApplication,
-        BuildingBlocksInfrastructure,
-        PlatformDomain,
-        PlatformApplication,
-        PlatformInfrastructure,
-    ];
+    private static readonly Assembly[] AllProductionAssemblies = ProductionAssemblies.All;
 
     [Fact]
     public void SharedKernel_DependsOnNoOtherGymOsAssembly()
