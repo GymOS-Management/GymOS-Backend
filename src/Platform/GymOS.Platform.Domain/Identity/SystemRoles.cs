@@ -27,21 +27,35 @@ public static class SystemRoles
             PlatformAdmin,
             "Day-to-day platform administration",
             GrantsAllPermissions: false,
-            [PlatformPermissions.UsersRead, PlatformPermissions.UsersManage, PlatformPermissions.RolesRead, PlatformPermissions.AuditRead]),
+            [
+                PlatformPermissions.GymsRead,
+                PlatformPermissions.GymsCreate,
+                PlatformPermissions.GymsUpdate,
+                PlatformPermissions.GymsSuspend,
+                PlatformPermissions.UsersRead,
+                PlatformPermissions.UsersManage,
+                PlatformPermissions.RolesRead,
+                PlatformPermissions.AuditRead,
+            ]),
         new(
             SupportAgent,
             "Support: read users and audit trails",
             GrantsAllPermissions: false,
-            [PlatformPermissions.UsersRead, PlatformPermissions.AuditRead]),
+            [PlatformPermissions.GymsRead, PlatformPermissions.UsersRead, PlatformPermissions.AuditRead]),
         new(
             BillingAdmin,
             "Billing operations (billing permissions arrive with M3)",
             GrantsAllPermissions: false,
-            [PlatformPermissions.UsersRead]),
+            [PlatformPermissions.GymsRead, PlatformPermissions.UsersRead]),
         new(
             ReadOnly,
             "Read-only access across the platform",
             GrantsAllPermissions: false,
-            [PlatformPermissions.UsersRead, PlatformPermissions.RolesRead, PlatformPermissions.AuditRead]),
+            [
+                PlatformPermissions.GymsRead,
+                PlatformPermissions.UsersRead,
+                PlatformPermissions.RolesRead,
+                PlatformPermissions.AuditRead,
+            ]),
     ];
 }

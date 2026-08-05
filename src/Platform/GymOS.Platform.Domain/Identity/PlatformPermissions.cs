@@ -13,6 +13,12 @@ public static class PlatformPermissions
 {
     public const string ModuleName = "platform";
 
+    public const string GymsRead = "gyms.read";
+    public const string GymsCreate = "gyms.create";
+    public const string GymsUpdate = "gyms.update";
+    public const string GymsSuspend = "gyms.suspend";
+    public const string GymsDelete = "gyms.delete";
+
     public const string UsersRead = "users.read";
     public const string UsersManage = "users.manage";
     public const string RolesRead = "roles.read";
@@ -21,6 +27,11 @@ public static class PlatformPermissions
 
     public static readonly IReadOnlyList<PermissionDefinition> All =
     [
+        new(GymsRead, ModuleName, "View gyms and their details"),
+        new(GymsCreate, ModuleName, "Provision a new gym"),
+        new(GymsUpdate, ModuleName, "Edit a gym's details and branding"),
+        new(GymsSuspend, ModuleName, "Suspend and reactivate a gym"),
+        new(GymsDelete, ModuleName, "Delete a gym"),
         new(UsersRead, ModuleName, "View platform administrators"),
         new(UsersManage, ModuleName, "Create, edit, suspend, and reset platform administrators"),
         new(RolesRead, ModuleName, "View roles and their permission grants"),

@@ -69,8 +69,18 @@ public sealed class IdentitySeedingTests : IAsyncLifetime
         Role superAdmin = Assert.Single(roles, r => r.Name == SystemRoles.SuperAdmin);
         Assert.Equal(permissions.Count, superAdmin.Permissions.Count); // grants everything
 
+        // Compared against the declaration rather than a hard-coded count: a role gaining a
+        // permission is a deliberate change to SystemRoles, and this should confirm the seeder
+        // reproduced it — not fail merely because the number moved.
         Role supportAgent = Assert.Single(roles, r => r.Name == SystemRoles.SupportAgent);
-        Assert.Equal(2, supportAgent.Permissions.Count);
+        Assert.Equal(
+            SystemRoles.Definitions
+                .Single(definition => definition.Name == SystemRoles.SupportAgent)
+                .Permissions
+                .Order(StringComparer.Ordinal),
+            supportAgent.Permissions
+                .Select(grant => permissions.Single(p => p.Id == grant.PermissionId).Key)
+                .Order(StringComparer.Ordinal));
     }
 
     [Fact]

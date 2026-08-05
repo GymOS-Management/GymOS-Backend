@@ -1,4 +1,5 @@
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
+using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Identity;
 
 namespace GymOS.Platform.Infrastructure.Persistence.Auditing;
@@ -19,6 +20,11 @@ public static class PlatformAuditedEntities
         AuditedEntity.Of<Role>("role"),
         AuditedEntity.Of<UserRole>("user_role"),
         AuditedEntity.Of<RolePermission>("role_permission"),
+
+        // A gym is a tenant: who provisioned it, who suspended it and why, and who deleted it are the
+        // questions a support conversation or a billing dispute turns on.
+        AuditedEntity.Of<Gym>("gym"),
+        AuditedEntity.Of<GymBranding>("gym_branding"),
 
         // Deliberately absent:
         //   RefreshToken — every sign-in and rotation writes one, so auditing rows here

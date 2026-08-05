@@ -115,3 +115,24 @@ public static class PreconditionHeaders
         return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 }
+
+/// <summary>
+/// Reads the step-up confirmation a destructive operation requires (AD-6).
+///
+/// <para>A header rather than a body field, so it survives a method with no body (<c>DELETE</c>) and so a
+/// replayed API call from a script that never saw the resource cannot satisfy it. Whether the value is
+/// <em>correct</em> is decided by the handler that knows the resource — this only reads it.</para>
+/// </summary>
+public static class ConfirmationHeaders
+{
+    public const string HeaderName = "X-Confirm-Action";
+
+    /// <summary>The raw <c>X-Confirm-Action</c> value, or <see langword="null"/> when absent.</summary>
+    public static string? ConfirmAction(HttpRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        string? value = request.Headers[HeaderName].ToString();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+}

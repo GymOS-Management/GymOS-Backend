@@ -58,6 +58,7 @@ try
     builder.Services.AddPlatformApplication();
     builder.Services.AddPlatformPersistence(builder.Configuration);
     builder.Services.AddPlatformIdentity(builder.Configuration);
+    builder.Services.AddPlatformGyms();
 
     builder.Services.AddGymOSAuthentication();
     builder.Services.AddGymOSRateLimiting(builder.Configuration);
@@ -160,6 +161,7 @@ try
     app.MapHealthChecks("/health/ready");
     app.MapOpenApi();
     app.MapAuthEndpoints();
+    app.MapGymEndpoints();
     app.MapUserEndpoints();
     app.MapRoleEndpoints();
     app.MapAuditLogEndpoints();

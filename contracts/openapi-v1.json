@@ -185,6 +185,179 @@
         ],
         "type": "object"
       },
+      "GymBrandingDetail": {
+        "properties": {
+          "customDomain": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "emailSenderName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "faviconUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "logoUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "primaryColour": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "secondaryColour": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "logoUrl",
+          "faviconUrl",
+          "primaryColour",
+          "secondaryColour",
+          "customDomain",
+          "emailSenderName"
+        ],
+        "type": "object"
+      },
+      "GymDetail": {
+        "properties": {
+          "branding": {
+            "$ref": "#/components/schemas/GymBrandingDetail"
+          },
+          "countryCode": {
+            "type": "string"
+          },
+          "createdAtUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "deletedAtUtc": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerEmail": {
+            "type": "string"
+          },
+          "ownerName": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "rowVersion": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "suspensionReason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "timeZoneId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "status",
+          "suspensionReason",
+          "ownerName",
+          "ownerEmail",
+          "phone",
+          "countryCode",
+          "timeZoneId",
+          "currency",
+          "deletedAtUtc",
+          "createdAtUtc",
+          "branding",
+          "rowVersion"
+        ],
+        "type": "object"
+      },
+      "GymListItem": {
+        "properties": {
+          "countryCode": {
+            "type": "string"
+          },
+          "createdAtUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerEmail": {
+            "type": "string"
+          },
+          "ownerName": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "status",
+          "countryCode",
+          "currency",
+          "ownerName",
+          "ownerEmail",
+          "createdAtUtc"
+        ],
+        "type": "object"
+      },
       "InviteUserRequest": {
         "properties": {
           "email": {
@@ -220,6 +393,55 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/AuditLogListItem"
+            },
+            "type": "array"
+          },
+          "page": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "pageSize": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "totalCount": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "totalPages": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "pageSize",
+          "totalCount"
+        ],
+        "type": "object"
+      },
+      "PagedResultOfGymListItem": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GymListItem"
             },
             "type": "array"
           },
@@ -351,6 +573,48 @@
         },
         "type": "object"
       },
+      "ProvisionGymRequest": {
+        "properties": {
+          "countryCode": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerEmail": {
+            "type": "string"
+          },
+          "ownerName": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "slug": {
+            "type": "string"
+          },
+          "timeZoneId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "ownerName",
+          "ownerEmail",
+          "phone",
+          "countryCode",
+          "timeZoneId",
+          "currency"
+        ],
+        "type": "object"
+      },
       "RoleDetail": {
         "properties": {
           "assignedUserCount": {
@@ -445,6 +709,17 @@
         ],
         "type": "object"
       },
+      "SuspendGymRequest": {
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
       "SuspendUserRequest": {
         "properties": {
           "reason": {
@@ -453,6 +728,93 @@
         },
         "required": [
           "reason"
+        ],
+        "type": "object"
+      },
+      "UpdateGymBrandingRequest": {
+        "properties": {
+          "customDomain": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "emailSenderName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "faviconUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "logoUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "primaryColour": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "secondaryColour": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "logoUrl",
+          "faviconUrl",
+          "primaryColour",
+          "secondaryColour",
+          "customDomain",
+          "emailSenderName"
+        ],
+        "type": "object"
+      },
+      "UpdateGymRequest": {
+        "properties": {
+          "countryCode": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerEmail": {
+            "type": "string"
+          },
+          "ownerName": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "timeZoneId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "ownerName",
+          "ownerEmail",
+          "phone",
+          "countryCode",
+          "timeZoneId",
+          "currency"
         ],
         "type": "object"
       },
@@ -1005,6 +1367,707 @@
         "summary": "Exchange the refresh cookie for a new access token",
         "tags": [
           "Authentication"
+        ]
+      }
+    },
+    "/api/v1/gyms": {
+      "get": {
+        "description": "Paged and filterable. \u0060search\u0060 matches name, slug, and owner email; \u0060status\u0060 filters on Provisioning, Active, Suspended, or Deleted; \u0060country\u0060 filters on ISO alpha-2. Deleted gyms are excluded unless \u0060includeDeleted=true\u0060, so a deleted tenant is never counted in a figure someone reports upward. \u0060pageSize\u0060 is capped server-side.",
+        "operationId": "ListGyms",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "sortBy",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sortDir",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "country",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeDeleted",
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedResultOfGymListItem"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "summary": "List gyms",
+        "tags": [
+          "Gyms"
+        ]
+      },
+      "post": {
+        "description": "The gym is created in Provisioning: set up \u2014 branding, staff \u2014 before members can reach it, then \u0060activate\u0060 when it opens. The slug is permanent and is never reused, including by a deleted gym, because it appears in URLs members may still have. Returns the created gym and its \u0060ETag\u0060, so no follow-up GET is needed.",
+        "operationId": "ProvisionGym",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionGymRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GymDetail"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Provision a gym",
+        "tags": [
+          "Gyms"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}": {
+      "delete": {
+        "description": "Requires the \u0060X-Confirm-Action\u0060 header carrying the gym\u0027s slug (AD-6): this removes an entire business\u0027s access, so a mis-clicked row in a list must not be able to do it. The row survives the retention window so invoices and audit entries stay readable; a purge job performs the hard delete. Terminal \u2014 there is no undelete. Repeating the call on an already-deleted gym succeeds. \u0060GET\u0060 the gym afterwards to see the recorded deletion.",
+        "operationId": "DeleteGym",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Soft-delete a gym",
+        "tags": [
+          "Gyms"
+        ]
+      },
+      "get": {
+        "description": "A soft-deleted gym still resolves here, deliberately: an operator investigating why a tenant stopped working needs to see that it was deleted and when. Subscription, resolved features, device summary, and aggregate stats arrive with the modules that own them (M3\u2013M6) rather than as fields that always read zero.",
+        "operationId": "GetGym",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GymDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "summary": "One gym, with its branding",
+        "tags": [
+          "Gyms"
+        ]
+      },
+      "put": {
+        "description": "Slug is not editable \u2014 it is the gym\u0027s public address and the confirmation phrase for deletion. Requires \u0060If-Match\u0060 carrying the \u0060rowVersion\u0060 you read: without it the request is refused with 428, and a stale version with 409. Returns the updated gym and its new \u0060ETag\u0060.",
+        "operationId": "UpdateGym",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGymRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GymDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "428": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Precondition Required"
+          }
+        },
+        "summary": "Change a gym\u0027s details",
+        "tags": [
+          "Gyms"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/activate": {
+      "post": {
+        "description": "The deliberate moment a gym goes live. Only a gym in Provisioning can be activated: a suspended gym goes through \u0060reactivate\u0060, which is a different decision and a different permission. \u0060If-Match\u0060 is honored when supplied but not required \u2014 the lifecycle transition rules already refuse the unsafe orderings. Returns the updated gym.",
+        "operationId": "ActivateGym",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GymDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Open a provisioned gym for business",
+        "tags": [
+          "Gyms"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/branding": {
+      "put": {
+        "description": "Declarative: send the complete branding, and an omitted value is cleared. A custom domain must be unique across the platform. Requires \u0060If-Match\u0060 carrying the gym\u0027s \u0060rowVersion\u0060 \u2014 branding is part of the gym\u0027s representation and shares its version, so a successful branding change also moves the gym\u0027s \u0060ETag\u0060. Returns the updated gym.",
+        "operationId": "UpdateGymBranding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGymBrandingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GymDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "428": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Precondition Required"
+          }
+        },
+        "summary": "Replace a gym\u0027s branding",
+        "tags": [
+          "Gyms"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/reactivate": {
+      "post": {
+        "description": "Returns the gym to Active and clears the suspension reason. Only a suspended gym can be reactivated. \u0060If-Match\u0060 is honored when supplied but not required. Returns the updated gym.",
+        "operationId": "ReactivateGym",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GymDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Lift a suspension",
+        "tags": [
+          "Gyms"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/suspend": {
+      "post": {
+        "description": "Reversible. The reason is required and is returned by the API \u2014 an operator lifting the suspension next week needs to know why it happened. \u0060If-Match\u0060 is honored when supplied but not required. Returns the updated gym.",
+        "operationId": "SuspendGym",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuspendGymRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GymDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Withhold service from a gym",
+        "tags": [
+          "Gyms"
         ]
       }
     },
@@ -1684,6 +2747,9 @@
   "tags": [
     {
       "name": "Authentication"
+    },
+    {
+      "name": "Gyms"
     },
     {
       "name": "Platform users"
