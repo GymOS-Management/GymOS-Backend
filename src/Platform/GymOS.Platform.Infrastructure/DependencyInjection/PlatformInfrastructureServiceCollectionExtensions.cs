@@ -51,6 +51,13 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         services.TryAddScoped<AuditLogPartitionMaintainer>();
         services.TryAddScoped<IIdempotencyStore, IdempotencyStore>();
 
+        services.AddOptions<IdempotencyOptions>()
+            .Bind(configuration.GetSection(IdempotencyOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.TryAddScoped<IdempotencyRecordMaintainer>();
+
         services.TryAddScoped<IAuditTrail>(provider => new AuditTrail(
             provider.GetRequiredService<AppDbContext>(),
             provider.GetRequiredService<IClock>(),

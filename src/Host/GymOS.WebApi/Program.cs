@@ -1,10 +1,12 @@
 using System.Globalization;
 using Asp.Versioning;
 using GymOS.BuildingBlocks.Application.DependencyInjection;
+using GymOS.BuildingBlocks.Application.Idempotency;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Infrastructure.DependencyInjection;
 using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Infrastructure.DependencyInjection;
+using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
@@ -83,6 +85,10 @@ try
     // declares, even if an endpoint mapping forgot its policy.
     builder.Services.AddAuthorizationBehavior();
 
+    // AD-39: claims/replays idempotent commands. Registered after authorization so a stored
+    // response is never returned to a caller who could not execute the operation now.
+    builder.Services.AddIdempotencyBehavior();
+
     // URL-segment versioning (AD-37): /api/v1/…. Unversioned callers are not guessed
     // at — an explicit version is part of the contract.
     builder.Services.AddApiVersioning(options =>
@@ -156,6 +162,15 @@ try
                 .GetRequiredService<AuditLogPartitionMaintainer>()
                 .EnsurePartitionsAsync(CancellationToken.None);
         }
+
+        // AD-39: deletes expired idempotency records ahead of the M3.4 retention job, same
+        // startup-owned, non-fatal pattern as the audit partition maintainer above.
+        if (app.Services.GetRequiredService<IOptions<IdempotencyOptions>>().Value.PurgeOnStartup)
+        {
+            await startupScope.ServiceProvider
+                .GetRequiredService<IdempotencyRecordMaintainer>()
+                .PurgeExpiredAsync(CancellationToken.None);
+        }
     }
 
     // First in the pipeline: the rate limiter partitions on the client IP and every audit row
@@ -166,6 +181,7 @@ try
     app.UseStatusCodePages();
 
     app.UseMiddleware<CorrelationMiddleware>();
+    app.UseMiddleware<IdempotencyHeaderMiddleware>();
     app.UseSerilogRequestLogging();
 
     app.UseRateLimiter();
