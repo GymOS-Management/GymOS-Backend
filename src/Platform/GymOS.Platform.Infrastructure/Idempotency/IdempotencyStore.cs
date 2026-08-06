@@ -17,43 +17,71 @@ internal sealed class IdempotencyStore : IIdempotencyStore
 
     public IdempotencyStore(AppDbContext dbContext) => _dbContext = dbContext;
 
+    /// <summary>Bounds the retry described on <see cref="TryClaimAsync"/>; pathological
+    /// contention (not a normal race) past this many attempts is a bug worth surfacing.</summary>
+    private const int MaxClaimAttempts = 3;
+
+    /// <summary>
+    /// Loops rather than doing one INSERT-then-lookup because the lookup can race
+    /// <see cref="ReleaseClaimAsync"/>: if the row that lost the INSERT is deleted by its
+    /// owner (a transient failure releasing its claim) in the window before the lookup runs,
+    /// the row is simply gone — not "someone else legitimately holds it". In that case there
+    /// is nothing to report as <c>Existing</c>, and the honest outcome is the same as if this
+    /// call had run a moment later and won the INSERT outright, so it retries the INSERT
+    /// instead of surfacing an error for a state that already resolved itself.
+    /// </summary>
     public async Task<IdempotencyClaimResult> TryClaimAsync(
         IdempotencyClaimRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        int inserted = await _dbContext.Database.ExecuteSqlAsync(
-            $"""
-             INSERT INTO platform.idempotency_records
-                 (id, tenant_id, operation_key, idempotency_key, request_hash, status,
-                  response_status, response_body, lease_expires_at, created_at, expires_at)
-             VALUES ({Guid.NewGuid()}, NULL, {request.OperationKey}, {request.IdempotencyKey},
-                     {request.RequestHash}, {(int)IdempotencyRecordStatus.InProgress}, 0, NULL,
-                     {request.LeaseExpiresAt}, {request.CreatedAt}, {request.ExpiresAt})
-             ON CONFLICT DO NOTHING
-             """,
-            cancellationToken);
-
-        if (inserted == 1)
+        for (int attempt = 1; attempt <= MaxClaimAttempts; attempt++)
         {
-            return new IdempotencyClaimResult(Claimed: true, Existing: null);
-        }
-
-        IdempotencyRecord existing = await _dbContext.Set<IdempotencyRecord>()
-            .AsNoTracking()
-            .SingleAsync(
-                record => record.OperationKey == request.OperationKey
-                    && record.IdempotencyKey == request.IdempotencyKey,
+            int inserted = await _dbContext.Database.ExecuteSqlAsync(
+                $"""
+                 INSERT INTO platform.idempotency_records
+                     (id, tenant_id, operation_key, idempotency_key, request_hash, status,
+                      response_status, response_body, lease_expires_at, created_at, expires_at)
+                 VALUES ({Guid.NewGuid()}, NULL, {request.OperationKey}, {request.IdempotencyKey},
+                         {request.RequestHash}, {(int)IdempotencyRecordStatus.InProgress}, 0, NULL,
+                         {request.LeaseExpiresAt}, {request.CreatedAt}, {request.ExpiresAt})
+                 ON CONFLICT DO NOTHING
+                 """,
                 cancellationToken);
 
-        return new IdempotencyClaimResult(
-            Claimed: false,
-            Existing: new IdempotencyRecordSnapshot(
-                (IdempotencyRecordStatus)existing.Status,
-                existing.RequestHash,
-                existing.ResponseStatus,
-                existing.ResponseBody,
-                existing.LeaseExpiresAt));
+            if (inserted == 1)
+            {
+                return new IdempotencyClaimResult(Claimed: true, Existing: null);
+            }
+
+            IdempotencyRecord? existing = await _dbContext.Set<IdempotencyRecord>()
+                .AsNoTracking()
+                .SingleOrDefaultAsync(
+                    record => record.OperationKey == request.OperationKey
+                        && record.IdempotencyKey == request.IdempotencyKey,
+                    cancellationToken);
+
+            if (existing is not null)
+            {
+                return new IdempotencyClaimResult(
+                    Claimed: false,
+                    Existing: new IdempotencyRecordSnapshot(
+                        (IdempotencyRecordStatus)existing.Status,
+                        existing.RequestHash,
+                        existing.ResponseStatus,
+                        existing.ResponseBody,
+                        existing.LeaseExpiresAt));
+            }
+
+            // The row that beat our INSERT is already gone (released between the INSERT and
+            // this lookup) — the slot is free again, so loop back and take it.
+        }
+
+        throw new InvalidOperationException(
+            $"Idempotency claim for {request.OperationKey}/{request.IdempotencyKey} did not " +
+            $"settle after {MaxClaimAttempts} attempts — the claim slot kept being released " +
+            "out from under this call, which points at pathological contention rather than a " +
+            "normal race.");
     }
 
     public async Task<bool> TryTakeOverAsync(
