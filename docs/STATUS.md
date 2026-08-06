@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-05 · after M3.1 (subscription plan catalogue)
+**Last updated:** 2026-08-06 · after M3.2 (subscription assignment)
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -20,7 +20,8 @@ before resuming work on any machine.
 | **`Money` (AD-42)** — currency-checked arithmetic, explicit rounding, largest-remainder `Allocate`, EF mapping, rule R4 | ✅ complete — **645 tests green**, storage contract checked against PostgreSQL · ⬅ **awaiting review** |
 | **Members domain** (business specification, no code) | ✅ **FROZEN** — `docs/Domain/MEMBERS-DOMAIN-DESIGN.md`. 11 product decisions approved 2026-08-05; implementation may begin. 4 legal-review items deferred (mechanism to build, values from counsel). |
 | **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — **734 tests green**, verified live · ⬅ **awaiting review** |
-| M3.2 — subscription assignment · M3.3 — invoices · M3.4 — renewal/overdue jobs | next; M3.3 and M3.4 are **blocked** (see below) |
+| **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
+| M3.3 — invoices · M3.4 — renewal/overdue jobs | **blocked**: idempotency framework and a job runner (see below) |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
 
@@ -296,7 +297,7 @@ dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTest
 ```
 
 Full counts per project, for checking a run was complete: SharedKernel 126 · BuildingBlocks 14 ·
-Architecture 88 · Domain 193 · Application 128 · Infrastructure 67 · Integration 118 = **734**.
+Architecture 118 · Domain 242 · Application 147 · Infrastructure 67 · Integration 139 = **853**.
 
 Capping the test connection pools (above) may also have helped here — the last several full runs completed
 first time, where they previously needed retries.
@@ -358,6 +359,48 @@ prerequisites that do not exist:
 - **The verify harness (`verify.sh`) runs `--no-build`** — build first, or it tests stale binaries and
   reports failures that no longer exist. That cost two rounds of confusion.
 
+## M3.2 as built
+
+One migration: `AddGymSubscriptions`. Rules and the deferral list: **`docs/BusinessRules/Subscriptions.md`**.
+
+1. **`GymSubscription`** — one **live** row per gym enforced by a partial unique index
+   (`gym_id WHERE status IN (1,2,3)`); ended rows are kept, because they are the record a billing dispute
+   is settled from.
+2. **Lifecycle** `Trialing → Active ⇄ PastDue`, with `Canceled` and `Expired` terminal and distinct:
+   cancellation is a decision (what churn counts), expiry is a failure to collect. Collapsing them would
+   make M5's churn figure wrong in a way nobody could untangle.
+3. **Seven endpoints** under `/api/v1/gyms/{gymId}/subscription`, plus `subscriptions.manage` — separate
+   from `billing.manage`, because deciding what to sell and deciding what one customer pays are different
+   authorities.
+4. **Two earlier deferrals closed**: gym detail now carries `subscription`, and plan responses carry
+   `subscribedGymCount`. Both were omitted while they could only have read null or zero.
+
+### Decisions and traps found during M3.2
+
+- **The spec's "price snapshot FK" cannot be an FK.** §2.3 says `plan_price_id` is the snapshot, but the
+  same section's `(plan_id, billing_cycle, currency)` uniqueness forces prices to be *mutated in place* —
+  so a pointer would silently reprice every existing subscription, the opposite of "renewals honor the
+  price at assignment". The amount, currency, and cycle are **copied**; the FK survives as nullable
+  provenance with `ON DELETE SET NULL`. Verified live. **Honours the intent; the literal mechanism is
+  unworkable against its own constraint.**
+- **Scheduled cancellation must not look like cancellation.** `cancelAtPeriodEnd` leaves the subscription
+  `Active` and live — the gym paid to the end of the period. A consumer that revoked access on the
+  *scheduling* event would cut off a paying customer, which is why the two are separate events.
+- **`PastDue` does not withhold service.** That is a gym suspension. Conflating them would mean every
+  failed card ended a business's day.
+- **Changing plan updates the one row.** The status enum has no "replaced" state, so writing a `Canceled`
+  row for an upgrade would inflate churn. History lives in the audit trail and the event carries both
+  plan ids.
+- **R4 now encodes its principle rather than a list.** A money-shaped `decimal` is allowed when its type
+  is a record *and* declares a currency member. This replaced six by-name exemptions and pre-empted four
+  more. **Verified with two decoys** — an aggregate with a `decimal MonthlyFee` is still caught because
+  it is a class; a record with an amount and no currency is still caught. Residual risk documented at the
+  rule: a domain value object written as a record could pair a decimal with a currency string.
+- **Proration moved M3.2 → M3.3** (correcting my own earlier note). `Money.Allocate` is ready, but a
+  prorated charge needs an invoice to land on.
+- **A leftover `dotnet run` host locks the build output.** Two builds failed with MSB3027 again. If a
+  build cannot copy DLLs, look for a running `GymOS.WebApi` first — this has now cost time twice.
+
 ### Still owed, in this order
 
 - **Write the RLS startup validation (R14) with the first tenant-scoped entity.** R14 has never run;
@@ -401,7 +444,7 @@ git clone https://github.com/GymOS-Management/GymOS-Backend
 cd GymOS-Backend
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d --wait        # PostgreSQL 17
-dotnet test GymOS.Backend.slnx     # expect 734 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 853 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi

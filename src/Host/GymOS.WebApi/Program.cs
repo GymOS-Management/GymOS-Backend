@@ -164,6 +164,7 @@ try
     app.MapAuthEndpoints();
     app.MapGymEndpoints();
     app.MapPlanEndpoints();
+    app.MapSubscriptionEndpoints();
     app.MapUserEndpoints();
     app.MapRoleEndpoints();
     app.MapAuditLogEndpoints();

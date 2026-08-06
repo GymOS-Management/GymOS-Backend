@@ -30,6 +30,26 @@
         ],
         "type": "object"
       },
+      "AssignSubscriptionRequest": {
+        "properties": {
+          "billingCycle": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "planId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "planId",
+          "billingCycle",
+          "currency"
+        ],
+        "type": "object"
+      },
       "AuditLogDetail": {
         "properties": {
           "newValues": {
@@ -125,6 +145,24 @@
           "entityId",
           "correlationId",
           "createdAtUtc"
+        ],
+        "type": "object"
+      },
+      "CancelSubscriptionRequest": {
+        "properties": {
+          "immediately": {
+            "default": false,
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "reason"
         ],
         "type": "object"
       },
@@ -364,6 +402,16 @@
           "status": {
             "type": "string"
           },
+          "subscription": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GymSubscriptionSummary"
+              }
+            ]
+          },
           "suspensionReason": {
             "type": [
               "null",
@@ -389,6 +437,7 @@
           "deletedAtUtc",
           "createdAtUtc",
           "branding",
+          "subscription",
           "rowVersion"
         ],
         "type": "object"
@@ -435,6 +484,69 @@
           "ownerName",
           "ownerEmail",
           "createdAtUtc"
+        ],
+        "type": "object"
+      },
+      "GymSubscriptionSummary": {
+        "properties": {
+          "amount": {
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?$",
+            "type": [
+              "number",
+              "string"
+            ]
+          },
+          "billingCycle": {
+            "type": "string"
+          },
+          "cancelAtPeriodEnd": {
+            "type": "boolean"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "currentPeriodEndUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "planCode": {
+            "type": "string"
+          },
+          "planId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "planName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "trialEndsAtUtc": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "planId",
+          "planCode",
+          "planName",
+          "status",
+          "billingCycle",
+          "currency",
+          "amount",
+          "currentPeriodEndUtc",
+          "trialEndsAtUtc",
+          "cancelAtPeriodEnd"
         ],
         "type": "object"
       },
@@ -742,6 +854,14 @@
               "string"
             ]
           },
+          "subscribedGymCount": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
           "trialDays": {
             "format": "int32",
             "pattern": "^-?(?:0|[1-9]\\d*)$",
@@ -765,6 +885,7 @@
           "isPublic",
           "sortOrder",
           "prices",
+          "subscribedGymCount",
           "createdAtUtc",
           "rowVersion"
         ],
@@ -808,6 +929,14 @@
               "string"
             ]
           },
+          "subscribedGymCount": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
           "trialDays": {
             "format": "int32",
             "pattern": "^-?(?:0|[1-9]\\d*)$",
@@ -826,6 +955,7 @@
           "isPublic",
           "sortOrder",
           "priceCount",
+          "subscribedGymCount",
           "createdAtUtc"
         ],
         "type": "object"
@@ -1012,6 +1142,17 @@
         ],
         "type": "object"
       },
+      "SetPaymentStateRequest": {
+        "properties": {
+          "pastDue": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pastDue"
+        ],
+        "type": "object"
+      },
       "SetPlanPriceRequest": {
         "properties": {
           "amount": {
@@ -1063,6 +1204,116 @@
         "required": [
           "email",
           "password"
+        ],
+        "type": "object"
+      },
+      "SubscriptionDetail": {
+        "properties": {
+          "amount": {
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?$",
+            "type": [
+              "number",
+              "string"
+            ]
+          },
+          "autoRenew": {
+            "type": "boolean"
+          },
+          "billingCycle": {
+            "type": "string"
+          },
+          "billingCycleMonths": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "cancelAtPeriodEnd": {
+            "type": "boolean"
+          },
+          "canceledAtUtc": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "cancellationReason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "createdAtUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "currentPeriodEndUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currentPeriodStartUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "gymId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "planCode": {
+            "type": "string"
+          },
+          "planId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "planName": {
+            "type": "string"
+          },
+          "rowVersion": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "trialEndsAtUtc": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "gymId",
+          "planId",
+          "planCode",
+          "planName",
+          "status",
+          "billingCycle",
+          "billingCycleMonths",
+          "currency",
+          "amount",
+          "currentPeriodStartUtc",
+          "currentPeriodEndUtc",
+          "trialEndsAtUtc",
+          "canceledAtUtc",
+          "cancelAtPeriodEnd",
+          "autoRenew",
+          "cancellationReason",
+          "createdAtUtc",
+          "rowVersion"
         ],
         "type": "object"
       },
@@ -2422,6 +2673,478 @@
         "summary": "Lift a suspension",
         "tags": [
           "Gyms"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/subscription": {
+      "get": {
+        "description": "Returns the live subscription \u2014 trialing, active, or past due. 404 when the gym has none, which is a normal state: a gym can exist before it is sold anything. The price returned is the one agreed at assignment, not the plan\u0027s current price.",
+        "operationId": "GetGymSubscription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "summary": "A gym\u0027s current subscription",
+        "tags": [
+          "Gym subscriptions"
+        ]
+      },
+      "put": {
+        "description": "One operation for both: assigns a subscription when the gym has none, and changes the plan or terms when it does. \u0060billingCycle\u0060 and \u0060currency\u0060 must match a price the plan actually offers \u2014 an absent combination is refused rather than approximated, since guessing would bill an amount nobody agreed to.\n\nA withdrawn plan cannot be newly assigned, though a gym already on one keeps it. The agreed price is **copied**, so later repricing of the plan never changes what this gym pays. Changing plan leaves the paid period alone; charging or crediting the difference is proration, which arrives with invoices in M3.3.",
+        "operationId": "AssignGymSubscription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignSubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Put the gym on a plan, or move it to another",
+        "tags": [
+          "Gym subscriptions"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/subscription/cancel": {
+      "post": {
+        "description": "By default schedules cancellation for the end of the paid period, so the gym keeps what it has paid for and \u0060cancelAtPeriodEnd\u0060 becomes true. Send \u0060immediately: true\u0060 to end it now and forfeit the remainder \u2014 a deliberate choice. Ending it now is terminal: a gym that returns gets a new subscription, leaving this one as the record of what it had.",
+        "operationId": "CancelGymSubscription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelSubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Cancel the subscription",
+        "tags": [
+          "Gym subscriptions"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/subscription/convert-trial": {
+      "post": {
+        "description": "Explicit for now: the renewal job (M3.4) will do this on the trial\u0027s end date. Until then a trial that has run out stays \u0060Trialing\u0060 with \u0060trialEndsAtUtc\u0060 in the past, which is legible rather than wrong.",
+        "operationId": "ConvertGymTrial",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "End the trial and start billing",
+        "tags": [
+          "Gym subscriptions"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/subscription/history": {
+      "get": {
+        "description": "Newest first, including ended ones. Subscriptions are never deleted \u2014 they are what a billing dispute is settled from.",
+        "operationId": "ListGymSubscriptionHistory",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SubscriptionDetail"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "summary": "Every subscription this gym has had",
+        "tags": [
+          "Gym subscriptions"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/subscription/payment-state": {
+      "post": {
+        "description": "\u0060pastDue: true\u0060 marks it late; \u0060false\u0060 marks it paid and returns it to active. **Service is not withheld either way** \u2014 whether a late-paying gym keeps operating is a separate decision, taken by suspending the gym. Every failed card must not end a business\u0027s day.",
+        "operationId": "SetGymSubscriptionPaymentState",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPaymentStateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Record that payment is late, or has arrived",
+        "tags": [
+          "Gym subscriptions"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/subscription/resume": {
+      "post": {
+        "description": "Clears \u0060cancelAtPeriodEnd\u0060 while the period is still running. It cannot revive a subscription that has already ended.",
+        "operationId": "ResumeGymSubscription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Withdraw a scheduled cancellation",
+        "tags": [
+          "Gym subscriptions"
         ]
       }
     },
@@ -3799,6 +4522,9 @@
     },
     {
       "name": "Subscription plans"
+    },
+    {
+      "name": "Gym subscriptions"
     },
     {
       "name": "Platform users"

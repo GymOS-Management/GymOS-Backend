@@ -32,6 +32,10 @@ public static class PlatformAuditedEntities
         AuditedEntity.Of<SubscriptionPlan>("subscription_plan"),
         AuditedEntity.Of<PlanPrice>("plan_price"),
 
+        // What each gym agreed to pay, and every change to it. This is the row a billing dispute is
+        // argued from, so who assigned, repriced, or cancelled it has to be recoverable.
+        AuditedEntity.Of<GymSubscription>("gym_subscription"),
+
         // Deliberately absent:
         //   RefreshToken — every sign-in and rotation writes one, so auditing rows here
         //     would bury the administrative actions the log exists for. Sessions are

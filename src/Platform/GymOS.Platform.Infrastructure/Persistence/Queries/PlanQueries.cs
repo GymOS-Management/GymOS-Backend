@@ -57,6 +57,11 @@ internal sealed class PlanQueries : IPlanQueries
                 plan.IsPublic,
                 plan.SortOrder,
                 PriceCount = plan.Prices.Count,
+                SubscribedGymCount = _dbContext.Set<GymSubscription>()
+                    .Count(subscription => subscription.PlanId == plan.Id
+                        && (subscription.Status == SubscriptionStatus.Trialing
+                            || subscription.Status == SubscriptionStatus.Active
+                            || subscription.Status == SubscriptionStatus.PastDue)),
                 plan.CreatedAtUtc,
             })
             .ToListAsync(cancellationToken);
@@ -71,6 +76,7 @@ internal sealed class PlanQueries : IPlanQueries
                 plan.IsPublic,
                 plan.SortOrder,
                 plan.PriceCount,
+                plan.SubscribedGymCount,
                 plan.CreatedAtUtc))
             .ToList();
 
@@ -98,6 +104,14 @@ internal sealed class PlanQueries : IPlanQueries
                 plan.SortOrder,
                 plan.CreatedAtUtc,
                 RowVersion = EF.Property<uint>(plan, "xmin"),
+
+                // Gyms on a live subscription to this plan — the number that decides whether
+                // withdrawing it is safe.
+                SubscribedGymCount = _dbContext.Set<GymSubscription>()
+                    .Count(subscription => subscription.PlanId == plan.Id
+                        && (subscription.Status == SubscriptionStatus.Trialing
+                            || subscription.Status == SubscriptionStatus.Active
+                            || subscription.Status == SubscriptionStatus.PastDue)),
                 Prices = plan.Prices
                     .Select(price => new
                     {
@@ -142,6 +156,7 @@ internal sealed class PlanQueries : IPlanQueries
             projection.IsPublic,
             projection.SortOrder,
             prices,
+            projection.SubscribedGymCount,
             projection.CreatedAtUtc,
             RowVersion.ToToken(projection.RowVersion));
     }

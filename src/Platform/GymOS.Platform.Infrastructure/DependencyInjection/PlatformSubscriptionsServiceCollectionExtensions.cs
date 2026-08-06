@@ -19,6 +19,8 @@ public static class PlatformSubscriptionsServiceCollectionExtensions
 
         services.TryAddScoped<IPlanRepository, PlanRepository>();
         services.TryAddScoped<IPlanQueries, PlanQueries>();
+        services.TryAddScoped<ISubscriptionRepository, SubscriptionRepository>();
+        services.TryAddScoped<ISubscriptionQueries, SubscriptionQueries>();
 
         return services;
     }

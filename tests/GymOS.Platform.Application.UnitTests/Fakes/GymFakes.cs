@@ -145,6 +145,9 @@ internal sealed class FakeGymQueries : IGymQueries
                 branding?.SecondaryColour,
                 branding?.CustomDomain,
                 branding?.EmailSenderName),
+            // No subscription in the gym fakes: subscriptions have their own context and fakes, and a
+            // gym is perfectly valid without one.
+            null,
             RowVersion.ToString(CultureInfo.InvariantCulture)));
     }
 }

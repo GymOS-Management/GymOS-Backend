@@ -1,4 +1,5 @@
 using GymOS.BuildingBlocks.Application.Models;
+using GymOS.Platform.Application.Subscriptions.Abstractions;
 
 namespace GymOS.Platform.Application.Gyms.Abstractions;
 
@@ -25,11 +26,10 @@ public sealed record GymBrandingDetail(
 /// <summary>
 /// One gym in full.
 ///
-/// <para>The approved design (§3.3) describes the detail view as also carrying the active subscription,
-/// resolved feature flags, a device summary, and aggregate stats. Every one of those belongs to a module
-/// that does not exist yet — subscriptions M3, features M4, stats M5, devices M6 — so they are absent
-/// rather than present and empty. Adding a field later is compatible within v1; a field that always reads
-/// zero teaches operators to distrust the screen.</para>
+/// <para>§3.3 describes the detail view as carrying the active subscription, resolved feature flags, a
+/// device summary, and aggregate stats. **The subscription now arrives** (M3.2). Features (M4), stats
+/// (M5), and devices (M6) are still absent rather than present and empty — a field that always reads
+/// zero teaches operators to distrust the screen, and adding one later is compatible within v1.</para>
 /// </summary>
 /// <param name="RowVersion">
 /// Opaque version token. Echo it in <c>If-Match</c> when updating (API_STANDARDS.md §3).
@@ -49,6 +49,8 @@ public sealed record GymDetail(
     DateTimeOffset? DeletedAtUtc,
     DateTimeOffset CreatedAtUtc,
     GymBrandingDetail Branding,
+    /// <summary>The gym's live subscription, or null when it has none — a gym can exist unsubscribed.</summary>
+    GymSubscriptionSummary? Subscription,
     string RowVersion);
 
 /// <param name="Status">Optional exact-match filter on <c>GymStatus</c>, by name.</param>

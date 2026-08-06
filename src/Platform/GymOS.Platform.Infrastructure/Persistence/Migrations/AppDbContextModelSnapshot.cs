@@ -698,6 +698,113 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("user_roles", "platform");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.GymSubscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AutoRenew")
+                        .HasColumnType("boolean")
+                        .HasColumnName("auto_renew");
+
+                    b.Property<short>("BillingCycle")
+                        .HasColumnType("smallint")
+                        .HasColumnName("billing_cycle");
+
+                    b.Property<bool>("CancelAtPeriodEnd")
+                        .HasColumnType("boolean")
+                        .HasColumnName("cancel_at_period_end");
+
+                    b.Property<DateTimeOffset?>("CanceledAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("canceled_at_utc");
+
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("cancellation_reason");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<DateTimeOffset>("CurrentPeriodEndUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("current_period_end_utc");
+
+                    b.Property<DateTimeOffset>("CurrentPeriodStartUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("current_period_start_utc");
+
+                    b.Property<Guid>("GymId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("gym_id");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("plan_id");
+
+                    b.Property<Guid?>("PlanPriceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("plan_price_id");
+
+                    b.Property<short>("Status")
+                        .HasColumnType("smallint")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset?>("TrialEndsAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("trial_ends_at_utc");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "Price", "GymOS.Platform.Domain.Subscriptions.GymSubscription.Price#Money", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.Property<decimal>("Amount")
+                                .HasColumnType("numeric(14,4)")
+                                .HasColumnName("price_amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("price_currency");
+                        });
+
+                    b.HasKey("Id")
+                        .HasName("pk_gym_subscriptions");
+
+                    b.HasIndex("GymId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_gym_subscriptions_one_live_per_gym")
+                        .HasFilter("status IN (1, 2, 3)");
+
+                    b.HasIndex("PlanId")
+                        .HasDatabaseName("ix_gym_subscriptions_plan_id");
+
+                    b.HasIndex("PlanPriceId")
+                        .HasDatabaseName("ix_gym_subscriptions_plan_price_id");
+
+                    b.HasIndex("GymId", "CreatedAtUtc")
+                        .HasDatabaseName("ix_gym_subscriptions_gym_id_created_at_utc");
+
+                    b.HasIndex("Status", "CurrentPeriodEndUtc")
+                        .HasDatabaseName("ix_gym_subscriptions_status_current_period_end_utc");
+
+                    b.ToTable("gym_subscriptions", "platform");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanPrice", b =>
                 {
                     b.Property<Guid>("Id")
@@ -884,6 +991,29 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_user_roles_users_user_id");
+                });
+
+            modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.GymSubscription", b =>
+                {
+                    b.HasOne("GymOS.Platform.Domain.Gyms.Gym", null)
+                        .WithMany()
+                        .HasForeignKey("GymId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_gym_subscriptions_gyms_gym_id");
+
+                    b.HasOne("GymOS.Platform.Domain.Subscriptions.SubscriptionPlan", null)
+                        .WithMany()
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_gym_subscriptions_subscription_plan_plan_id");
+
+                    b.HasOne("GymOS.Platform.Domain.Subscriptions.PlanPrice", null)
+                        .WithMany()
+                        .HasForeignKey("PlanPriceId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_gym_subscriptions_plan_price_plan_price_id");
                 });
 
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanPrice", b =>

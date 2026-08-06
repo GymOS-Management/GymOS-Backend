@@ -27,15 +27,16 @@ public sealed record PlanListItem(
     bool IsPublic,
     int SortOrder,
     int PriceCount,
+    int SubscribedGymCount,
     DateTimeOffset CreatedAtUtc);
 
 /// <summary>
 /// One plan in full.
 ///
-/// <para>Two things §2.3 attaches to a plan are absent: the count of gyms subscribed to it, and its
-/// feature set. Subscriptions arrive in M3.2 and the feature catalogue in M4, so both would read zero or
-/// empty today — and a figure that is always zero teaches operators to distrust the screen, the same
-/// reasoning that kept stats off the M2 gym response. Adding a field later is compatible within v1.</para>
+/// <para><paramref name="SubscribedGymCount"/> counts gyms on a **live** subscription to this plan — the
+/// number that decides whether withdrawing it is safe. It arrived with M3.2; the plan's feature set is
+/// still absent because the feature catalogue is M4, and a field that always reads empty teaches
+/// operators to distrust the screen.</para>
 /// </summary>
 /// <param name="MaxMembers">Null means unlimited, throughout.</param>
 /// <param name="RowVersion">Echo in <c>If-Match</c> when updating (API_STANDARDS.md §3).</param>
@@ -53,6 +54,7 @@ public sealed record PlanDetail(
     bool IsPublic,
     int SortOrder,
     IReadOnlyCollection<PlanPriceDetail> Prices,
+    int SubscribedGymCount,
     DateTimeOffset CreatedAtUtc,
     string RowVersion);
 

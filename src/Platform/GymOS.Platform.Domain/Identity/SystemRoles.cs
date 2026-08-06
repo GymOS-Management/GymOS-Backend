@@ -62,6 +62,7 @@ public static class SystemRoles
                 PlatformPermissions.UsersRead,
                 PlatformPermissions.BillingRead,
                 PlatformPermissions.BillingManage,
+                PlatformPermissions.SubscriptionsManage,
             ]),
         new(
             ReadOnly,

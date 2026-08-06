@@ -56,6 +56,16 @@ internal sealed class FakePlanQueries : IPlanQueries
 
     public uint RowVersion { get; set; } = 1;
 
+    /// <summary>
+    /// Gyms the test has declared as subscribed to a plan. Settable rather than derived from a
+    /// subscription fake, so a plan test can set up "three gyms are on this" without building a
+    /// subscription graph.
+    /// </summary>
+    public Dictionary<Guid, int> SubscribedGymCounts { get; } = [];
+
+    private int SubscribedGymCount(Guid planId) =>
+        SubscribedGymCounts.TryGetValue(planId, out int count) ? count : 0;
+
     public Task<PagedResult<PlanListItem>> ListAsync(
         PlanListFilter filter,
         CancellationToken cancellationToken)
@@ -79,6 +89,7 @@ internal sealed class FakePlanQueries : IPlanQueries
                 plan.IsPublic,
                 plan.SortOrder,
                 plan.Prices.Count,
+                SubscribedGymCount(plan.Id),
                 plan.CreatedAtUtc))
             .ToList();
 
@@ -119,7 +130,108 @@ internal sealed class FakePlanQueries : IPlanQueries
             plan.IsPublic,
             plan.SortOrder,
             prices,
+            SubscribedGymCount(plan.Id),
             plan.CreatedAtUtc,
             RowVersion.ToString(CultureInfo.InvariantCulture)));
+    }
+}
+
+/// <summary>In-memory stand-in for the subscription write side.</summary>
+internal sealed class FakeSubscriptionRepository : ISubscriptionRepository
+{
+    private readonly List<GymSubscription> _subscriptions = [];
+
+    public IReadOnlyList<GymSubscription> Subscriptions => _subscriptions;
+
+    public Dictionary<Guid, uint> ExpectedVersions { get; } = [];
+
+    /// <summary>Set to make <see cref="ExpectVersion"/> behave as a stale-version write.</summary>
+    public uint? ConflictingVersion { get; set; }
+
+    public void Seed(GymSubscription subscription) => _subscriptions.Add(subscription);
+
+    /// <summary>
+    /// Mirrors the partial unique index: at most one live row per gym, so SingleOrDefault here would
+    /// throw on the same broken invariant the real repository would.
+    /// </summary>
+    public Task<GymSubscription?> FindLiveByGymAsync(Guid gymId, CancellationToken cancellationToken) =>
+        Task.FromResult(_subscriptions.SingleOrDefault(subscription =>
+            subscription.GymId == gymId && subscription.IsLive));
+
+    public Task<GymSubscription?> FindByIdAsync(Guid subscriptionId, CancellationToken cancellationToken) =>
+        Task.FromResult(_subscriptions.SingleOrDefault(subscription => subscription.Id == subscriptionId));
+
+    public void Add(GymSubscription subscription) => _subscriptions.Add(subscription);
+
+    public void ExpectVersion(GymSubscription subscription, uint expectedVersion)
+    {
+        ExpectedVersions[subscription.Id] = expectedVersion;
+
+        if (ConflictingVersion == expectedVersion)
+        {
+            throw new ConcurrencyConflictException();
+        }
+    }
+}
+
+/// <summary>
+/// Read side, projecting from the same aggregates the write side mutates — so a handler that returns the
+/// resource it just changed is checked against real state.
+/// </summary>
+internal sealed class FakeSubscriptionQueries : ISubscriptionQueries
+{
+    private readonly FakeSubscriptionRepository _subscriptions;
+    private readonly FakePlanRepository _plans;
+
+    public FakeSubscriptionQueries(FakeSubscriptionRepository subscriptions, FakePlanRepository plans)
+    {
+        _subscriptions = subscriptions;
+        _plans = plans;
+    }
+
+    public uint RowVersion { get; set; } = 1;
+
+    public Task<SubscriptionDetail?> GetLiveForGymAsync(Guid gymId, CancellationToken cancellationToken)
+    {
+        GymSubscription? subscription = _subscriptions.Subscriptions
+            .SingleOrDefault(candidate => candidate.GymId == gymId && candidate.IsLive);
+
+        return Task.FromResult(subscription is null ? null : Project(subscription));
+    }
+
+    public Task<IReadOnlyList<SubscriptionDetail>> ListHistoryForGymAsync(
+        Guid gymId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<SubscriptionDetail>>(
+            _subscriptions.Subscriptions
+                .Where(subscription => subscription.GymId == gymId)
+                .Select(Project)
+                .Select(detail => detail!)
+                .ToList());
+
+    private SubscriptionDetail? Project(GymSubscription subscription)
+    {
+        SubscriptionPlan? plan = _plans.Plans.SingleOrDefault(candidate => candidate.Id == subscription.PlanId);
+
+        return new SubscriptionDetail(
+            subscription.Id,
+            subscription.GymId,
+            subscription.PlanId,
+            plan?.Code ?? string.Empty,
+            plan?.Name ?? string.Empty,
+            subscription.Status.ToString(),
+            subscription.BillingCycle.ToString(),
+            subscription.BillingCycle.Months(),
+            subscription.Price.Currency.Code,
+            subscription.Price.Amount,
+            subscription.CurrentPeriodStartUtc,
+            subscription.CurrentPeriodEndUtc,
+            subscription.TrialEndsAtUtc,
+            subscription.CanceledAtUtc,
+            subscription.CancelAtPeriodEnd,
+            subscription.AutoRenew,
+            subscription.CancellationReason,
+            subscription.CreatedAtUtc,
+            RowVersion.ToString(CultureInfo.InvariantCulture));
     }
 }

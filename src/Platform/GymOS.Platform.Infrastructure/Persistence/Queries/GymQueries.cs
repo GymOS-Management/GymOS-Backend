@@ -1,6 +1,8 @@
 using GymOS.BuildingBlocks.Application.Models;
 using GymOS.Platform.Application.Gyms.Abstractions;
+using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Gyms;
+using GymOS.Platform.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
 using RowVersion = GymOS.BuildingBlocks.Application.Abstractions.RowVersion;
 
@@ -133,6 +135,36 @@ internal sealed class GymQueries : IGymQueries
                         branding.EmailSenderName,
                     })
                     .FirstOrDefault(),
+
+                // The gym's live subscription, if any (M3.2 — §3.3 always described the detail view as
+                // carrying it). Projected here rather than fetched separately so the detail response
+                // stays one round trip.
+                Subscription = _dbContext.Set<GymSubscription>()
+                    .Where(subscription => subscription.GymId == gym.Id
+                        && (subscription.Status == SubscriptionStatus.Trialing
+                            || subscription.Status == SubscriptionStatus.Active
+                            || subscription.Status == SubscriptionStatus.PastDue))
+                    .Select(subscription => new
+                    {
+                        subscription.Id,
+                        subscription.PlanId,
+                        subscription.Status,
+                        subscription.BillingCycle,
+                        Currency = subscription.Price.Currency,
+                        Amount = subscription.Price.Amount,
+                        subscription.CurrentPeriodEndUtc,
+                        subscription.TrialEndsAtUtc,
+                        subscription.CancelAtPeriodEnd,
+                        PlanCode = _dbContext.Set<SubscriptionPlan>()
+                            .Where(plan => plan.Id == subscription.PlanId)
+                            .Select(plan => plan.Code)
+                            .FirstOrDefault(),
+                        PlanName = _dbContext.Set<SubscriptionPlan>()
+                            .Where(plan => plan.Id == subscription.PlanId)
+                            .Select(plan => plan.Name)
+                            .FirstOrDefault(),
+                    })
+                    .FirstOrDefault(),
             })
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -154,6 +186,21 @@ internal sealed class GymQueries : IGymQueries
                 projection.Branding.CustomDomain,
                 projection.Branding.EmailSenderName);
 
+        GymSubscriptionSummary? subscription = projection.Subscription is null
+            ? null
+            : new GymSubscriptionSummary(
+                projection.Subscription.Id,
+                projection.Subscription.PlanId,
+                projection.Subscription.PlanCode ?? string.Empty,
+                projection.Subscription.PlanName ?? string.Empty,
+                projection.Subscription.Status.ToString(),
+                projection.Subscription.BillingCycle.ToString(),
+                projection.Subscription.Currency.Code,
+                projection.Subscription.Amount,
+                projection.Subscription.CurrentPeriodEndUtc,
+                projection.Subscription.TrialEndsAtUtc,
+                projection.Subscription.CancelAtPeriodEnd);
+
         return new GymDetail(
             projection.Id,
             projection.Slug,
@@ -169,6 +216,7 @@ internal sealed class GymQueries : IGymQueries
             projection.DeletedAtUtc,
             projection.CreatedAtUtc,
             branding,
+            subscription,
             RowVersion.ToToken(projection.RowVersion));
     }
 

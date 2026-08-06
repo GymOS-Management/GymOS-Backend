@@ -1,7 +1,7 @@
 # Subscriptions & Billing — Business Rules
 
 **Module:** `GymOS.Platform` · schema `platform` · **platform-scoped**
-**Status:** **M3.1 implemented** (plan catalogue). M3.2–M3.4 not started — see Scope below.
+**Status:** **M3.1 and M3.2 implemented** (plan catalogue, subscription assignment). M3.3–M3.4 blocked — see Scope below.
 
 ## Purpose
 
@@ -14,19 +14,57 @@ different lifetimes, which is why they are three increments.
 | Increment | Contents | State | Prerequisite |
 |---|---|---|---|
 | **M3.1** | Plans, their limits and trial, and their prices | ✅ **built** | `Money` (AD-42) — done |
-| **M3.2** | `gym_subscriptions`: assignment, trial, period, cancel-at-period-end | not started | M3.1 |
+| **M3.2** | `gym_subscriptions`: assignment, plan change, trial, period, cancellation, payment state | ✅ **built** | M3.1 — done |
 | **M3.3** | `invoices` + `invoice_lines`, mark-paid, void | not started | **AD-39 idempotency framework — not built.** "Marking an invoice paid" is the textbook qualifying command: a retried click must not pay twice. |
 | **M3.4** | Renewal and overdue jobs | not started | **A job runner — not built.** Nothing in the platform yet runs work on a schedule. |
 
 `plan_features` is also specified in §2.3 but belongs with **M4**: it references the `features` catalogue,
 which does not exist. Building the join table first would give it nothing to point at.
 
-## Entities (M3.1)
+## Entities
 
 | Entity | Notes |
 |---|---|
 | `SubscriptionPlan` | Aggregate root. Platform-scoped, audited, **never deleted**. |
 | `PlanPrice` | Part of the plan aggregate. One row per (cycle, currency). Holds a `Money`. |
+| `GymSubscription` | Aggregate root. One **live** row per gym; ended rows are kept. Holds the agreed `Money` and cycle as a snapshot. |
+
+## The price snapshot is a copy, not a foreign key
+
+§2.3 calls `plan_price_id` the "price snapshot FK". **An FK cannot be the snapshot**, and the same
+section is why: it makes `(plan_id, billing_cycle, currency)` unique, which leaves no room for price
+versioning — so changing a plan's price *mutates that row*. A subscription that only pointed at it would
+be silently repriced, the exact opposite of "renewals honor the price at assignment". A withdrawn price
+would also dangle the reference.
+
+So `GymSubscription` **copies** the amount, currency, and cycle at assignment, and keeps
+`plan_price_id` as a nullable pointer for answering "which listed price did this come from" (cleared by
+`ON DELETE SET NULL` if that row is withdrawn). Verified live: repricing a plan from €49.99 to €79.99
+leaves an existing subscription paying €49.99, and a *new* subscription assigned afterwards pays €79.99.
+
+## Subscription lifecycle
+
+`Trialing → Active ⇄ PastDue`, with `Canceled` and `Expired` as terminal states, enforced by
+`SubscriptionStatusTransitions` and covered as an exhaustive matrix.
+
+- **Canceled and Expired are both terminal and both exist.** Cancellation is a decision, which is what a
+  churn figure counts; expiry is time running out, usually a failure to collect. Collapsing them would
+  make the M5 churn metric wrong in a way nobody could later untangle.
+- **A terminal subscription is never revived.** A gym that returns gets a new row, leaving the old one as
+  the record of what it actually had — the same reasoning as a deleted gym.
+- **`PastDue` does not withhold service.** Whether a late-paying gym keeps operating is a separate
+  decision, taken by suspending the *gym*. Every failed card must not end a business's day.
+- **Scheduled cancellation is not cancellation.** `cancelAtPeriodEnd` leaves the subscription `Active`
+  and live: the gym paid to the end of the period. Treating "asked to cancel" as "cancelled" would cut
+  off a paying customer, which is the most expensive kind of billing bug.
+- **Changing plan updates the one subscription** rather than ending it and starting another. The status
+  enum has no state for "replaced", so recording an upgrade as a cancellation would inflate churn.
+- **A trial is a grace on payment, not a pause on the calendar.** A monthly plan with a 14-day trial
+  still renews a month in, which is what the gym's first invoice will say.
+- **Trial conversion, renewal, and expiry are explicit operations for now.** The renewal job (M3.4) will
+  drive them from dates. Until then a trial that has run out stays `Trialing` with `trialEndsAtUtc` in
+  the past — legible rather than wrong — and `TrialHasEnded`/`PeriodHasEnded` are derived, never stored,
+  so no job is needed to keep them true.
 
 ## Business Rules
 
@@ -42,6 +80,12 @@ which does not exist. Building the join table first would give it nothing to poi
 | `plans.currency_invalid` | A three-letter ISO 4217 code. It decides how the amount is rounded, so an unrecognised one cannot be defaulted. |
 | `plans.already_active` / `plans.already_inactive` | Withdrawing or restoring twice is reported rather than silently succeeding. |
 | `plans.price_not_found` | A price id that does not belong to this plan. |
+| `subscriptions.price_not_offered` | The plan has no price for the requested cycle and currency. Refused rather than approximated — picking "the nearest price" would bill an amount nobody agreed to. |
+| `subscriptions.plan_inactive` | A withdrawn plan cannot be **newly** assigned. A gym already on one keeps it and can still have its terms adjusted (§2.3), or withdrawing a plan would strand customers who then could not be corrected. |
+| `subscriptions.gym_deleted` | A deleted gym cannot be subscribed; there is nothing left to bill. A **suspended** gym can be — resolving a billing dispute often *is* fixing the subscription. |
+| `subscriptions.not_found` | The gym has no live subscription. A normal state, not an error condition: a gym can exist before it is sold anything. |
+| `subscriptions.cancellation_already_scheduled` / `no_cancellation_scheduled` | Reported rather than silently accepted. |
+| `subscriptions.not_trialing` / `not_past_due` / `already_past_due` | Wrong-state transitions are reported, so a caller that has lost track of state is told. |
 
 ## Invariants
 
@@ -77,10 +121,10 @@ which does not exist. Building the join table first would give it nothing to poi
 
 | Deferred | Until | Why |
 |---|---|---|
-| Subscribed-gym count on a plan | M3.2 | No subscriptions exist; the figure would always read zero, and a number that is always zero teaches operators to distrust the screen. |
+| ~~Subscribed-gym count on a plan~~ | ~~M3.2~~ | **Done** — `subscribedGymCount` counts gyms on a live subscription, and the gym detail view now carries its `subscription`. Both were deliberately omitted while they could only have read zero or null. |
 | Feature set per plan (`plan_features`) | M4 | The `features` catalogue does not exist yet. |
 | Invoices, mark-paid, void | M3.3 | Needs AD-39 idempotency: a retried "mark paid" must not pay twice. |
 | Renewal and overdue jobs | M3.4 | Needs a job runner. |
 | Multi-currency *pricing within one gym* | no business case | §3.2's scope guard: a gym has one operating currency. Several currencies on a *plan* is a different thing, and is supported. |
-| Proration on plan change | M3.2 | Belongs with the assignment that triggers it, and needs `Money.Allocate` — which exists. |
+| Proration on plan change | **M3.3**, corrected from M3.2 | Charging or crediting the difference needs an invoice to land on. `Money.Allocate` is ready; there is nowhere to put the result until invoices exist, so changing plan leaves the paid period alone. |
 | Tax on prices | M3.3 | A plan price is pre-tax. Tax rounding is per-jurisdiction configuration needing accounting counsel (AD-42/§3.2). |

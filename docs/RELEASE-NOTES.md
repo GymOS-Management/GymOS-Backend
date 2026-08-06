@@ -2,6 +2,87 @@
 
 ---
 
+## M3.2 — Subscription assignment
+
+**Suggested version:** `0.7.0`
+**Status:** complete, awaiting review. Business rules: [BusinessRules/Subscriptions.md](BusinessRules/Subscriptions.md).
+
+What each gym agreed to pay. Closes two deferrals from earlier increments and leaves M3's remaining two
+parts blocked on infrastructure that still does not exist.
+
+### The price snapshot is a copy, not a foreign key
+
+§2.3 calls `plan_price_id` the "price snapshot FK", and **an FK cannot be the snapshot** — the same
+section makes `(plan_id, billing_cycle, currency)` unique, which leaves no room for price versioning, so
+changing a price *mutates that row*. A subscription that only pointed at it would be silently repriced,
+the exact opposite of "renewals honor the price at assignment"; withdrawing a price would dangle the
+reference. So the amount, currency, and cycle are **copied** at assignment and `plan_price_id` remains a
+nullable pointer for provenance. Verified live: repricing a plan €49.99 → €79.99 leaves an existing
+subscription on €49.99 while a new one takes €79.99. This honours the spec's intent; its literal
+mechanism is unworkable against its own constraint.
+
+### Added
+
+- **`platform.gym_subscriptions`** (migration `AddGymSubscriptions`), with a **partial unique index** on
+  `gym_id WHERE status IN (1,2,3)` — one live subscription per gym, every ended one kept.
+- **`GymSubscription` aggregate** with a guarded lifecycle: `Trialing → Active ⇄ PastDue`, and
+  `Canceled`/`Expired` terminal. Both terminal states exist because cancellation is a decision (churn)
+  and expiry is a failure to collect; collapsing them would make M5's churn metric wrong.
+- **`/api/v1/gyms/{gymId}/subscription`** — get, history, assign-or-change (`PUT`), cancel, resume,
+  convert-trial, payment-state.
+- **Permission `subscriptions.manage`**, separate from `billing.manage`: deciding what the platform sells
+  and deciding what one customer pays are different authorities. Reads use `billing.read`.
+- Subscriptions are **audited**.
+
+### Behaviour worth knowing
+
+- **Scheduled cancellation is not cancellation.** `cancelAtPeriodEnd` leaves the subscription `Active`;
+  the gym paid to the end of the period. Cutting it off then would be the most expensive kind of billing
+  bug. `immediately: true` is available and deliberate.
+- **`PastDue` does not withhold service** — that is a gym suspension, a separate decision. A failed card
+  must not end a business's day.
+- **Changing plan updates the one subscription** rather than ending it, so an upgrade is never recorded
+  as churn.
+- **A trial is a grace on payment, not a pause on the calendar**: a monthly plan with a 14-day trial
+  still renews a month in.
+- **Trial conversion, renewal, and expiry are explicit operations** until the M3.4 job runner exists. A
+  trial that has run out stays `Trialing` with `trialEndsAtUtc` in the past — legible rather than wrong.
+
+### Closed deferrals
+
+- **Gym detail now carries `subscription`** (null when the gym has none). M2 omitted it as "arrives with
+  M3".
+- **Plan detail and list now carry `subscribedGymCount`** — live subscriptions only. M3.1 omitted it
+  because it could then only have read zero.
+
+### Changed
+
+- **Rule R4 now encodes its principle instead of a growing list.** A money-shaped `decimal` is allowed
+  when its declaring type is a record *and* declares a currency member — "never an amount without its
+  unit" — because `Money` still has no wire form. This replaced six by-name exemptions that all made the
+  same argument, and four more would have been added this increment. Verified with two decoys: an
+  aggregate with a `decimal MonthlyFee` is still caught (it is a class), and a record carrying an amount
+  with no currency beside it is still caught. The residual risk — a domain value object written as a
+  record pairing a decimal with a currency string — is documented at the rule.
+- The past-tense event check learned more irregular participles, so `subscription.cancellation_withdrawn`
+  passes. "Withdrawn" is past tense; renaming the event would have been the wrong fix.
+- **Proration on plan change moved from M3.2 to M3.3.** It needs an invoice to land on; `Money.Allocate`
+  is ready but there is nowhere to put the result. Changing plan therefore leaves the paid period alone.
+
+### Still blocked
+
+`invoices` (M3.3) needs the **AD-39 idempotency framework** — a retried "mark paid" must not pay twice.
+Renewal and overdue jobs (M3.4) need a **job runner**, which M5's stats and the audit-retention job also
+wait on. Neither should be built as a side effect of a billing feature.
+
+### Upgrade notes
+
+- Run `AddGymSubscriptions`. One new table; nothing existing is altered.
+- No breaking API change. `subscriptions.manage` appears on SuperAdmin and BillingAdmin after one startup.
+- `GymDetail` gains a nullable `subscription`, and plan responses gain `subscribedGymCount` — additive.
+
+---
+
 ## M3.1 — Subscription plan catalogue
 
 **Suggested version:** `0.6.0`

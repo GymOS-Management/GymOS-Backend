@@ -34,6 +34,14 @@ public static class PlatformPermissions
     public const string BillingRead = "billing.read";
     public const string BillingManage = "billing.manage";
 
+    /// <summary>
+    /// Assigning a plan to a gym, changing it, and cancelling (§3.3). Separate from
+    /// <see cref="BillingManage"/> deliberately: deciding what the platform sells and deciding what one
+    /// customer pays are different authorities, and the second is the one that costs money when it is
+    /// wrong.
+    /// </summary>
+    public const string SubscriptionsManage = "subscriptions.manage";
+
     public static readonly IReadOnlyList<PermissionDefinition> All =
     [
         new(GymsRead, ModuleName, "View gyms and their details"),
@@ -48,5 +56,6 @@ public static class PlatformPermissions
         new(AuditRead, ModuleName, "Read the audit log"),
         new(BillingRead, ModuleName, "View subscription plans and prices"),
         new(BillingManage, ModuleName, "Create and edit subscription plans and prices"),
+        new(SubscriptionsManage, ModuleName, "Assign, change, and cancel a gym's subscription"),
     ];
 }
