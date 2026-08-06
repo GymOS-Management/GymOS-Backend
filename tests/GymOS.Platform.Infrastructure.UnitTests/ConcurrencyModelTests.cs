@@ -1,5 +1,6 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
+using GymOS.BuildingBlocks.Infrastructure.Idempotency;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Subscriptions;
@@ -55,6 +56,13 @@ public sealed class ConcurrencyModelTests
         // Rotation replaces rather than edits, and reuse detection already refuses a token
         // presented twice — which is a stronger guarantee than a version check.
         [typeof(RefreshToken)] = "rotated by replacement; reuse detection covers double-use",
+
+        // Every write is a raw SQL statement (IdempotencyStore) gated by its own WHERE clause —
+        // INSERT ... ON CONFLICT DO NOTHING for the claim, status/lease_expires_at conditions for
+        // takeover, finish, and release (AD-39). That is a condition-based CAS, not EF-tracked
+        // optimistic concurrency, so an xmin token would sit unread: nothing ever loads this
+        // entity into a change tracker to compare it against.
+        [typeof(IdempotencyRecord)] = "mutated by condition-gated raw SQL, never through SaveChanges",
     };
 
     [Fact]

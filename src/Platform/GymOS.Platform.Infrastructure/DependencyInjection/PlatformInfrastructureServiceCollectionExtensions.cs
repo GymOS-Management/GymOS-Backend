@@ -1,7 +1,9 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
+using GymOS.BuildingBlocks.Application.Idempotency;
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
+using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
@@ -47,6 +49,7 @@ public static class PlatformInfrastructureServiceCollectionExtensions
             .ValidateOnStart();
 
         services.TryAddScoped<AuditLogPartitionMaintainer>();
+        services.TryAddScoped<IIdempotencyStore, IdempotencyStore>();
 
         services.TryAddScoped<IAuditTrail>(provider => new AuditTrail(
             provider.GetRequiredService<AppDbContext>(),
