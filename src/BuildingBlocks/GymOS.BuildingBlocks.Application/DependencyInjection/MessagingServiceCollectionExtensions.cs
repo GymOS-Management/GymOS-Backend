@@ -1,5 +1,6 @@
 using System.Reflection;
 using GymOS.BuildingBlocks.Application.Behaviors;
+using GymOS.BuildingBlocks.Application.Idempotency;
 using GymOS.BuildingBlocks.Application.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -66,6 +67,17 @@ public static class MessagingServiceCollectionExtensions
 
         services.TryAddSingleton<RequestPermissionCache>();
         services.AddPipelineBehavior(typeof(AuthorizationBehavior<,>));
+
+        return services;
+    }
+
+    /// <summary>AD-39: registers the idempotency pipeline stage and its scoped context.</summary>
+    public static IServiceCollection AddIdempotencyBehavior(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddScoped<IdempotencyContext>();
+        services.AddPipelineBehavior(typeof(IdempotencyBehavior<,>));
 
         return services;
     }
