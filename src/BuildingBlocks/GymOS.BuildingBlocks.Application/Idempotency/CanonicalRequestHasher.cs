@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
@@ -15,6 +14,12 @@ public static class CanonicalRequestHasher
 {
     private static readonly JsonSerializerOptions CanonicalOptions = CreateCanonicalOptions();
 
+    /// <summary>
+    /// Computes a 64-character lowercase SHA-256 hex hash of the request's canonical JSON.
+    /// Equal-meaning requests (same property values regardless of declaration order) hash identically.
+    /// </summary>
+    /// <param name="request">The object to hash. Must not be null.</param>
+    /// <returns>A 64-character lowercase hexadecimal SHA-256 hash.</returns>
     public static string Hash(object request)
     {
         ArgumentNullException.ThrowIfNull(request);
