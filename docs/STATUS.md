@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-06 · after M0.X (production Docker infrastructure)
+**Last updated:** 2026-08-07 · after the AD-39 idempotency framework
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -21,7 +21,9 @@ before resuming work on any machine.
 | **Members domain** (business specification, no code) | ✅ **FROZEN** — `docs/Domain/MEMBERS-DOMAIN-DESIGN.md`. 11 product decisions approved 2026-08-05; implementation may begin. 4 legal-review items deferred (mechanism to build, values from counsel). |
 | **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — **734 tests green**, verified live · ⬅ **awaiting review** |
 | **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
-| M3.3 — invoices · M3.4 — renewal/overdue jobs | **blocked**: idempotency framework and a job runner (see below) |
+| **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
+| M3.3 — invoices | unblocked by AD-39 above — next increment |
+| M3.4 — renewal/overdue jobs | **blocked**: a job runner (see below); nothing yet runs work on a schedule |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
 | M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
@@ -297,8 +299,8 @@ Longer runs fail more often, so the two largest projects (`Platform.Application.
 dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTests"
 ```
 
-Full counts per project, for checking a run was complete: SharedKernel 126 · BuildingBlocks 14 ·
-Architecture 118 · Domain 242 · Application 147 · Infrastructure 67 · Integration 139 = **853**.
+Full counts per project, for checking a run was complete: SharedKernel 126 · BuildingBlocks 36 ·
+Architecture 120 · Domain 242 · Application 147 · Infrastructure 67 · Integration 151 = **889**.
 
 Capping the test connection pools (above) may also have helped here — the last several full runs completed
 first time, where they previously needed retries.
@@ -464,6 +466,33 @@ no migration command, ending in a working sign-in as `admin@gymos.local` / `gymo
 - **Before a live gym uses it:** populate the legal values (§20.1–20.3, §20.6) from counsel, settle
   merge policy (§20.9), and tell the gym owner in writing about the offline-gateway limitation (§11.10).
 
+## AD-39 idempotency framework as built
+
+One migration: `AddIdempotencyRecords` (`platform.idempotency_records`). No production consumer yet —
+the first is invoices mark-paid (M3.3, next increment); `IdempotentCommandConventionTests` keeps the
+theory that enforces this live against an in-test-assembly exemplar until then.
+
+1. **Claim commits immediately; the handler runs inside its own transaction.** `TryClaimAsync`'s
+   INSERT autocommits — no ambient transaction — so every API instance sees the claim the moment it
+   lands. `IdempotencyBehavior` then opens an explicit transaction around the handler and flips the
+   record to `Completed`/`FailedDeterministic` inside it, so the business effect and the stored
+   outcome commit atomically. Only idempotent commands (`IIdempotentCommand`) pay for any of
+   this — every other request passes straight through the behavior.
+2. **What is stored is the outcome, not an HTTP response.** A replay re-enters `WriteResults` with
+   the decoded `Result`, exactly as a fresh execution would, so the two paths cannot drift in how a
+   status or body gets built — the framework never has to know about HTTP at all.
+3. **`ux_idempotency_records_claim` is raw SQL in the migration**, the same treatment M3.1 gave the
+   `(plan, cycle, currency)` price index: EF's index builder cannot express this composite
+   uniqueness either.
+4. **`TryClaimAsync` bounds its retry at three attempts.** The INSERT can lose to a concurrent claim
+   whose owner then releases it (a transient failure) before the losing call's fallback lookup
+   runs — the row is simply gone, not "someone else holds it" — so the call loops back and retries
+   the INSERT instead of surfacing a false conflict. Past three attempts that stops looking like the
+   race and starts looking like a bug, so it throws.
+5. **`IdempotencyRecordMaintainer`** purges expired records at startup — an interim owner of
+   retention, same shape as `AuditLogPartitionMaintainer` (M1.3). Both fold into the M3.4 retention
+   job once it exists (see Known open items).
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -504,7 +533,7 @@ To work on it — API on the host, database in a container:
 ```
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d postgres      # PostgreSQL 17 only
-dotnet test GymOS.Backend.slnx     # expect 853 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 889 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
@@ -546,6 +575,10 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
   schedule when the job runner lands, since creating upcoming partitions and detaching expired
   ones are two halves of one policy. A DEFAULT partition means an audit write can never fail;
   rows that land there must be pruned with `DELETE` rather than `DETACH`.
+- **`IdempotencyRecordMaintainer` (AD-39) purges expired `platform.idempotency_records` at
+  startup** — the same interim shape as `AuditLogPartitionMaintainer` above. Both are startup-time
+  stand-ins for a real schedule; fold both into the M3.4 retention job when the job runner lands
+  rather than growing two separate startup sweeps.
 - **Permission resolution costs one query per authenticated request** (memoized per request).
   Deliberate: it buys immediate revocation. The cache-with-invalidation version belongs with
   the AD-45 settings/cache work, and should not be added before it is measured.

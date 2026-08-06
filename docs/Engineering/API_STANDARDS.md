@@ -205,9 +205,34 @@ generator actually consumes. Revisit if the console team asks for them.
 
 ## 10. Idempotency
 
-Create endpoints accept `Idempotency-Key` (AD-39) once the pipeline behavior lands. The semantics are
-already decided — replay a completed identical request, 422 on a key reused with a different body,
-409 while one is in flight — so an endpoint added before then must not invent its own scheme.
+`Idempotency-Key` (AD-39) lets a caller retry a write safely. A command that opts in
+(`IIdempotentCommand`) has the pipeline claim the key before the handler runs and replay the stored
+outcome on any retry, so the handler executes at most once per key.
+
+**Request header**
+
+| Header | Meaning |
+|---|---|
+| `Idempotency-Key` | Caller-chosen retry token. Required when the command declares `KeyRequired`; a request missing it is rejected before the handler runs. |
+
+**Response headers**
+
+| Header | Meaning |
+|---|---|
+| `Idempotency-Replayed: true` | Stamped when this response is a stored replay, not a fresh execution. Absent on a first execution. |
+| `Retry-After` | Seconds until a concurrent duplicate is worth retrying. Present only alongside `idempotency.operation_in_progress`. |
+
+**Outcomes**
+
+| Code | Status | Meaning |
+|---|---|---|
+| `idempotency.key_required` | 400 | The command requires a key and none was sent. |
+| `idempotency.operation_in_progress` | 409 + `Retry-After` | A concurrent duplicate already holds the claim; this request never ran. |
+| `idempotency.key_reuse_mismatch` | 422 | Same key, a different request body — always a client bug, never a race. |
+| *(replay)* | the original response's status | The stored outcome replayed verbatim, plus `Idempotency-Replayed: true`. |
+
+An endpoint added before its command opts in must not invent its own retry scheme — the semantics
+above are the only ones this API has.
 
 ## 11. Headers
 
@@ -217,5 +242,6 @@ already decided — replay a completed identical request, 422 on a key reused wi
 | `ETag` | response | Current `rowVersion` of the resource, strong. |
 | `If-Match` | request | The version the caller is updating. |
 | `Location` | response | Where a created resource lives. |
-| `Retry-After` | response | On 429 only. Absent on 409 — a conflict is not a matter of waiting. |
-| `Idempotency-Key` | request | Reserved; see §10. |
+| `Retry-After` | response | On 429, and on the 409 `idempotency.operation_in_progress` (§10). Absent on every other 409 — a stale-version conflict is not a matter of waiting. |
+| `Idempotency-Key` | request | See §10. |
+| `Idempotency-Replayed` | response | See §10. |
