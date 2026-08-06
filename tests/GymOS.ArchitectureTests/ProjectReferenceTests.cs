@@ -72,5 +72,7 @@ public sealed class ProjectReferenceTests
             .Descendants("ProjectReference")
             .Select(reference => reference.Attribute("Include")?.Value)
             .Where(include => include is not null)
-            .Select(include => Path.GetFileNameWithoutExtension(include!));
+            // Include paths use MSBuild's '\', which Linux does not treat as a directory
+            // separator — without normalization every reference is "forbidden" on CI.
+            .Select(include => Path.GetFileNameWithoutExtension(include!.Replace('\\', '/')));
 }
