@@ -30,8 +30,20 @@ frontend repository.
 
 ## Local development
 
+The whole stack, from a clean clone, with no setup step:
+
 ```
-docker compose up -d --wait                      # PostgreSQL 17 (add --profile redis for Redis)
+docker compose up -d       # PostgreSQL 17 + API, migrated and seeded, on http://localhost:5080
+```
+
+Sign in as `admin@gymos.local` / `gymos-dev-admin-password` — deliberately public development
+credentials, like the signing key in `appsettings.Development.json`. Full reference, including the
+production workflow and every security decision: [`docs/Infrastructure/DOCKER.md`](docs/Infrastructure/DOCKER.md).
+
+To work on the API itself, run it on the host and leave only the database in a container:
+
+```
+docker compose up -d postgres
 dotnet ef database update --project src/Platform/GymOS.Platform.Infrastructure --startup-project src/Host/GymOS.WebApi
 
 # An account to sign in with. Skip it and the seeder warns and creates nothing —

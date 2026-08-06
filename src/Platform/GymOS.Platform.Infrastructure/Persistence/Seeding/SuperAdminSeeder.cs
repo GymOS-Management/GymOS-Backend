@@ -52,6 +52,11 @@ public sealed partial class SuperAdminSeeder
         "The identity catalog sync must run first.")]
     private static partial void LogRoleMissing(ILogger logger, string roleName);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message =
+        "Initial SuperAdmin seeding skipped: the database has pending migrations. " +
+        "Apply them and restart.")]
+    private static partial void LogSkippedPendingMigrations(ILogger logger);
+
     public SuperAdminSeeder(
         AppDbContext dbContext,
         IPasswordHasher passwordHasher,
@@ -75,6 +80,17 @@ public sealed partial class SuperAdminSeeder
         if (!options.IsConfigured)
         {
             LogNotConfigured(_logger);
+            return;
+        }
+
+        // The same guard PlatformIdentitySeeder applies, and for the same reason: querying
+        // platform.users before the migration that creates it throws a bare
+        // "relation does not exist", which takes the host down on a first boot with a message that
+        // names neither the cause nor the fix. Found by starting the production compose overlay
+        // against an empty volume — the identity sync skipped politely and then this crashed.
+        if ((await _dbContext.Database.GetPendingMigrationsAsync(cancellationToken)).Any())
+        {
+            LogSkippedPendingMigrations(_logger);
             return;
         }
 

@@ -1,0 +1,108 @@
+# GymOS — production overlay.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Named explicitly, because docker-compose.override.yml is applied automatically and this one is
+# not. That asymmetry is deliberate: forgetting a flag gives you the development stack on a
+# laptop, never the development stack in production.
+#
+# ── What this overlay does ────────────────────────────────────────────────────────────────────
+# Removes: every published database port, every development credential, every convenience.
+# Requires: real secrets, supplied by the environment. Every ${VAR:?...} below aborts the whole
+# command if unset, so a missing secret is a five-second failure at deploy time rather than a
+# service running with a signing key someone found in a compose file.
+#
+# ── What this overlay is not ──────────────────────────────────────────────────────────────────
+# This is a single-host deployment, appropriate for a small production or a staging box. It has no
+# TLS termination, no horizontal scaling, and no rolling deploy — put a reverse proxy in front
+# (Azure Front Door, Caddy, an ingress controller) and set GYMOS_FORWARDED_HEADERS_ENABLED=true so
+# the rate limiter and audit trail see real client addresses. The service definitions are shaped so
+# that moving to Azure Container Apps or Kubernetes is a translation of this file, not a redesign:
+# one image, configuration entirely through environment variables, health endpoints that map
+# directly onto readiness and liveness probes.
+
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for production}'
+
+    # Deliberately empty: it overrides the override file's published port, so the database is
+    # reachable only from the compose network. Nothing on the host, and nothing else on the host's
+    # network, can open a connection to it. Administer it with `docker compose exec postgres psql`
+    # or over an SSH tunnel.
+    ports: []
+
+    # A managed database (Azure Database for PostgreSQL Flexible Server, AD-11) is the better
+    # answer for anything with real users: backups, point-in-time restore, patching, and failover
+    # stop being someone's weekend. When that happens, delete this service, point
+    # ConnectionStrings__Database at the managed instance, and nothing else in this file changes.
+    #
+    # shm_size matters for a container that will actually be queried: PostgreSQL uses shared memory
+    # for parallel query workers and hash joins, and Docker's 64 MB default silently caps them.
+    shm_size: 256mb
+
+    deploy:
+      resources:
+        limits:
+          # A bound, so a runaway query cannot starve the API on the same host. Raise it for real
+          # workloads — this is sized for a small deployment, not chosen by measurement.
+          memory: ${POSTGRES_MEMORY_LIMIT:-2g}
+        reservations:
+          memory: 512m
+
+  api:
+    # Pinned rather than built. Production should run the artefact CI produced and tested, not one
+    # compiled on the deployment host from whatever happens to be checked out there.
+    image: '${API_IMAGE:?API_IMAGE must be set for production, e.g. ghcr.io/gymos-management/gymos-api:0.7.0}'
+    build: !reset null
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for production}'
+      ConnectionStrings__Database: >-
+        Host=${POSTGRES_HOST:-postgres};Port=${POSTGRES_PORT_INTERNAL:-5432};Database=${POSTGRES_DB:-gymos};Username=${POSTGRES_USER:-gymos};Password=${POSTGRES_PASSWORD};Include
+        Error Detail=false;SSL Mode=${POSTGRES_SSL_MODE:-Prefer}
+
+      # Startup validates this is at least 32 bytes and refuses to boot otherwise, so a weak value
+      # fails immediately rather than issuing forgeable tokens.
+      #   openssl rand -base64 48
+      Security__Jwt__SigningKey: '${GYMOS_JWT_SIGNING_KEY:?GYMOS_JWT_SIGNING_KEY must be set — generate with openssl rand -base64 48}'
+
+      # Machine-readable, because in production these lines are read by a collector, not a person.
+      Serilog__ConsoleFormat: json
+      Serilog__MinimumLevel__Default: ${GYMOS_LOG_LEVEL:-Information}
+
+      # Off. Applying migrations as a side effect of a container start means two replicas can
+      # migrate the same database concurrently, and a failed migration takes out the thing that was
+      # supposed to report the failure. Run them as a one-shot step before the deployment — see
+      # DOCKER.md, "Production workflow".
+      Database__MigrateOnStartup: 'false'
+
+      # Nothing by default: production administrators are created deliberately, not seeded by a
+      # container. Set both only for the very first deployment of a new environment.
+      Seed__SuperAdmin__Email: ${GYMOS_SEED_ADMIN_EMAIL:-}
+      Seed__SuperAdmin__Password: ${GYMOS_SEED_ADMIN_PASSWORD:-}
+
+    ports:
+      # Bound to the loopback interface by default, because the only thing that should reach the
+      # API directly is a reverse proxy on the same host. Set API_BIND=0.0.0.0 knowingly, and only
+      # behind a firewall.
+      - '${API_BIND:-127.0.0.1}:${API_PORT:-8080}:8080'
+
+    deploy:
+      resources:
+        limits:
+          memory: ${API_MEMORY_LIMIT:-1g}
+        reservations:
+          memory: 256m
+
+    # No development tooling reaches production: pgadmin and mailpit exist only in
+    # docker-compose.override.yml, which is not applied here. That is why they live there.
+
+networks:
+  gymos-data:
+    # No route out. The database, and anything else on this network, cannot reach the internet —
+    # so a compromised dependency inside one of them has nowhere to send what it finds. The API
+    # bridges both networks and is the only path between them.
+    internal: true

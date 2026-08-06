@@ -1,10 +1,49 @@
+# Everything the image does not need, kept out of the build context.
+#
+# This is not only about speed. The context is uploaded to the daemon and any of it can end up in
+# a layer, so `.env`, user secrets, and local database state are excluded for the same reason they
+# are gitignored: a file that never enters the context cannot leak from an image.
+
+# ── Build output ────────────────────────────────────────────────────────────────
 **/bin/
 **/obj/
+artifacts/
+TestResults/
+*.binlog
+
+# ── Version control and IDE state ───────────────────────────────────────────────
+# Note what is NOT excluded: .editorconfig. It carries analyzer severities the build depends on
+# (see the Dockerfile's restore stage), so excluding it would make the image compile under
+# different rules than CI — a failure that looks like a random analyzer error.
 **/.git/
+**/.gitignore
+**/.github/
 **/.vs/
+**/.vscode/
 **/.idea/
-**/TestResults/
+**/*.user
+**/*.suo
+
+# ── Tests ───────────────────────────────────────────────────────────────────────
+# Excluded deliberately, and the Dockerfile depends on it: because the test projects are absent,
+# the image restores the *host project* rather than GymOS.Backend.slnx (which references them).
+# Tests run in CI against the source, never inside the runtime image.
 tests/
+
+# ── Documentation and infrastructure definitions ─────────────────────────────────
 docs/
-docker-compose.yml
-README.md
+*.md
+docker-compose*.yml
+docker/
+.env
+.env.*
+!.env.example
+
+# ── Secrets and local state ─────────────────────────────────────────────────────
+**/*.pfx
+**/appsettings.*.Local.json
+.docker-data/
+
+# ── Frontend (separate repository; here only if someone nests one) ──────────────
+**/node_modules/
+**/.next/

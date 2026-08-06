@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-06 · after M3.2 (subscription assignment)
+**Last updated:** 2026-08-06 · after M0.X (production Docker infrastructure)
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -23,6 +23,7 @@ before resuming work on any machine.
 | **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
 | M3.3 — invoices · M3.4 — renewal/overdue jobs | **blocked**: idempotency framework and a job runner (see below) |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
+| **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
 | M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
 
 ## M1.2 as built
@@ -401,6 +402,56 @@ One migration: `AddGymSubscriptions`. Rules and the deferral list: **`docs/Busin
 - **A leftover `dotnet run` host locks the build output.** Two builds failed with MSB3027 again. If a
   build cannot copy DLLs, look for a running `GymOS.WebApi` first — this has now cost time twice.
 
+## M0.X — production Docker infrastructure as built
+
+Full reference: **`docs/Infrastructure/DOCKER.md`**. Shape: `docker-compose.yml` (environment-neutral
+topology, no credentials, no published ports) + `docker-compose.override.yml` (development, applied
+automatically) + `docker-compose.prod.yml` (named explicitly, requires real secrets). One image
+(`src/Host/GymOS.WebApi/Dockerfile`, 3 stages, 374 MB), everything configured by environment
+variables using the application's own key names. Seven services validated healthy: postgres, api,
+plus redis / seq / minio / pgadmin / mailpit behind profiles.
+
+`docker compose up -d` from a clean clone is the whole setup step — no `.env`, no database install,
+no migration command, ending in a working sign-in as `admin@gymos.local` / `gymos-dev-admin-password`.
+
+### Decisions and traps found during M0.X
+
+- **Compose interpolates each file independently before merging.** A `${VAR:?}` marker in the base
+  file cannot be satisfied by an overlay that supplies the value — it aborts the whole command. So
+  fail-fast markers live only in `docker-compose.prod.yml`; the base uses `:-`.
+- **An empty environment variable is not an absent one, and it outranks `appsettings.json`.**
+  `Security__Jwt__SigningKey: ${VAR:-}` in the base blanked the public development key and the API
+  refused to start. The base now declares no secrets at all. Same for `Seed__SuperAdmin__*`.
+- **`.editorconfig` must be in the build context.** `Directory.Build.props` sets
+  `TreatWarningsAsErrors`, and `.editorconfig` is where severities are tuned — omitting it failed the
+  image build on CA1716, a rule this repo deliberately turns off.
+- **A named volume inherits the ownership of the image directory it covers**, and a directory absent
+  from the image is created root-owned. Both writable paths are now created in the Dockerfile before
+  `USER`. The failure mode was quiet: DataProtection logged an error, fell back to in-memory keys,
+  and the container still reported healthy.
+- **`POSTGRES_PASSWORD` applies only at initdb.** Changing it later does nothing to an existing
+  volume; the symptom is `password authentication failed`, which looks like a config error.
+- **`cap_drop: ALL` breaks more than expected, and quietly.** Redis (`setpriv: setresuid failed`),
+  Seq (`/seqsvr/Seq: Operation not permitted` — its binary carries `cap_net_bind_service`, and
+  executing a file whose capabilities are outside the bounding set fails with EPERM), and pgAdmin
+  (silently fell back from port 80 to 8080, leaving the published port pointing at nothing) all had
+  to be booted to be found. Fixes: run redis and seq as their own uid, grant Seq the one capability
+  it declares, state pgAdmin's port.
+- **YAML anchors do not cross compose files.** pgAdmin and Mailpit were defined only in the override
+  file, so they never inherited `*default-hardening` and ran with Docker's default capability set.
+  The override now defines its own anchor.
+- **MinIO runs as root** and is the one documented exception: its image ships a root-owned `/data`.
+  Development-only stand-in for Azure Blob Storage (AD-44).
+- **Production applies migrations as a separate step**, not on start-up
+  (`dotnet ef migrations script --idempotent` piped to psql). This exposed a real gap: `SuperAdminSeeder`
+  lacked the pending-migrations guard `PlatformIdentitySeeder` had, so it threw
+  `relation "platform.users" does not exist` instead of warning. Fixed.
+- `Serilog:ConsoleFormat` (`json` | `text` | unset) added so one image serves both a person reading
+  `docker compose logs` and a collector reading production.
+- CI gained a `docker` job: builds the image, `up -d`, smoke-tests health + login, boots every
+  profile, asserts the hardening with `docker inspect`, and proves the production overlay refuses to
+  render without secrets.
+
 ### Still owed, in this order
 
 - **Write the RLS startup validation (R14) with the first tenant-scoped entity.** R14 has never run;
@@ -432,18 +483,27 @@ One migration: `AddGymSubscriptions`. Rules and the deferral list: **`docs/Busin
 ## Repo map (ADR-52) — org: github.com/GymOS-Management
 
 GymOS-Backend (this repo — THE .NET modular monolith, active) · GymOS-Specification
-(frozen docs) · GymOS-Platform (Super Admin Next.js app, not started) · GymOS-Admin
+(frozen docs) · GymOS-Platform (Super Admin Next.js app, active, `v0.1.0`) · GymOS-Admin
 (gym staff app) · GymOS-Mobile · GymOS-Gateway · GymOS-Website.
 Note the trap: `GymOS.Platform.*` *projects in this repo* = platform-scope modules,
 unrelated to the GymOS-Platform frontend repo.
 
 ## Fresh-machine setup
 
+Just to run it — nothing but Docker required:
+
 ```
 git clone https://github.com/GymOS-Management/GymOS-Backend
 cd GymOS-Backend
+docker compose up -d               # PostgreSQL + API, migrated and seeded, :5080
+                                   # sign in: admin@gymos.local / gymos-dev-admin-password
+```
+
+To work on it — API on the host, database in a container:
+
+```
 dotnet tool restore                # pinned dotnet-ef
-docker compose up -d --wait        # PostgreSQL 17
+docker compose up -d postgres      # PostgreSQL 17 only
 dotnet test GymOS.Backend.slnx     # expect 853 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
@@ -460,14 +520,23 @@ supply `Security:Jwt:SigningKey`; startup fails fast if it is missing or under 3
 
 **Port 5432 collision:** if a native PostgreSQL is installed locally it competes with the
 container for 5432 and wins, producing `password authentication failed for user "gymos"`.
-Stop the local service, or publish the container on another port and override
-`ConnectionStrings__Database`.
+Set `POSTGRES_PORT=5433` in `.env` (the containerised API is unaffected — it reaches the
+database over the compose network), or stop the local service.
 
 Environment facts: .NET 10 SDK pinned via `global.json` (ADR-50); solution is
 `GymOS.Backend.slnx`; local dev DB credentials live in `appsettings.Development.json`
-matching `docker-compose.yml` (dev-only).
+matching `docker-compose.override.yml` (dev-only, deliberately public). The postgres volume
+was renamed `gymos-pgdata` → `gymos-postgres-data` in M0.X, so a pre-M0.X local database is
+still on disk but no longer mounted — see DOCKER.md troubleshooting.
 
 ## Known open items / honest notes
+
+- **The dev overlay publishes ports on `0.0.0.0`**, so a running dev stack — with its
+  deliberately public admin credentials — is reachable from the local network, not just the
+  developer's machine. Harmless against an empty dev database; an exposure the moment a dev
+  stack holds data that matters. Fix when convenient: bind to loopback in
+  `docker-compose.override.yml` (`"127.0.0.1:5080:8080"`, and likewise postgres/pgadmin/seq/
+  minio/mailpit). Decided 2026-08-06 to defer.
 
 - Outbox **processor** (delivery to handlers with SKIP LOCKED claiming) not built yet —
   capture side only; lands with the first event handler need.

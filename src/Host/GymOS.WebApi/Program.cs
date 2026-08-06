@@ -43,13 +43,27 @@ try
             .Enrich.FromLogContext()
             .Enrich.WithProperty("Application", "gymos-backend");
 
-        if (context.HostingEnvironment.IsDevelopment())
+        // Format is environment-derived by default and overridable by configuration
+        // (`Serilog:ConsoleFormat` = json | text). The override exists for containers: the same
+        // image runs in every environment, and an operator debugging a container wants readable
+        // lines while a log collector wants JSON — with no way to choose, one of them is always
+        // wrong. Neither is a different *logger*; only the console formatter differs.
+        string? configured = context.Configuration["Serilog:ConsoleFormat"];
+
+        bool useJson = configured switch
         {
-            loggerConfiguration.WriteTo.Console(formatProvider: CultureInfo.InvariantCulture);
+            not null when configured.Equals("json", StringComparison.OrdinalIgnoreCase) => true,
+            not null when configured.Equals("text", StringComparison.OrdinalIgnoreCase) => false,
+            _ => !context.HostingEnvironment.IsDevelopment(),
+        };
+
+        if (useJson)
+        {
+            loggerConfiguration.WriteTo.Console(new CompactJsonFormatter());
         }
         else
         {
-            loggerConfiguration.WriteTo.Console(new CompactJsonFormatter());
+            loggerConfiguration.WriteTo.Console(formatProvider: CultureInfo.InvariantCulture);
         }
     });
 

@@ -1,0 +1,202 @@
+# GymOS — development overrides.
+#
+# Compose applies this automatically, so `docker compose up -d` means "the development stack".
+# Production must therefore name its files explicitly, which is the safer direction to get wrong:
+# forgetting a flag gives you the hardened-but-inconvenient stack, never the reverse.
+#
+# ── Why every value here can be committed ─────────────────────────────────────────────────────
+# The credentials below are deliberately public, identical for every developer, and useless
+# anywhere else — the same treatment appsettings.Development.json already gives the local database
+# password and JWT signing key. That is what makes `docker compose up -d` work from a clean clone
+# with no .env file and no setup step. Any environment that is not a laptop supplies its own
+# values, and docker-compose.prod.yml refuses to start without them.
+
+# YAML anchors do not cross files — `*default-hardening` from docker-compose.yml is not visible
+# here, and a service defined only in this file silently gets Docker's default capability set
+# instead. That is exactly how pgAdmin and Mailpit ended up unhardened; the fix is to repeat the
+# anchor rather than to remember. Any service added below must reference it.
+x-hardening: &default-hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  postgres:
+    environment:
+      # Development-only. Named for what it is so it cannot be mistaken for a real secret if it
+      # ever appears in a log or a screenshot.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gymos_dev_password}
+
+    ports:
+      # Published so psql, pgAdmin, EF Core migrations, and the Testcontainers-free local runs can
+      # all reach it from the host. Production publishes nothing — see docker-compose.prod.yml.
+      - '${POSTGRES_PORT:-5432}:5432'
+
+    # Development machines often already run PostgreSQL on 5432; if the port is taken, set
+    # POSTGRES_PORT=5433 in .env rather than stopping the local service. The API is unaffected —
+    # it reaches the database over the compose network, not the published port.
+
+  api:
+    environment:
+      # Development enables the developer exception page, verbose framework logging, and the
+      # deliberately public JWT signing key from appsettings.Development.json — which is why no
+      # signing key needs configuring to boot this stack.
+      #
+      # Note what is NOT set here: Security__Jwt__SigningKey. Setting it to an empty value would
+      # override the file-based development key (environment beats appsettings.json), and the
+      # application would refuse to start. If you want to test with a real key, set
+      # GYMOS_JWT_SIGNING_KEY in .env and uncomment the line below.
+      #Security__Jwt__SigningKey: ${GYMOS_JWT_SIGNING_KEY}
+      ASPNETCORE_ENVIRONMENT: Development
+
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gymos_dev_password}
+      ConnectionStrings__Database: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=${POSTGRES_USER:-gymos};Password=${POSTGRES_PASSWORD:-gymos_dev_password};Include
+        Error Detail=true
+
+      # On in development: a fresh clone has an empty database, and requiring a manual migration
+      # step would make "one command" untrue. Production applies migrations from the deployment
+      # pipeline instead — see DOCKER.md, "Production workflow".
+      Database__MigrateOnStartup: 'true'
+
+      # A working sign-in without a setup step. Public by design, like everything else here; the
+      # seeder creates this account once and never resets it, so changing the password inside the
+      # application sticks.
+      Seed__SuperAdmin__Email: ${GYMOS_SEED_ADMIN_EMAIL:-admin@gymos.local}
+      Seed__SuperAdmin__Password: ${GYMOS_SEED_ADMIN_PASSWORD:-gymos-dev-admin-password}
+
+      # Human-readable console output. Production emits JSON; this is the one place where being
+      # different from production is the point, because `docker compose logs -f api` is read by a
+      # person. Set GYMOS_LOG_FORMAT=json in .env to see exactly what production would emit.
+      Serilog__ConsoleFormat: ${GYMOS_LOG_FORMAT:-text}
+      Serilog__MinimumLevel__Default: ${GYMOS_LOG_LEVEL:-Information}
+
+      # Argon2id at its floor. Production values (19456 KiB, 2 iterations) cost ~100 ms per
+      # sign-in by design; on a laptop running the whole stack that is felt on every request
+      # during development, and the cost parameters have their own unit tests.
+      Security__PasswordHashing__MemorySizeKib: '8192'
+      Security__PasswordHashing__Iterations: '1'
+
+      # Generous, because a developer signing in repeatedly while working on the console will
+      # otherwise trip the production-appropriate limit of 10 per minute.
+      Security__RateLimiting__SignInAttemptsPerWindow: '200'
+
+    ports:
+      # 5080 matches the port `dotnet run` uses via launchSettings.json, so a URL from the README
+      # or a colleague works whether the API is running in a container or on the host.
+      - '${API_PORT:-5080}:8080'
+
+    # read_only stays on in development too. A setting that only applies in production is a
+    # setting whose failure mode is discovered in production — if the application starts needing
+    # to write somewhere, it should fail here first, on a laptop, with someone watching.
+
+  # ══════════════════════════════════════════════════════════════════════════════════════════════
+  # Development-only tooling
+  # ══════════════════════════════════════════════════════════════════════════════════════════════
+  #
+  # Behind profiles, so the default `docker compose up -d` stays two containers. Start what you
+  # need:
+  #     docker compose --profile tools up -d
+  #
+  # Defined here rather than in the base file because neither belongs in production: pgAdmin is a
+  # database console reachable over HTTP, and Mailpit's purpose is to *capture* mail instead of
+  # delivering it.
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: gymos-pgadmin
+    profiles: ['tools']
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@gymos.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-gymos-dev-pgadmin}
+      # No master password prompt on every start, and no phone-home.
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+      PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED: 'False'
+      # pgAdmin validates its login address and rejects RFC 6761 special-use domains, so
+      # admin@gymos.local — the same address the API seeds — crash-loops the container on start.
+      # Allowing `local` keeps one credential for both rather than inventing a second one that
+      # happens to look deliverable. These values are parsed as Python literals.
+      PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: "['local']"
+      # Explicit, because with cap_drop: ALL pgAdmin cannot bind its default port 80 and silently
+      # falls back to 8080 ("Restricted security context detected") — leaving the published port and
+      # the health check pointing at a port nothing listens on. Stating it keeps all three in
+      # agreement instead of granting NET_BIND_SERVICE for a port number.
+      PGADMIN_LISTEN_PORT: '8080'
+    ports:
+      - '${PGADMIN_PORT:-5050}:8080'
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    healthcheck:
+      test: ['CMD-SHELL', 'wget --quiet --tries=1 --spider http://localhost:8080/misc/ping || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    <<: *default-hardening
+    networks:
+      - gymos-data
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: gymos-mailpit
+    profiles: ['tools']
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: '500'
+      MP_SMTP_AUTH_ACCEPT_ANY: '1'
+      MP_SMTP_AUTH_ALLOW_INSECURE: '1'
+    # Nothing to write and nothing privileged to do — messages are held in memory and both listeners
+    # are above 1024 — so it has no reason to be root. The image defaults to root; this overrides it.
+    user: '1000:1000'
+    ports:
+      - '${MAILPIT_SMTP_PORT:-1025}:1025' # SMTP, for the application to send to
+      - '${MAILPIT_UI_PORT:-8025}:8025' # web UI, for a human to read
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:8025/readyz']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    <<: *default-hardening
+    networks:
+      - gymos-data
+
+  # ── Optional services: host ports, development only ─────────────────────────────────────────
+  #
+  # The base file defines what these services are; publishing them is an environment decision, so
+  # it happens here. A profile that is off costs nothing, and none of these is reachable from the
+  # host in production even if its profile is enabled there.
+  #
+  # Compose merges by service name, so these blocks add ports to the base definitions without
+  # repeating them — including `profiles`, which is inherited.
+
+  redis:
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+
+  seq:
+    environment:
+      # Public development value, so the observability profile starts without a .env. Sign in as
+      # `admin`.
+      SEQ_FIRSTRUN_ADMINPASSWORD: ${SEQ_ADMIN_PASSWORD:-gymos-dev-seq}
+    ports:
+      - '${SEQ_UI_PORT:-8341}:80' # web UI
+      - '${SEQ_INGEST_PORT:-5341}:5341' # ingestion, for a host-run API to log into
+
+  minio:
+    environment:
+      # Development default, so the storage profile starts without a .env. MinIO refuses to boot
+      # with a root password shorter than 8 characters, which is why the base file's empty default
+      # is not enough on its own.
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gymos-dev-minio}
+    ports:
+      - '${MINIO_API_PORT:-9000}:9000' # S3 API
+      - '${MINIO_CONSOLE_PORT:-9001}:9001' # web console
+
+volumes:
+  pgadmin-data:
+    name: gymos-pgadmin-data

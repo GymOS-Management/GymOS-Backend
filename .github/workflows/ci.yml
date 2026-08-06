@@ -53,3 +53,147 @@ jobs:
       #   git diff contracts/openapi-v1.json
       # Additive changes are compatible within a version; anything that removes, renames,
       # retypes, or changes the meaning of a field needs a new version instead.
+
+  # ══════════════════════════════════════════════════════════════════════════════════════════
+  # Container image and stack
+  # ══════════════════════════════════════════════════════════════════════════════════════════
+  #
+  # A separate job, running in parallel with the tests, because it proves something the test
+  # suite cannot: that the image builds from a clean checkout and that the composed stack
+  # reaches a healthy, usable state with no manual step. It duplicates the compile, and that
+  # is the price of catching "works with dotnet run, not in a container" here rather than at
+  # deployment time.
+  #
+  # See docs/Infrastructure/DOCKER.md for the reasoning behind each setting asserted below.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # buildx gives the GitHub Actions cache backend, so an unchanged restore layer is
+      # reused across runs. The Dockerfile's --mount=type=cache also needs BuildKit.
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Both overlays are parsed and interpolated before anything is built: a YAML or
+      # variable error should fail in seconds, not after a five-minute image build.
+      - name: Validate compose files (development)
+        run: docker compose config --quiet
+
+      - name: Validate compose files (production)
+        env:
+          POSTGRES_PASSWORD: ci-not-a-real-password
+          GYMOS_JWT_SIGNING_KEY: ci-not-a-real-signing-key-at-least-32-bytes
+          API_IMAGE: gymos-api:ci
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+
+      # The fail-fast markers are load-bearing, so they are tested rather than trusted:
+      # without secrets the production command must refuse to run at all.
+      - name: Production overlay refuses to run without secrets
+        run: |
+          if docker compose -f docker-compose.yml -f docker-compose.prod.yml config >/dev/null 2>&1; then
+            echo '::error::Production overlay rendered with no secrets set; the ${VAR:?} guards are not working.'
+            exit 1
+          fi
+          echo 'Production overlay aborted without secrets, as intended.'
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Host/GymOS.WebApi/Dockerfile
+          tags: gymos-api:ci
+          load: true # into the local daemon, so compose finds it instead of rebuilding
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # No --build: compose reuses the image just loaded. This is the acceptance criterion
+      # "one command to start" executed literally, from a clean checkout, with no .env file.
+      - name: Start the stack (one command, no manual setup)
+        env:
+          API_IMAGE: gymos-api:ci
+        run: docker compose up -d
+
+      - name: Wait for health
+        run: |
+          for _ in $(seq 1 60); do
+            api=$(docker inspect --format '{{.State.Health.Status}}' gymos-api 2>/dev/null || echo missing)
+            pg=$(docker inspect --format '{{.State.Health.Status}}' gymos-postgres 2>/dev/null || echo missing)
+            echo "postgres=$pg api=$api"
+            if [ "$api" = healthy ] && [ "$pg" = healthy ]; then exit 0; fi
+            if [ "$api" = unhealthy ]; then break; fi
+            sleep 5
+          done
+          echo '::error::Stack did not become healthy.'
+          exit 1
+
+      # The stack is not merely running: the database is reachable through it, migrations
+      # applied, and the seeded administrator can sign in. A health check that only proves
+      # the process exists would pass on a stack nobody can use.
+      - name: Smoke test
+        env:
+          API_PORT: 5080
+        run: |
+          set -euo pipefail
+          live=$(curl --fail --silent --show-error http://localhost:5080/health/live)
+          ready=$(curl --fail --silent --show-error http://localhost:5080/health/ready)
+          echo "live=$live ready=$ready"
+          case "$live$ready" in *Healthy*Healthy*) ;; *) exit 1 ;; esac
+          code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --request POST http://localhost:5080/api/v1/auth/login \
+            --header 'Content-Type: application/json' \
+            --data '{"email":"admin@gymos.local","password":"gymos-dev-admin-password"}')
+          echo "login=$code"
+          test "$code" = 200
+
+      # Hardening is asserted, not assumed. Every line here is a decision documented in
+      # DOCKER.md §7, and silently dropping one would otherwise go unnoticed.
+      - name: Assert security posture
+        run: |
+          set -euo pipefail
+          uid=$(docker compose exec -T api id -u | tr -d '\r')
+          echo "api uid=$uid"; test "$uid" != 0
+          test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' gymos-api)" = true
+          test "$(docker inspect --format '{{.HostConfig.CapDrop}}' gymos-api)" = '[ALL]'
+          test "$(docker inspect --format '{{.HostConfig.CapAdd}}' gymos-api)" = '[]'
+          for c in gymos-api gymos-postgres; do
+            opts=$(docker inspect --format '{{.HostConfig.SecurityOpt}}' "$c")
+            echo "$c securityOpt=$opts"
+            case "$opts" in *no-new-privileges:true*) ;; *) exit 1 ;; esac
+          done
+          # Postgres is on the data network only; the edge network must not reach it.
+          nets=$(docker inspect --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' gymos-postgres)
+          echo "postgres networks=$nets"; test "$(echo "$nets" | tr -d ' ')" = gymos-data
+
+      # Every optional profile is started too. Definitions that merely parse are not definitions
+      # that work: Redis, Seq, and pgAdmin each crash-looped the first time they met
+      # `cap_drop: ALL`, and nothing short of booting them says so.
+      - name: Start every optional profile
+        env:
+          API_IMAGE: gymos-api:ci
+          COMPOSE_PROFILES: tools,redis,observability,storage
+        run: |
+          docker compose up -d
+          for _ in $(seq 1 36); do
+            out=$(docker compose ps --format '{{.Name}} {{.State}} {{.Health}}' | sort)
+            pending=$(printf '%s\n' "$out" | grep -vc ' running healthy$' || true)
+            if [ "$pending" = 0 ]; then printf '%s\n' "$out"; exit 0; fi
+            sleep 5
+          done
+          printf '%s\n' "$out"
+          echo '::error::Not every service reached a healthy state.'
+          exit 1
+
+      # COMPOSE_PROFILES so these two see the optional services as well; `docker compose logs`
+      # only reports on services its profiles select.
+      - name: Container logs (on failure)
+        if: failure()
+        env:
+          COMPOSE_PROFILES: tools,redis,observability,storage
+        run: docker compose logs --no-color --tail 200
+
+      - name: Tear down
+        if: always()
+        env:
+          COMPOSE_PROFILES: tools,redis,observability,storage
+        run: docker compose down -v

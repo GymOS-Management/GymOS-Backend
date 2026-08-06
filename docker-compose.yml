@@ -1,48 +1,395 @@
-# GymOS local development environment.
-# One command:   docker compose up -d
-# With Redis:    docker compose --profile redis up -d   (disabled by default)
+# GymOS — base stack definition.
+#
+#   Development:   docker compose up -d                            (adds docker-compose.override.yml)
+#   Production:    docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# ── What belongs in this file ──────────────────────────────────────────────────────────────────
+# Everything true of GymOS in *every* environment: which services exist, how they find each
+# other, what makes them healthy, and what they store. Nothing environment-specific — no
+# published host ports, no credentials, no development tooling. Those live in the overlay files,
+# which is what stops "works on my machine" from being a property of the base definition.
+#
+# ── This file is not a runnable stack on its own ───────────────────────────────────────────────
+# It intentionally carries no credentials, so `docker compose -f docker-compose.yml up` alone would
+# start PostgreSQL with an empty password. Always pair it with an overlay — the development one is
+# applied automatically, so in practice this only matters if you pass -f by hand.
+#
+# Full reference, including the reasoning behind each security setting:
+#   docs/Infrastructure/DOCKER.md
 name: gymos
 
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# Shared fragments
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+# Every container gets the same log configuration. Without a cap, a container that starts
+# log-looping fills the host disk and takes down everything else on it — including the database.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+    # Docker's json-file driver wraps each line; the application already emits structured JSON
+    # (Serilog CompactJsonFormatter), so a collector reading these files gets structured events
+    # without a parsing step. See Serilog__ConsoleFormat in .env.example.
+
+# Applied to every service. Locking these down centrally means a new service is secure because
+# it inherited the default, not because someone remembered.
+x-hardening: &default-hardening
+  security_opt:
+    # Blocks setuid binaries from gaining privileges — a container process can never end up with
+    # more rights than it started with, even if something inside it is exploitable.
+    - no-new-privileges:true
+  cap_drop:
+    # Start from nothing and add back only what a service demonstrably needs. The default Docker
+    # capability set includes things like NET_RAW that no GymOS service has any use for.
+    - ALL
+
 services:
+  # ════════════════════════════════════════════════════════════════════════════════════════════
+  # PostgreSQL 17 — the only stateful service
+  # ════════════════════════════════════════════════════════════════════════════════════════════
   postgres:
     image: postgres:17-alpine
     container_name: gymos-postgres
+    restart: unless-stopped
+    logging: *default-logging
+
     environment:
-      POSTGRES_DB: gymos
-      POSTGRES_USER: gymos
-      POSTGRES_PASSWORD: gymos_dev_password # local development only — production uses Azure-managed credentials
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-gymos}
+      POSTGRES_USER: ${POSTGRES_USER:-gymos}
+      # Empty default, and the requirement lives in the overlays rather than here. Compose
+      # interpolates each file *independently* before merging them, so a `${VAR:?}` marker in this
+      # file cannot be satisfied by an override supplying the value — it aborts the whole command
+      # even when the merged result would be correct. So: dev supplies a known-public value,
+      # docker-compose.prod.yml uses `${POSTGRES_PASSWORD:?}` and refuses to start without a real
+      # one, and this file stays merge-safe.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+
+      # UTF-8 and a deterministic collation, fixed at initdb time because they cannot be changed
+      # afterwards without dumping and restoring the cluster. locale=C keeps sort order identical
+      # on every machine — an index built under one collation is not valid under another, which is
+      # a genuinely painful class of bug to discover after data exists.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --lc-collate=C --lc-ctype=C'
+
+      # UTC everywhere, matching AD-40: the application stores UTC and converts at the edges, so a
+      # database in any other zone would only create a second, disagreeing opinion about "now".
+      TZ: UTC
+      PGTZ: UTC
+
     volumes:
-      - gymos-pgdata:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
+      # One-time initialisation, applied only when the data directory is empty. Read-only: these
+      # scripts run as the superuser, so the container has no reason to be able to alter them.
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gymos -d gymos"]
+      # -U/-d are explicit: bare pg_isready checks the server socket, which answers "healthy"
+      # during the brief window when the entrypoint has started a temporary server for the init
+      # scripts and the real database does not yet exist.
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-gymos} -d ${POSTGRES_DB:-gymos} -q']
       interval: 5s
       timeout: 3s
       retries: 12
+      start_period: 10s
+
+    <<: *default-hardening
+    cap_add:
+      # The entrypoint chowns the data directory and drops from root to postgres before starting
+      # the server. Without these it cannot do either, and the container exits on first boot.
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    # Not read_only: PostgreSQL writes its data directory, WAL, and socket. The data directory is
+    # a volume, but the socket in /var/run/postgresql and several transient files are not, and
+    # tmpfs-ing them all to claim a read-only flag would be ceremony rather than security.
+
     networks:
-      - gymos
+      - gymos-data
+
+  # ════════════════════════════════════════════════════════════════════════════════════════════
+  # GymOS Web API
+  # ════════════════════════════════════════════════════════════════════════════════════════════
+  api:
+    build:
+      # Repository root, because the build needs Directory.Build.props and global.json.
+      context: .
+      dockerfile: src/Host/GymOS.WebApi/Dockerfile
+    image: ${API_IMAGE:-gymos-api:local}
+    container_name: gymos-api
+    restart: unless-stopped
+    logging: *default-logging
+
+    environment:
+      # Configuration uses the double-underscore convention the application already reads
+      # (ASP.NET maps Security__Jwt__SigningKey to Security:Jwt:SigningKey), so nothing here
+      # invents a second naming scheme for the same settings.
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_HTTP_PORTS: '8080'
+
+      # `postgres` is the compose service name, resolved by Docker's embedded DNS on the shared
+      # network. Host-based addressing is what makes the same image run unchanged against a
+      # sidecar in dev and Azure Database for PostgreSQL in production.
+      ConnectionStrings__Database: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=${POSTGRES_USER:-gymos};Password=${POSTGRES_PASSWORD:-};Include
+        Error Detail=${POSTGRES_INCLUDE_ERROR_DETAIL:-false}
+
+      # ── Deliberately ABSENT from this file: Security__Jwt__SigningKey ──────────────────────
+      # An empty environment variable is not an unset one, and this is where that bites. Environment
+      # variables outrank appsettings.json, so declaring `Security__Jwt__SigningKey: ${VAR:-}` sets
+      # it to the empty string and *overrides* the deliberately public development key in
+      # appsettings.Development.json — the application then refuses to start with
+      # "SigningKey field is required", in an environment specifically designed to need no secrets.
+      # Discovered exactly that way. The overlays set it instead: development leaves it unset so the
+      # file-based fallback applies, production requires a real value.
+      #
+      # The same reasoning applies to Seed__SuperAdmin__*: only the overlays declare them.
+      Security__Jwt__Issuer: ${GYMOS_JWT_ISSUER:-gymos-backend}
+      Security__Jwt__Audience: ${GYMOS_JWT_AUDIENCE:-gymos-clients}
+
+      # Behind a reverse proxy (Azure Front Door, an ingress controller), this must be on or the
+      # rate limiter sees one bucket for every caller and audit rows all record the proxy's
+      # address. Off by default because it is only correct when a proxy is genuinely in front.
+      Security__ForwardedHeaders__Enabled: ${GYMOS_FORWARDED_HEADERS_ENABLED:-false}
+
+      # Empty means "do not export". Set to an OTLP collector to light up AD-38 tracing without
+      # touching the image.
+      OpenTelemetry__OtlpEndpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+
+      # Set by the overlays (text for humans in development, json for collectors in production)
+      # rather than defaulted to empty here, for the precedence reason above.
+      Serilog__MinimumLevel__Default: ${GYMOS_LOG_LEVEL:-Information}
+
+      # Off by default. Applying schema changes as a side effect of a container starting means a
+      # rolling deployment can run two migrations concurrently; the overlay files decide, and
+      # docs/Infrastructure/DOCKER.md gives the one-shot command production uses instead.
+      Database__MigrateOnStartup: ${GYMOS_MIGRATE_ON_STARTUP:-false}
+
+    volumes:
+      # ASP.NET writes DataProtection keys on start-up. With a read-only root filesystem and no
+      # volume here it logs a warning and holds them in memory, so every restart invalidates
+      # anything they protected. Nothing today depends on them (the API is JWT-based and
+      # stateless) — this exists so that when something does, it already works.
+      - api-dataprotection:/home/app/.aspnet/DataProtection-Keys
+      # Reserved for the validated-upload pipeline (AD-44). Mounted now so introducing it is a
+      # code change rather than an infrastructure change.
+      - uploads:/var/lib/gymos/uploads
+
+    tmpfs:
+      # The only writable path the framework genuinely needs, sized so a runaway temp file cannot
+      # consume host memory.
+      - /tmp:size=64m,mode=1777
+
+    # The application writes nothing else: it logs to stdout, keeps no local cache, and its
+    # binaries are root-owned and therefore unwritable by the unprivileged `app` user. A read-only root filesystem
+    # turns "should not write" into "cannot write".
+    read_only: true
+
+    healthcheck:
+      # Duplicated from the Dockerfile's HEALTHCHECK on purpose: an image pulled from a registry
+      # carries its own, but a compose file that relies on that alone stops being a complete
+      # description of the stack. The definitions must agree — see docs/Infrastructure/DOCKER.md.
+      test: ['CMD-SHELL', 'curl --fail --silent http://localhost:8080/health/ready || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+
+    depends_on:
+      postgres:
+        # service_healthy, not service_started: the API migrates and seeds during start-up, so a
+        # database that is merely *running* is not enough — pg_isready has to pass first.
+        condition: service_healthy
+
+    <<: *default-hardening
+
+    networks:
+      # The API is the only service on both: it is reached from outside and it reaches the
+      # database. See the networks section for why that separation matters.
+      - gymos-edge
+      - gymos-data
+
+  # ════════════════════════════════════════════════════════════════════════════════════════════
+  # Future services
+  # ════════════════════════════════════════════════════════════════════════════════════════════
+  #
+  # Each is defined behind a `profiles:` key, so it is inert until asked for:
+  #     docker compose --profile redis --profile observability up -d
+  #
+  # Profiles rather than commented-out YAML, deliberately. A commented block is not parsed, so it
+  # rots quietly and nobody discovers the indentation error until the day they need the service.
+  # These are validated by `docker compose config` on every run, and they are structured — the
+  # right network, the shared hardening, a health check — so adding one is a matter of turning it
+  # on rather than designing it under pressure.
 
   redis:
     image: redis:7-alpine
     container_name: gymos-redis
-    profiles: ["redis"] # optional — no GymOS component requires Redis yet
-    ports:
-      - "6379:6379"
+    profiles: ['redis']
+    restart: unless-stopped
+    logging: *default-logging
+    # --appendonly yes: durability matters the moment Redis holds anything other than a cache
+    # (rate-limit counters, idempotency keys under AD-39).
+    command: ['redis-server', '--appendonly', 'yes']
+    # Starts directly as the image's unprivileged redis user. The default entrypoint starts as root
+    # and drops privileges with setpriv, which needs SETUID/SETGID back — pointless when the
+    # container can simply never be root. /data in the image is redis-owned, so a fresh named
+    # volume inherits that ownership and nothing needs chowning.
+    user: redis
     volumes:
-      - gymos-redisdata:/data
+      - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
       timeout: 3s
       retries: 12
+    <<: *default-hardening
     networks:
-      - gymos
+      - gymos-data
 
+  # Structured-log sink (AD-38). The API already emits compact JSON to stdout; pointing Serilog at
+  # Seq is a configuration change once this is running.
+  seq:
+    image: datalust/seq:latest
+    container_name: gymos-seq
+    profiles: ['observability']
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      ACCEPT_EULA: 'Y'
+      # Seq refuses to start without an administrator password, which is the right default for
+      # something that will hold every log line the platform produces. Empty here, like MinIO's
+      # root password: the development overlay supplies a public value, and any real deployment
+      # supplies its own.
+      SEQ_FIRSTRUN_ADMINPASSWORD: ${SEQ_ADMIN_PASSWORD:-}
+    # The image's /data is owned by 999, and a fresh named volume inherits that, so Seq can run as
+    # its own unprivileged user from the start rather than beginning as root to chown and drop.
+    user: '999:999'
+    volumes:
+      - seq-data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'curl --fail --silent http://localhost:80/health || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *default-hardening
+    cap_add:
+      # Seq's binary carries the NET_BIND_SERVICE file capability so it can listen on port 80.
+      # Executing a file whose capabilities are outside the container's bounding set fails with
+      # EPERM, so `cap_drop: ALL` alone makes it crash-loop before it prints anything useful
+      # ("/seqsvr/Seq: Operation not permitted"). Granting the one capability it declares is the
+      # narrow fix; the alternative is reconfiguring it onto a high port for no benefit.
+      - NET_BIND_SERVICE
+    networks:
+      - gymos-data
+
+  # S3-compatible object storage, for the AD-44 file pipeline before Azure Blob Storage.
+  minio:
+    image: minio/minio:latest
+    container_name: gymos-minio
+    profiles: ['storage']
+    restart: unless-stopped
+    logging: *default-logging
+    command: ['server', '/data', '--console-address', ':9001']
+    # Runs as root, unlike every other service here, and that is a limitation of the image rather
+    # than a choice: /data in minio/minio is root-owned, so a fresh named volume inherits root
+    # ownership and an unprivileged user cannot write to it — fixing that needs a privileged step
+    # before start-up. It keeps cap_drop: ALL and no-new-privileges, it is development-only, and it
+    # is a stand-in for Azure Blob Storage (AD-44) rather than something intended for deployment.
+    # If MinIO ever becomes production infrastructure, revisit this first.
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gymos}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    <<: *default-hardening
+    networks:
+      - gymos-data
+
+  # ── Not yet defined, and deliberately so ──────────────────────────────────────────────────
+  #
+  # gateway        — GymOS-Gateway (AD-47). Its own repository and image; it joins gymos-edge and
+  #                  talks to the API over HTTP, so adding it needs no change here.
+  # worker         — background jobs (the M3.4 renewal sweep, M5 stats, audit retention). Will
+  #                  run the same image as `api` with a different entrypoint, sharing its
+  #                  configuration, once a job host exists to run.
+  # ai-worker      — AI workloads (AD-31). Separate service because its resource profile and
+  #                  failure modes have nothing in common with request handling.
+  # prometheus     — scrapes the OTLP metrics AD-38 already produces.
+  # grafana        — dashboards over Prometheus.
+  # mailpit        — SMTP sink; belongs in the override file only, since capturing mail in
+  #                  production would mean not sending it.
+  # pgadmin        — likewise development-only; see docker-compose.override.yml.
+  #
+  # Each of these is a service block plus a profile. None requires the networks, volumes, or
+  # hardening defaults above to change, which is the point of defining them centrally.
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# Volumes
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# Named, never host bind mounts, for three reasons: Docker manages permissions (a bind mount from
+# a Windows host into a Linux container has no useful notion of the container's uid), `docker compose down`
+# cannot delete them by accident, and they are the unit a backup actually operates on.
 volumes:
-  gymos-pgdata:
-  gymos-redisdata:
+  postgres-data:
+    name: gymos-postgres-data
+  api-dataprotection:
+    name: gymos-api-dataprotection
+  uploads:
+    name: gymos-uploads
 
+  # Declared, intentionally unmounted. The API logs to stdout — that is what makes `docker
+  # compose logs`, the json-file driver, and any future collector work without the application
+  # knowing they exist. A log *file* inside a container is the thing centralised logging replaces:
+  # it is invisible from outside, it survives nothing, and it competes with the database for disk.
+  # The volume exists so a service that genuinely produces files (a nightly export, a diagnostic
+  # dump) has somewhere named to put them.
+  logs:
+    name: gymos-logs
+
+  # Future services, declared so enabling a profile needs no edit here.
+  redis-data:
+    name: gymos-redis-data
+  seq-data:
+    name: gymos-seq-data
+  minio-data:
+    name: gymos-minio-data
+  prometheus-data:
+    name: gymos-prometheus-data
+  grafana-data:
+    name: gymos-grafana-data
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# Networks
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# ── Why not the default bridge ────────────────────────────────────────────────────────────────
+# Docker's default bridge has no embedded DNS: containers on it can only find each other by IP or
+# by the deprecated --link flag, so `Host=postgres` would not resolve. It is also shared by every
+# container on the host that did not choose otherwise, which means an unrelated container is one
+# `docker run` away from having a route to this database. A user-defined network gives DNS by
+# service name and an isolation boundary that is ours.
+#
+# ── Why two of them ──────────────────────────────────────────────────────────────────────────
+# `gymos-data` is marked internal in docker-compose.prod.yml, which removes its route to the
+# outside world entirely — the database cannot reach the internet even if something inside it
+# tries. The API sits on both networks and is the only path between them. Splitting them costs
+# one line per service and turns "the database should not be exposed" from a convention into a
+# property of the network.
 networks:
-  gymos:
-    name: gymos
+  gymos-edge:
+    name: gymos-edge
+    driver: bridge
+  gymos-data:
+    name: gymos-data
+    driver: bridge
