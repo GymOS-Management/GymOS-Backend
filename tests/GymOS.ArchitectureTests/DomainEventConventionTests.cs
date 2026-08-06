@@ -93,6 +93,7 @@ public sealed partial class DomainEventConventionTests
     private static readonly HashSet<string> IrregularPastParticiples = new(StringComparer.Ordinal)
     {
         "set", "sent", "built", "split", "read", "left", "lost", "paid", "put", "spent",
+        "withdrawn", "drawn", "shown", "known", "grown", "thrown",
     };
 
     [Fact]

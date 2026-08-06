@@ -44,25 +44,45 @@ public sealed class MoneyTypeTests
         "GymOS.SharedKernel.Currencies.Money.Of",
         "GymOS.SharedKernel.Currencies.Money.FromMinorUnits",
         "GymOS.SharedKernel.Currencies.Money.ToMinorUnits",
-
-        // ── Serialisation boundaries ────────────────────────────────────────────────
-        //
-        // Money is for arithmetic *inside* the process. Where a value is serialised — a domain event
-        // bound for the outbox, or a DTO bound for JSON — money travels as an amount plus an ISO
-        // currency code, side by side, and is rebuilt into a Money on the way back in.
-        //
-        // Not a workaround but the current truth: `Money` has no defined wire form. `Currency` keeps its
-        // code in a private field behind a property that throws when unset, so System.Text.Json can
-        // neither round-trip it nor fail loudly about it — it would quietly produce a default. Putting
-        // Money in a payload needs a JsonConverter first, and that belongs with the first consumer that
-        // actually wants one (see docs/RELEASE-NOTES.md).
-        //
-        // What makes these safe is that every one of them sits beside an explicit currency field, so no
-        // amount here is ever a number without its unit.
-        "GymOS.Platform.Domain.Subscriptions.Events.PlanPriceSet.Amount",
-        "GymOS.Platform.Application.Subscriptions.SetPlanPriceCommand.Amount",
-        "GymOS.Platform.Application.Subscriptions.Abstractions.PlanPriceDetail.Amount",
     };
+
+    /// <summary>
+    /// Whether a money-shaped <see cref="decimal"/> is acceptable because it sits at a serialisation
+    /// boundary, beside the currency it is denominated in.
+    ///
+    /// <para><b>Why this is a rule rather than a growing exemption list.</b> R4's purpose is "never an
+    /// amount without its unit", and <c>Money</c> exists to make that structural. But <c>Money</c> has no
+    /// wire form — <c>Currency</c> keeps its code in a private field behind a property that throws when
+    /// unset, so System.Text.Json would quietly produce a default instead of failing — so an event payload
+    /// or a JSON DTO genuinely cannot hold one. Those carry an amount and an ISO code side by side and
+    /// rebuild a <c>Money</c> on the way in. Listing each such member by name meant four more entries per
+    /// money-touching increment, all making the same argument; encoding the argument once is better.</para>
+    ///
+    /// <para>Two conditions, both needed. The type must declare a currency member — that is the actual
+    /// principle, and a lone <c>decimal Total</c> still fails. And it must be a <c>record</c>, which in
+    /// this codebase is how DTOs, commands, and events are written while aggregates are classes. The
+    /// second is a **proxy** for "is a serialisation boundary" rather than a proof of it: a domain value
+    /// object written as a record could pair a decimal with a currency string and slip through. That is
+    /// the residual risk, and it is smaller than a list nobody reads.</para>
+    /// </summary>
+    private static bool TravelsWithItsCurrency(Type declaringType)
+    {
+        // `PrintMembers` is compiler-generated for every record and record struct, and for nothing else —
+        // a more reliable marker than Deconstruct (positional records only) or EqualityContract
+        // (record classes only).
+        bool isRecord = declaringType.GetMethod(
+            "PrintMembers",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) is not null;
+
+        if (!isRecord)
+        {
+            return false;
+        }
+
+        return declaringType
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Any(property => property.Name.Contains("Currency", StringComparison.OrdinalIgnoreCase));
+    }
 
     [Fact]
     public void NoProductionMemberExposesMoneyAsANakedDecimal()
@@ -123,7 +143,8 @@ public sealed class MoneyTypeTests
             BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
             if (IsMoneyShaped(property.PropertyType) && LooksLikeMoney(property.Name)
-                && !Exempt.Contains($"{type.FullName}.{property.Name}"))
+                && !Exempt.Contains($"{type.FullName}.{property.Name}")
+                && !TravelsWithItsCurrency(type))
             {
                 yield return $"{type.FullName}.{property.Name} : {Describe(property.PropertyType)}";
             }
@@ -141,14 +162,17 @@ public sealed class MoneyTypeTests
                 continue;
             }
 
-            if (IsMoneyShaped(method.ReturnType) && LooksLikeMoney(method.Name))
+            if (IsMoneyShaped(method.ReturnType) && LooksLikeMoney(method.Name)
+                && !TravelsWithItsCurrency(type))
             {
                 yield return $"{type.FullName}.{method.Name}() returns {Describe(method.ReturnType)}";
             }
 
             foreach (ParameterInfo parameter in method.GetParameters())
             {
-                if (IsMoneyShaped(parameter.ParameterType) && LooksLikeMoney(parameter.Name ?? string.Empty))
+                if (IsMoneyShaped(parameter.ParameterType)
+                    && LooksLikeMoney(parameter.Name ?? string.Empty)
+                    && !TravelsWithItsCurrency(type))
                 {
                     yield return
                         $"{type.FullName}.{method.Name}(… {Describe(parameter.ParameterType)} {parameter.Name})";
