@@ -37,6 +37,8 @@ public static class StoredOutcomeCodec
     /// The response status to persist (0 = success; otherwise <c>(int)ErrorKind + 1</c>) and the
     /// JSON body to persist alongside it (null for a valueless success).
     /// </returns>
+    /// <exception cref="InvalidOperationException">The result is a <c>Result&lt;T&gt;</c> success
+    /// whose value is null — idempotent command success payloads must be non-null.</exception>
     public static (int ResponseStatus, string? Body) Encode(Result result)
     {
         ArgumentNullException.ThrowIfNull(result);
@@ -47,8 +49,24 @@ public static class StoredOutcomeCodec
             return ((int)error.Kind + 1, JsonSerializer.Serialize(new StoredError(error.Code, error.Message), Options));
         }
 
+        Type resultType = result.GetType();
+        if (!resultType.IsGenericType)
+        {
+            return (0, null); // Plain Result: a valueless success stores no body, by design.
+        }
+
         object? value = ValueOf(result);
-        return (0, value is null ? null : JsonSerializer.Serialize(value, value.GetType(), Options));
+        if (value is null)
+        {
+            // A Result<T> success carrying null would decode as a null-bodied success and NRE on
+            // replay long after the original request succeeded — fail loudly at encode time instead.
+            throw new InvalidOperationException(
+                $"Cannot store a success of {resultType.Name} with a null value: idempotent " +
+                "command success payloads must be non-null, or the command should respond with " +
+                "plain Result instead.");
+        }
+
+        return (0, JsonSerializer.Serialize(value, value.GetType(), Options));
     }
 
     /// <summary>
@@ -60,30 +78,44 @@ public static class StoredOutcomeCodec
     /// <param name="responseStatus">The status previously produced by <see cref="Encode"/>.</param>
     /// <param name="body">The body previously produced by <see cref="Encode"/>.</param>
     /// <returns>The reconstructed <typeparamref name="TResponse"/>.</returns>
+    /// <exception cref="InvalidOperationException">The stored body no longer matches the command's
+    /// response shape — changing an idempotent command's response shape requires a new
+    /// <c>OperationKey</c>, so old records can never be replayed into the new shape.</exception>
     public static TResponse Decode<TResponse>(int responseStatus, string? body)
         where TResponse : Result
     {
-        if (responseStatus is 0)
+        try
         {
-            if (typeof(TResponse) == typeof(Result))
+            if (responseStatus is 0)
             {
-                return (TResponse)Result.Success();
+                if (typeof(TResponse) == typeof(Result))
+                {
+                    return (TResponse)Result.Success();
+                }
+
+                Type valueType = typeof(TResponse).GetGenericArguments()[0];
+                object value = JsonSerializer.Deserialize(body!, valueType, Options)!;
+                return (TResponse)SuccessFactory(valueType).Invoke(null, [value])!;
             }
 
-            Type valueType = typeof(TResponse).GetGenericArguments()[0];
-            object value = JsonSerializer.Deserialize(body!, valueType, Options)!;
-            return (TResponse)SuccessFactory(valueType).Invoke(null, [value])!;
+            StoredError stored = JsonSerializer.Deserialize<StoredError>(body!, Options)!;
+            Error error = ErrorFor((ErrorKind)(responseStatus - 1), stored.Code, stored.Message);
+
+            if (typeof(TResponse) == typeof(Result))
+            {
+                return (TResponse)Result.Failure(error);
+            }
+
+            return (TResponse)FailureFactory(typeof(TResponse).GetGenericArguments()[0]).Invoke(null, [error])!;
         }
-
-        StoredError stored = JsonSerializer.Deserialize<StoredError>(body!, Options)!;
-        Error error = ErrorFor((ErrorKind)(responseStatus - 1), stored.Code, stored.Message);
-
-        if (typeof(TResponse) == typeof(Result))
+        catch (JsonException exception)
         {
-            return (TResponse)Result.Failure(error);
+            throw new InvalidOperationException(
+                $"A stored idempotency outcome could not be decoded as {typeof(TResponse).Name}. " +
+                "This almost always means the response shape changed while records from the old " +
+                "shape were still retained — changing an idempotent command's response shape " +
+                "requires a new OperationKey (API_STANDARDS §Idempotency).", exception);
         }
-
-        return (TResponse)FailureFactory(typeof(TResponse).GetGenericArguments()[0]).Invoke(null, [error])!;
     }
 
     private static object? ValueOf(Result result)

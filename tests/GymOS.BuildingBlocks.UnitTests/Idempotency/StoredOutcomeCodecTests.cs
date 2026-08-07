@@ -43,4 +43,23 @@ public sealed class StoredOutcomeCodecTests
         Assert.Equal("This invoice is already paid.", decoded.Error.Message);
         Assert.Equal(ErrorKind.Conflict, decoded.Error.Kind);
     }
+
+    [Fact]
+    public void Generic_success_with_a_null_value_is_rejected_at_encode_time()
+    {
+        Result<PaymentDto> nullSuccess = Result.Success<PaymentDto>(null!);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => StoredOutcomeCodec.Encode(nullSuccess));
+
+        Assert.Contains("must be non-null", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_body_that_no_longer_parses_names_the_OperationKey_versioning_rule()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => StoredOutcomeCodec.Decode<Result<PaymentDto>>(0, "{ not valid json"));
+
+        Assert.Contains("requires a new OperationKey", exception.Message, StringComparison.Ordinal);
+    }
 }
