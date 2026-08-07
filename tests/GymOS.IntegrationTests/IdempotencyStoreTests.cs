@@ -57,7 +57,9 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
         IdempotencyClaimResult second = await store.TryClaimAsync(Claim("k1"), CancellationToken.None);
 
         Assert.True(first.Claimed);
+        Assert.NotNull(first.ClaimToken);
         Assert.False(second.Claimed);
+        Assert.Null(second.ClaimToken);
         Assert.Equal(IdempotencyRecordStatus.InProgress, second.Existing!.Status);
     }
 
@@ -79,12 +81,12 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
     {
         await using AppDbContext context = CreateContext();
         var store = new IdempotencyStore(context);
-        await store.TryClaimAsync(Claim("k-rollback"), CancellationToken.None);
+        IdempotencyClaimResult claim = await store.TryClaimAsync(Claim("k-rollback"), CancellationToken.None);
 
         await using (IIdempotencyTransaction transaction =
             await store.BeginTransactionAsync(CancellationToken.None))
         {
-            await store.MarkFinishedAsync("test.op", "k-rollback",
+            await store.MarkFinishedAsync("test.op", "k-rollback", claim.ClaimToken!.Value,
                 IdempotencyRecordStatus.Completed, 0, """{"ok":true}""", CancellationToken.None);
             await transaction.RollbackAsync(CancellationToken.None);
         }
@@ -102,18 +104,19 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
         var store = new IdempotencyStore(context);
 
         IdempotencyClaimRequest expired = Claim("k-lease") with { LeaseExpiresAt = Clock.UtcNow.AddMinutes(-1) };
-        await store.TryClaimAsync(expired, CancellationToken.None);
+        IdempotencyClaimResult claim = await store.TryClaimAsync(expired, CancellationToken.None);
 
-        bool wrongHash = await store.TryTakeOverAsync("test.op", "k-lease",
+        Guid? wrongHash = await store.TryTakeOverAsync("test.op", "k-lease",
             "ff".PadRight(64, '0'), Clock.UtcNow.AddMinutes(1), CancellationToken.None);
-        bool rightHash = await store.TryTakeOverAsync("test.op", "k-lease",
+        Guid? rightHash = await store.TryTakeOverAsync("test.op", "k-lease",
             expired.RequestHash, Clock.UtcNow.AddMinutes(1), CancellationToken.None);
-        bool secondTime = await store.TryTakeOverAsync("test.op", "k-lease",
+        Guid? secondTime = await store.TryTakeOverAsync("test.op", "k-lease",
             expired.RequestHash, Clock.UtcNow.AddMinutes(1), CancellationToken.None);
 
-        Assert.False(wrongHash);
-        Assert.True(rightHash);
-        Assert.False(secondTime); // lease is live again after the first takeover
+        Assert.Null(wrongHash);
+        Assert.NotNull(rightHash);
+        Assert.NotEqual(claim.ClaimToken!.Value, rightHash!.Value); // takeover fences with a NEW token
+        Assert.Null(secondTime); // lease is live again after the first takeover
     }
 
     [Fact]
@@ -121,12 +124,52 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
     {
         await using AppDbContext context = CreateContext();
         var store = new IdempotencyStore(context);
-        await store.TryClaimAsync(Claim("k-release"), CancellationToken.None);
+        IdempotencyClaimResult claim = await store.TryClaimAsync(Claim("k-release"), CancellationToken.None);
 
-        await store.ReleaseClaimAsync("test.op", "k-release", CancellationToken.None);
+        bool released = await store.ReleaseClaimAsync(
+            "test.op", "k-release", claim.ClaimToken!.Value, CancellationToken.None);
 
+        Assert.True(released);
         IdempotencyClaimResult again = await store.TryClaimAsync(Claim("k-release"), CancellationToken.None);
         Assert.True(again.Claimed);
+    }
+
+    [Fact]
+    public async Task Stale_token_cannot_mark_finished_or_release_after_a_takeover()
+    {
+        await using AppDbContext context = CreateContext();
+        var store = new IdempotencyStore(context);
+
+        // A claims with token T1 and stalls past its lease.
+        IdempotencyClaimRequest expired = Claim("k-fence") with { LeaseExpiresAt = Clock.UtcNow.AddMinutes(-1) };
+        IdempotencyClaimResult claim = await store.TryClaimAsync(expired, CancellationToken.None);
+        Guid staleToken = claim.ClaimToken!.Value;
+
+        // B takes over: the row now carries token T2.
+        Guid? newToken = await store.TryTakeOverAsync("test.op", "k-fence",
+            expired.RequestHash, Clock.UtcNow.AddMinutes(1), CancellationToken.None);
+        Assert.NotNull(newToken);
+
+        // A wakes and tries to record its outcome with T1 — the fence blocks it.
+        bool marked = await store.MarkFinishedAsync("test.op", "k-fence", staleToken,
+            IdempotencyRecordStatus.Completed, 0, """{"stale":true}""", CancellationToken.None);
+        Assert.False(marked);
+
+        // A's failure path with T1 must not delete B's live claim either.
+        bool released = await store.ReleaseClaimAsync("test.op", "k-fence", staleToken, CancellationToken.None);
+        Assert.False(released);
+
+        // The record still holds B's state: InProgress, no stale outcome, and B's token still works.
+        await using AppDbContext fresh = CreateContext();
+        var freshStore = new IdempotencyStore(fresh);
+        IdempotencyClaimResult after = await freshStore.TryClaimAsync(Claim("k-fence"), CancellationToken.None);
+        Assert.False(after.Claimed);
+        Assert.Equal(IdempotencyRecordStatus.InProgress, after.Existing!.Status);
+        Assert.Null(after.Existing.ResponseBody);
+
+        bool markedByOwner = await freshStore.MarkFinishedAsync("test.op", "k-fence", newToken!.Value,
+            IdempotencyRecordStatus.Completed, 0, """{"owner":true}""", CancellationToken.None);
+        Assert.True(markedByOwner);
     }
 
     [Fact]

@@ -21,6 +21,7 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     operation_key = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
                     idempotency_key = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
                     request_hash = table.Column<string>(type: "character(64)", fixedLength: true, maxLength: 64, nullable: false),
+                    claim_token = table.Column<Guid>(type: "uuid", nullable: false),
                     status = table.Column<int>(type: "integer", nullable: false),
                     response_status = table.Column<int>(type: "integer", nullable: false),
                     response_body = table.Column<string>(type: "jsonb", nullable: true),

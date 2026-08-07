@@ -17,6 +17,13 @@ public sealed class IdempotencyRecord
 
     public string RequestHash { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Fencing token identifying the current claim holder. Set on claim, replaced on takeover;
+    /// MarkFinished/ReleaseClaim are gated on it so a stale holder can never overwrite or delete
+    /// the live owner's record.
+    /// </summary>
+    public Guid ClaimToken { get; set; }
+
     /// <summary><see cref="GymOS.BuildingBlocks.Application.Idempotency.IdempotencyRecordStatus"/> values.</summary>
     public int Status { get; set; }
 

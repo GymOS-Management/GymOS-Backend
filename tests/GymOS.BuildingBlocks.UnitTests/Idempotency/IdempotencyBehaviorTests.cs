@@ -180,6 +180,83 @@ public sealed class IdempotencyBehaviorTests
         Assert.Equal(1, _executions);
     }
 
+    // Fence: the lease is lost mid-execution (another holder took over and owns a NEW token) →
+    // MarkFinished affects 0 rows, the business effect rolls back, and the caller gets the
+    // in-progress conflict. The other holder's record is left exactly as it was.
+    [Fact]
+    public async Task Lost_lease_at_finish_rolls_back_and_reports_in_progress()
+    {
+        _context.SetKey("k1");
+        Task<Result<PaymentDto>> StallsPastLease()
+        {
+            _executions++;
+            // While "we" were stalled, another holder took the claim over: new token on the row.
+            _store.SimulateTakeoverByAnotherHolder("test.mark-paid", "k1");
+            return Task.FromResult(Result.Success(new PaymentDto("PAY-STALE")));
+        }
+
+        Result<PaymentDto> result = await Behavior<MarkPaid>()
+            .HandleAsync(new MarkPaid(Guid.NewGuid()), StallsPastLease, CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("idempotency.operation_in_progress", result.Error!.Code);
+        Assert.True(_store.LastTransactionRolledBack);
+        Assert.False(_store.CommittedInTransaction);
+        Assert.NotNull(_context.RetryAfter);
+        // The new holder's claim is untouched — still InProgress, not overwritten with our outcome.
+        Assert.Equal(IdempotencyRecordStatus.InProgress, _store.Single("test.mark-paid", "k1").Status);
+    }
+
+    // Fence: after the lease is lost, a thrown handler must not delete the new holder's claim.
+    [Fact]
+    public async Task Exception_after_a_lost_lease_does_not_delete_the_new_holders_claim()
+    {
+        _context.SetKey("k1");
+        Task<Result<PaymentDto>> StallsThenThrows()
+        {
+            _store.SimulateTakeoverByAnotherHolder("test.mark-paid", "k1");
+            throw new TimeoutException("db down");
+        }
+
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            Behavior<MarkPaid>().HandleAsync(new MarkPaid(Guid.NewGuid()), StallsThenThrows, CancellationToken.None));
+
+        // ReleaseClaim with the stale token affected 0 rows: the live claim survives.
+        Assert.False(_store.IsEmpty);
+        Assert.Equal(IdempotencyRecordStatus.InProgress, _store.Single("test.mark-paid", "k1").Status);
+    }
+
+    // Row 5c: expired lease + same hash, but the takeover race is lost → in-progress conflict.
+    [Fact]
+    public async Task Lost_takeover_race_reports_in_progress_with_retry_after()
+    {
+        _store.SeedInProgress("test.mark-paid", "k1",
+            HashOf(new MarkPaid(WellKnownId)), _clock.UtcNow.AddSeconds(-5));
+        _store.FailTakeovers = true;
+        _context.SetKey("k1");
+
+        Result<PaymentDto> result = await Behavior<MarkPaid>()
+            .HandleAsync(new MarkPaid(WellKnownId), Handler, CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("idempotency.operation_in_progress", result.Error!.Code);
+        Assert.Equal(0, _executions);
+        Assert.NotNull(_context.RetryAfter);
+    }
+
+    // A release failure during cleanup must never mask the handler's original exception.
+    [Fact]
+    public async Task Release_failure_does_not_mask_the_handlers_exception()
+    {
+        _context.SetKey("k1");
+        _store.ThrowOnRelease = true;
+        static Task<Result<PaymentDto>> Throwing() => throw new TimeoutException("db down");
+
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            Behavior<MarkPaid>().HandleAsync(new MarkPaid(Guid.NewGuid()), Throwing, CancellationToken.None));
+        Assert.True(_store.LastTransactionRolledBack);
+    }
+
     // Gate: KeyRequired without a header → 400 error, nothing executes, nothing stored.
     [Fact]
     public async Task Required_key_missing_rejects_400_without_executing()

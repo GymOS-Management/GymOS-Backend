@@ -9,7 +9,9 @@ namespace GymOS.Platform.Infrastructure.Idempotency;
 /// <summary>
 /// AD-39 claims over AppDbContext. The claim INSERT autocommits (no ambient transaction) so
 /// every API instance sees it immediately; MarkFinished runs inside the behavior's explicit
-/// transaction so record and effect commit atomically.
+/// transaction so record and effect commit atomically. Ownership is fenced by claim_token:
+/// MarkFinished and ReleaseClaim only touch rows still carrying the caller's token, so a stale
+/// holder that lost its lease to a takeover can neither overwrite nor delete the live claim.
 /// </summary>
 internal sealed class IdempotencyStore : IIdempotencyStore
 {
@@ -37,13 +39,15 @@ internal sealed class IdempotencyStore : IIdempotencyStore
 
         for (int attempt = 1; attempt <= MaxClaimAttempts; attempt++)
         {
+            var claimToken = Guid.NewGuid();
             int inserted = await _dbContext.Database.ExecuteSqlAsync(
                 $"""
                  INSERT INTO platform.idempotency_records
-                     (id, tenant_id, operation_key, idempotency_key, request_hash, status,
-                      response_status, response_body, lease_expires_at, created_at, expires_at)
+                     (id, tenant_id, operation_key, idempotency_key, request_hash, claim_token,
+                      status, response_status, response_body, lease_expires_at, created_at, expires_at)
                  VALUES ({Guid.NewGuid()}, NULL, {request.OperationKey}, {request.IdempotencyKey},
-                         {request.RequestHash}, {(int)IdempotencyRecordStatus.InProgress}, 0, NULL,
+                         {request.RequestHash}, {claimToken},
+                         {(int)IdempotencyRecordStatus.InProgress}, 0, NULL,
                          {request.LeaseExpiresAt}, {request.CreatedAt}, {request.ExpiresAt})
                  ON CONFLICT DO NOTHING
                  """,
@@ -51,7 +55,7 @@ internal sealed class IdempotencyStore : IIdempotencyStore
 
             if (inserted == 1)
             {
-                return new IdempotencyClaimResult(Claimed: true, Existing: null);
+                return new IdempotencyClaimResult(Claimed: true, Existing: null, ClaimToken: claimToken);
             }
 
             IdempotencyRecord? existing = await _dbContext.Set<IdempotencyRecord>()
@@ -70,7 +74,8 @@ internal sealed class IdempotencyStore : IIdempotencyStore
                         existing.RequestHash,
                         existing.ResponseStatus,
                         existing.ResponseBody,
-                        existing.LeaseExpiresAt));
+                        existing.LeaseExpiresAt),
+                    ClaimToken: null);
             }
 
             // The row that beat our INSERT is already gone (released between the INSERT and
@@ -84,14 +89,16 @@ internal sealed class IdempotencyStore : IIdempotencyStore
             "normal race.");
     }
 
-    public async Task<bool> TryTakeOverAsync(
+    public async Task<Guid?> TryTakeOverAsync(
         string operationKey, string idempotencyKey, string requestHash,
         DateTimeOffset newLeaseExpiresAt, CancellationToken cancellationToken)
     {
+        var newToken = Guid.NewGuid();
         int updated = await _dbContext.Database.ExecuteSqlAsync(
             $"""
              UPDATE platform.idempotency_records
-                SET lease_expires_at = {newLeaseExpiresAt}
+                SET lease_expires_at = {newLeaseExpiresAt},
+                    claim_token = {newToken}
               WHERE operation_key = {operationKey}
                 AND idempotency_key = {idempotencyKey}
                 AND status = {(int)IdempotencyRecordStatus.InProgress}
@@ -101,37 +108,43 @@ internal sealed class IdempotencyStore : IIdempotencyStore
              """,
             cancellationToken);
 
-        return updated == 1;
+        return updated == 1 ? newToken : null;
     }
 
     public async Task<IIdempotencyTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         new EfIdempotencyTransaction(await _dbContext.Database.BeginTransactionAsync(cancellationToken));
 
-    public async Task MarkFinishedAsync(
-        string operationKey, string idempotencyKey, IdempotencyRecordStatus status,
+    public async Task<bool> MarkFinishedAsync(
+        string operationKey, string idempotencyKey, Guid claimToken, IdempotencyRecordStatus status,
         int responseStatus, string? responseBody, CancellationToken cancellationToken)
     {
-        await _dbContext.Database.ExecuteSqlAsync(
+        int updated = await _dbContext.Database.ExecuteSqlAsync(
             $"""
              UPDATE platform.idempotency_records
                 SET status = {(int)status},
                     response_status = {responseStatus},
                     response_body = {responseBody}::jsonb
               WHERE operation_key = {operationKey} AND idempotency_key = {idempotencyKey}
+                AND claim_token = {claimToken}
              """,
             cancellationToken);
+
+        return updated == 1;
     }
 
-    public async Task ReleaseClaimAsync(
-        string operationKey, string idempotencyKey, CancellationToken cancellationToken)
+    public async Task<bool> ReleaseClaimAsync(
+        string operationKey, string idempotencyKey, Guid claimToken, CancellationToken cancellationToken)
     {
-        await _dbContext.Database.ExecuteSqlAsync(
+        int deleted = await _dbContext.Database.ExecuteSqlAsync(
             $"""
              DELETE FROM platform.idempotency_records
               WHERE operation_key = {operationKey} AND idempotency_key = {idempotencyKey}
                 AND status = {(int)IdempotencyRecordStatus.InProgress}
+                AND claim_token = {claimToken}
              """,
             cancellationToken);
+
+        return deleted == 1;
     }
 
     private sealed class EfIdempotencyTransaction : IIdempotencyTransaction

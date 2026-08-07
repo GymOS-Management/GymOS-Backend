@@ -35,6 +35,16 @@ public sealed partial class IdempotencyBehavior<TRequest, TResponse> : IPipeline
         Message = "Took over an expired claim for '{OperationKey}' (key '{IdempotencyKey}') — prior attempt never committed.")]
     private static partial void LogTakeover(ILogger logger, string operationKey, string idempotencyKey);
 
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Lease for '{OperationKey}' (key '{IdempotencyKey}') was lost to a takeover before the outcome " +
+            "could be recorded — this attempt's effects were rolled back; the new holder owns the outcome.")]
+    private static partial void LogLeaseLostAtFinish(ILogger logger, string operationKey, string idempotencyKey);
+
+    [LoggerMessage(Level = LogLevel.Error,
+        Message = "Releasing the claim for '{OperationKey}' (key '{IdempotencyKey}') failed; the claim stays until " +
+            "its lease expires. The handler's original exception is rethrown, not this one.")]
+    private static partial void LogReleaseFailed(ILogger logger, Exception exception, string operationKey, string idempotencyKey);
+
     /// <summary>Creates the behavior with its store, scoped context, clock, options, and logger dependencies.</summary>
     public IdempotencyBehavior(
         IIdempotencyStore store,
@@ -85,6 +95,7 @@ public sealed partial class IdempotencyBehavior<TRequest, TResponse> : IPipeline
             ExpiresAt: now + command.RetentionPeriod);
 
         IdempotencyClaimResult result = await _store.TryClaimAsync(claim, cancellationToken).ConfigureAwait(false);
+        Guid claimToken = result.ClaimToken ?? Guid.Empty;
 
         if (!result.Claimed)
         {
@@ -117,17 +128,18 @@ public sealed partial class IdempotencyBehavior<TRequest, TResponse> : IPipeline
                 return Fail(IdempotencyErrors.KeyReuseMismatch);
             }
 
-            bool takenOver = await _store
+            Guid? takeoverToken = await _store
                 .TryTakeOverAsync(command.OperationKey, key, hash, now + _options.Value.LeaseDuration, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (!takenOver)
+            if (takeoverToken is null)
             {
                 // Lost the takeover race: someone else re-leased it a moment ago.
                 _context.SetRetryAfter(_options.Value.LeaseDuration);
                 return Fail(IdempotencyErrors.OperationInProgress);
             }
 
+            claimToken = takeoverToken.Value;
             LogTakeover(_logger, command.OperationKey, key);
         }
 
@@ -143,8 +155,21 @@ public sealed partial class IdempotencyBehavior<TRequest, TResponse> : IPipeline
                 ? IdempotencyRecordStatus.Completed
                 : IdempotencyRecordStatus.FailedDeterministic;
 
-            await _store.MarkFinishedAsync(command.OperationKey, key, finalStatus, responseStatus, body, cancellationToken)
+            bool marked = await _store
+                .MarkFinishedAsync(command.OperationKey, key, claimToken, finalStatus, responseStatus, body, cancellationToken)
                 .ConfigureAwait(false);
+
+            if (!marked)
+            {
+                // The fence tripped: this attempt outlived its lease and someone else took the
+                // claim over (new token). The other holder owns the outcome, so this attempt's
+                // business effect must not commit — roll it back and report the conflict.
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                LogLeaseLostAtFinish(_logger, command.OperationKey, key);
+                _context.SetRetryAfter(_options.Value.LeaseDuration);
+                return Fail(IdempotencyErrors.OperationInProgress);
+            }
+
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             return response;
@@ -152,7 +177,20 @@ public sealed partial class IdempotencyBehavior<TRequest, TResponse> : IPipeline
         catch
         {
             await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            await _store.ReleaseClaimAsync(command.OperationKey, key, CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                // False (claim taken over, not ours to delete anymore) is fine — the point is
+                // only that a still-owned claim does not outlive a transient failure.
+                await _store.ReleaseClaimAsync(command.OperationKey, key, claimToken, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception releaseException)
+            {
+                // Never mask the handler's original exception with a release failure; the claim
+                // simply stays until its lease expires and a retry takes it over.
+                LogReleaseFailed(_logger, releaseException, command.OperationKey, key);
+            }
+
             throw;
         }
     }

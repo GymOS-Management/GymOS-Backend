@@ -20,6 +20,7 @@ internal sealed class IdempotencyRecordConfiguration : IEntityTypeConfiguration<
         builder.Property(record => record.OperationKey).HasMaxLength(100).IsRequired();
         builder.Property(record => record.IdempotencyKey).HasMaxLength(200).IsRequired();
         builder.Property(record => record.RequestHash).HasMaxLength(64).IsFixedLength().IsRequired();
+        builder.Property(record => record.ClaimToken).IsRequired();
         builder.Property(record => record.ResponseBody).HasColumnType("jsonb");
         builder.HasIndex(record => record.ExpiresAt).HasDatabaseName("ix_idempotency_records_expires_at");
     }
