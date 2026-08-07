@@ -579,6 +579,10 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
   startup** — the same interim shape as `AuditLogPartitionMaintainer` above. Both are startup-time
   stand-ins for a real schedule; fold both into the M3.4 retention job when the job runner lands
   rather than growing two separate startup sweeps.
+- **AD-39 key scope is (tenant, operation, key) — caller-chosen keys are cross-user**: two users
+  picking the same key for the same operation collide (spurious 422, or a replay of the other
+  caller's response when the hashes match). Per-user scoping would need a superseding ADR;
+  mitigated by the API_STANDARDS §10 guidance that keys SHOULD be UUIDs.
 - **Permission resolution costs one query per authenticated request** (memoized per request).
   Deliberate: it buys immediate revocation. The cache-with-invalidation version belongs with
   the AD-45 settings/cache work, and should not be added before it is measured.
