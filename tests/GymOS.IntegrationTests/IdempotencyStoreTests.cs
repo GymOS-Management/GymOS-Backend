@@ -173,6 +173,28 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_expired_record_behaves_as_absent_so_a_new_claim_wins()
+    {
+        await using AppDbContext context = CreateContext();
+        var store = new IdempotencyStore(context);
+
+        // A Completed record whose retention has already elapsed (expires_at in the past).
+        IdempotencyClaimRequest expiredRetention = Claim("k-expired") with
+        {
+            ExpiresAt = Clock.UtcNow.AddMinutes(-1),
+        };
+        IdempotencyClaimResult first = await store.TryClaimAsync(expiredRetention, CancellationToken.None);
+        Assert.True(await store.MarkFinishedAsync("test.op", "k-expired", first.ClaimToken!.Value,
+            IdempotencyRecordStatus.Completed, 0, """{"old":true}""", CancellationToken.None));
+
+        // AD-39: an expired key behaves as a brand-new request — not a replay of the stale outcome.
+        IdempotencyClaimResult again = await store.TryClaimAsync(Claim("k-expired"), CancellationToken.None);
+
+        Assert.True(again.Claimed);
+        Assert.NotNull(again.ClaimToken);
+    }
+
+    [Fact]
     public async Task Claim_unique_index_exists_with_coalesced_tenant()
     {
         await using var connection = new NpgsqlConnection(_connectionString);

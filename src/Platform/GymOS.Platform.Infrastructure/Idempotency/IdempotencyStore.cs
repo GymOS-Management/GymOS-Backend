@@ -31,6 +31,9 @@ internal sealed class IdempotencyStore : IIdempotencyStore
     /// is nothing to report as <c>Existing</c>, and the honest outcome is the same as if this
     /// call had run a moment later and won the INSERT outright, so it retries the INSERT
     /// instead of surfacing an error for a state that already resolved itself.
+    /// The same loop absorbs retention expiry: a conflicting row past <c>expires_at</c> is
+    /// AD-39's "expired key behaves as a brand-new request", so it is deleted (dead regardless
+    /// of owner — no token check needed) and the INSERT retried.
     /// </summary>
     public async Task<IdempotencyClaimResult> TryClaimAsync(
         IdempotencyClaimRequest request, CancellationToken cancellationToken)
@@ -56,6 +59,24 @@ internal sealed class IdempotencyStore : IIdempotencyStore
             if (inserted == 1)
             {
                 return new IdempotencyClaimResult(Claimed: true, Existing: null, ClaimToken: claimToken);
+            }
+
+            // An expired record behaves as a brand-new request (AD-39 retention): if the row
+            // that blocked the INSERT is past its retention expiry, it is dead regardless of
+            // who owns it (no token check), so delete it and retry the claim. now() is the
+            // database clock — the same clock the purge maintainer's SQL compares against.
+            int expiredDeleted = await _dbContext.Database.ExecuteSqlAsync(
+                $"""
+                 DELETE FROM platform.idempotency_records
+                  WHERE operation_key = {request.OperationKey}
+                    AND idempotency_key = {request.IdempotencyKey}
+                    AND expires_at <= now()
+                 """,
+                cancellationToken);
+
+            if (expiredDeleted == 1)
+            {
+                continue;
             }
 
             IdempotencyRecord? existing = await _dbContext.Set<IdempotencyRecord>()

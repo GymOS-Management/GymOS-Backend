@@ -57,7 +57,11 @@ public interface IIdempotencyTransaction : IAsyncDisposable
 /// </summary>
 public interface IIdempotencyStore
 {
-    /// <summary>Atomic INSERT … ON CONFLICT DO NOTHING; commits immediately (never inside a transaction).</summary>
+    /// <summary>
+    /// Atomic INSERT … ON CONFLICT DO NOTHING; commits immediately (never inside a transaction).
+    /// A conflicting row past its retention expiry is treated as absent (deleted and re-claimed),
+    /// so an expired key behaves as a brand-new request, per AD-39.
+    /// </summary>
     Task<IdempotencyClaimResult> TryClaimAsync(IdempotencyClaimRequest request, CancellationToken cancellationToken);
 
     /// <summary>
