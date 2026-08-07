@@ -53,8 +53,9 @@ Migration `AddIdempotencyRecords` creates `platform.idempotency_records`:
 | `operation_key varchar` | from the command |
 | `idempotency_key varchar` | from the header |
 | `request_hash char(64)` | SHA-256 hex, see §4 |
-| `status smallint` | InProgress=1, Completed=2, FailedDeterministic=3 |
-| `response_status smallint` | outcome kind for host mapping |
+| `claim_token uuid` | fencing token naming the current claim holder: set on claim, replaced on takeover; MarkFinished/ReleaseClaim are gated on it so a stale holder that lost its lease can neither overwrite nor delete the live owner's record |
+| `status integer` | InProgress=1, Completed=2, FailedDeterministic=3 (EF's default int mapping; a smallint would save nothing that matters here) |
+| `response_status integer` | outcome kind for host mapping |
 | `response_body jsonb` | serialized handler outcome (DTO or business-error), see §4 |
 | `lease_expires_at timestamptz` | crash takeover, see below |
 | `created_at / expires_at timestamptz` | `expires_at = created_at + RetentionPeriod` |

@@ -49,6 +49,9 @@ public static class ResultExtensions
         // "Send the precondition and try again" — distinct from 409, which means "you sent one and
         // it was stale". Telling those apart is the difference between a client bug and a race.
         ["concurrency.version_required"] = StatusCodes.Status428PreconditionRequired,
+        // AD-39: key reuse with a different body is a client bug, not a state conflict — 422
+        // distinguishes it from the 409 a concurrent duplicate receives.
+        ["idempotency.key_reuse_mismatch"] = StatusCodes.Status422UnprocessableEntity,
     };
 
     private static int StatusCodeFor(ErrorKind kind) => kind switch
