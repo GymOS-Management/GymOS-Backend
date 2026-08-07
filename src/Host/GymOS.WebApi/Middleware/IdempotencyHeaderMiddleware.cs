@@ -1,4 +1,5 @@
 using GymOS.BuildingBlocks.Application.Idempotency;
+using Microsoft.Extensions.Primitives;
 
 namespace GymOS.WebApi.Middleware;
 
@@ -13,11 +14,17 @@ public static class IdempotencyHeaders
 }
 
 /// <summary>
-/// The owning edge for IdempotencyContext: copies the caller's Idempotency-Key inward and, on
-/// the way out, stamps Idempotency-Replayed / Retry-After from what the pipeline recorded.
+/// The owning edge for IdempotencyContext: validates and copies the caller's Idempotency-Key
+/// inward and, on the way out, stamps Idempotency-Replayed / Retry-After from what the pipeline
+/// recorded. A malformed key (repeated header, or longer than the record column) is rejected
+/// here with 400 <c>idempotency.key_invalid</c> — before it can 500 against the varchar(200)
+/// column or silently pick one of two conflicting values.
 /// </summary>
 public sealed class IdempotencyHeaderMiddleware
 {
+    /// <summary>Maximum accepted key length — the record table's idempotency_key is varchar(200).</summary>
+    public const int MaxKeyLength = 200;
+
     private readonly RequestDelegate _next;
 
     /// <summary>Creates the middleware with the next delegate in the pipeline.</summary>
@@ -29,7 +36,26 @@ public sealed class IdempotencyHeaderMiddleware
         ArgumentNullException.ThrowIfNull(httpContext);
         ArgumentNullException.ThrowIfNull(idempotencyContext);
 
-        string? key = httpContext.Request.Headers[IdempotencyHeaders.HeaderName].FirstOrDefault();
+        StringValues values = httpContext.Request.Headers[IdempotencyHeaders.HeaderName];
+
+        if (values.Count > 1)
+        {
+            await RejectInvalidKeyAsync(httpContext,
+                "The Idempotency-Key header appeared more than once. Send exactly one value.")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        string? key = values.FirstOrDefault();
+
+        if (key is not null && key.Length > MaxKeyLength)
+        {
+            await RejectInvalidKeyAsync(httpContext,
+                $"The Idempotency-Key header exceeds {MaxKeyLength} characters. Use a shorter key — a UUID is recommended.")
+                .ConfigureAwait(false);
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(key))
         {
             idempotencyContext.SetKey(key);
@@ -53,4 +79,20 @@ public sealed class IdempotencyHeaderMiddleware
 
         await _next(httpContext);
     }
+
+    /// <summary>
+    /// Short-circuits with the RFC 7807 shape the rest of the API uses (stable machine code in
+    /// the <c>code</c> extension, per API_STANDARDS §10) — a middleware-level rejection must be
+    /// indistinguishable in shape from a pipeline one.
+    /// </summary>
+    private static Task RejectInvalidKeyAsync(HttpContext httpContext, string detail) =>
+        Results.Problem(
+            title: "Validation failed",
+            detail: detail,
+            statusCode: StatusCodes.Status400BadRequest,
+            extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["code"] = "idempotency.key_invalid",
+            })
+            .ExecuteAsync(httpContext);
 }

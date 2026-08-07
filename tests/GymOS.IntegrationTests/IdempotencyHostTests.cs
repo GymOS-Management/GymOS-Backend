@@ -41,4 +41,33 @@ public sealed class IdempotencyHostTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.False(response.Headers.Contains("Idempotency-Replayed"));
     }
+
+    [Fact]
+    public async Task A_key_longer_than_200_characters_is_rejected_400_key_invalid()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/health/ready", UriKind.Relative));
+        request.Headers.Add("Idempotency-Key", new string('k', 201));
+
+        using HttpResponseMessage response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("idempotency.key_invalid", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_repeated_idempotency_key_header_is_rejected_400_key_invalid()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/health/ready", UriKind.Relative));
+        request.Headers.Add("Idempotency-Key", "first-value");
+        request.Headers.Add("Idempotency-Key", "second-value");
+
+        using HttpResponseMessage response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("idempotency.key_invalid", body, StringComparison.Ordinal);
+    }
 }
