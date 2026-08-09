@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-07 · after the AD-39 idempotency framework
+**Last updated:** 2026-08-09 · mid-M3.3, after tasks 1–2 of 7 (branch `m3.3-invoices`)
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -22,7 +22,7 @@ before resuming work on any machine.
 | **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — **734 tests green**, verified live · ⬅ **awaiting review** |
 | **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
 | **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
-| M3.3 — invoices | unblocked by AD-39 above — next increment |
+| **M3.3 — invoices** | 🚧 **in progress on branch `m3.3-invoices`** — tasks 1–2 of 7 done, **997 tests green**. Resume at task 3. See "M3.3 in progress" below. |
 | M3.4 — renewal/overdue jobs | **blocked**: a job runner (see below); nothing yet runs work on a schedule |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
@@ -492,6 +492,85 @@ theory that enforces this live against an in-test-assembly exemplar until then.
 5. **`IdempotencyRecordMaintainer`** purges expired records at startup — an interim owner of
    retention, same shape as `AuditLogPartitionMaintainer` (M1.3). Both fold into the M3.4 retention
    job once it exists (see Known open items).
+
+## M3.3 in progress — where to pick it up
+
+**Branch `m3.3-invoices`** (pushed, not merged; `main` is untouched). Two of seven tasks done, each its
+own commit. Design: `docs/superpowers/specs/2026-08-08-invoices-design.md`. Plan:
+`docs/superpowers/plans/2026-08-08-invoices.md` — **its checkboxes are ticked through task 2 and each
+finished task carries an "As built" block recording what actually happened.** Read those blocks before
+task 3; two of them change what task 3 has to do.
+
+| Task | State |
+|---|---|
+| 1 — Invoice domain (aggregate, transition table, rules, events) | ✅ `dbae5dc` |
+| 2 — proration calculator + scheduled plan change | ✅ `3936aba` |
+| **3 — persistence (EF config, `AddInvoices` migration, repository, number generator)** | ⬅ **next, not started** |
+| 4 — issuing on assignment / trial conversion / plan change | not started |
+| 5 — mark-paid (first production `IIdempotentCommand`), void, queries | not started |
+| 6 — infrastructure queries + endpoints + OpenAPI snapshot | not started |
+| 7 — docs, exemplar cleanup, full verification | not started |
+
+**Test counts after task 2** — every project run complete, no `Aborted`, 0 build warnings:
+SharedKernel 126 · BuildingBlocks 42 · Architecture **135** · Domain **325** · Application 147 ·
+Infrastructure 67 · Integration 155 = **997** (was 902). Integration ran 4m45s against real PostgreSQL,
+so the new migration is proven applied, not just modelled.
+
+### Two things task 3 must know before starting
+
+1. **The `pending_*` columns are already done — do not redo them.** Task 3's file list says to modify
+   `GymSubscriptionConfiguration` and include those columns in `AddInvoices`. That work moved into task 2
+   because it had to: EF discovers `PendingChange` as a navigation the moment the property exists, and the
+   model then fails to build (*"The entity type 'PendingPlanChange' requires a primary key"*), taking three
+   Infrastructure tests down. The `OwnsOne` block and migration **`AddPendingPlanChange`** are committed.
+   `AddInvoices` should contain **only** the invoice tables, `platform.next_invoice_number`, and the
+   single-currency CHECK.
+2. **R4 is already settled — task 3's `TaxRate` decision tree is spent.** `MoneyTypeTests` matches "tax"
+   anywhere in a member name, so `Invoice.TaxRate` and `Invoice.Issue` are on the exemption list with the
+   reason "a rate is a scalar multiplier, not an amount". Nothing left to decide.
+
+### Decisions taken in tasks 1–2
+
+- **Tax rounds to the currency's minor units**, via `Subtotal.Multiply(rate, RoundingPolicy.HalfEven)` —
+  not the plan's `Math.Round(…, 2, …)`, which truncates KWD (3 minor units) and inflates JPY (0). Same
+  answer at today's 0% rate; both currencies are pinned by tests. **Task 3's `tax_rate numeric(5,4)` column
+  is unaffected**, but the amount columns must keep `MoneyConventions`' `numeric(14,4)`.
+- **`Draft` and `Overdue` are declared but unreachable in both directions**, asserted by the 5×5 matrix.
+  Draft waits on manual invoicing, Overdue on the M3.4 job; until then overdue is derived
+  (`Invoice.IsOverdue`), the M3.2 trial-expiry precedent. Whoever gives either a producer adds its
+  transitions deliberately.
+- **A negative invoice total throws.** The design routes a net credit to a scheduled plan change, so a
+  negative total is always a caller defect — there is no credit-note document to carry one.
+- **Line quantity must be 1**, refused with a message naming the constraint. Forces the first producer of
+  quantity > 1 to add the multiply-with-a-rounding-policy path rather than inherit `Amount = UnitPrice`.
+- **`Proration.Compute` takes both day counts from one calculation**, which is what makes the net's sign
+  stable — and the sign is the entire upgrade/downgrade policy. Returns null when no days remain; clamps
+  `daysUsed` so a backdated request cannot produce a negative ratio (which `Allocate` refuses).
+- **The event-name worry written into task 2 was unfounded.** `EventNamesUseThePastTense` requires *any*
+  underscore-separated word to be past tense, not every one, and `cancellation_scheduled` was already the
+  precedent — so `gymos.platform.subscription.plan_change_scheduled` passes unchanged.
+- **`CancelPendingPlanChange` raises no event**, unlike `WithdrawCancellation`: nothing acts on a scheduled
+  change before the renewal job applies it, so there is no consumer to inform.
+- **`PendingPlanChange` is exempt from the concurrency-token rule** — EF reports owned types from
+  `GetEntityTypes()`, and it lives in the subscription's row, which its `xmin` already guards.
+- **No FK on `pending_plan_id` / `pending_plan_price_id`** — EF cannot express one from inside an owned
+  type without raw SQL. Low risk while plans are undeletable (M3.1 makes `DELETE` a 405); revisit if that
+  ever changes.
+- Extra domain guards added beyond the plan, each with a test: empty gym/subscription id, blank invoice
+  number, due-before-issued, negative tax rate, blank or over-long line description
+  (`InvoiceLine.MaximumDescriptionLength = 500` — **task 3's EF config should reuse that constant**).
+- Test files are **flat** in `tests/GymOS.Platform.Domain.UnitTests/`, matching that project; the plan's
+  `Invoices/` and `Subscriptions/` subfolders do not exist and should not be created.
+
+### Environment notes from this session
+
+- `dotnet ef migrations add` worked with the dev stack already up (`gymos-postgres` + `gymos-api`
+  containers healthy); no host `dotnet run` was needed and nothing locked the build output.
+- **The test host did not crash once** across ~10 full-project runs, including the 155-test integration
+  suite. The `0x80131506` warning below still stands, but it did not reproduce today.
+- **PowerShell here-strings (`@'…'@`) break `git commit -m` when the message contains double quotes** —
+  the argument terminates early and git reads the rest as pathspecs. Write the message to a file and use
+  `git commit -F` for anything with quotes in it.
 
 ## Standing rules (non-negotiable, enforced)
 
