@@ -1080,6 +1080,49 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasForeignKey("PlanPriceId")
                         .OnDelete(DeleteBehavior.SetNull)
                         .HasConstraintName("fk_gym_subscriptions_plan_price_plan_price_id");
+
+                    b.OwnsOne("GymOS.Platform.Domain.Subscriptions.PendingPlanChange", "PendingChange", b1 =>
+                        {
+                            b1.Property<Guid>("GymSubscriptionId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("id");
+
+                            b1.Property<decimal>("Amount")
+                                .HasColumnType("numeric(14,4)")
+                                .HasColumnName("pending_price_amount");
+
+                            b1.Property<short>("BillingCycle")
+                                .HasColumnType("smallint")
+                                .HasColumnName("pending_billing_cycle");
+
+                            b1.Property<DateTimeOffset>("ChangeAtUtc")
+                                .HasColumnType("timestamp with time zone")
+                                .HasColumnName("pending_change_at_utc");
+
+                            b1.Property<string>("CurrencyCode")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("pending_price_currency");
+
+                            b1.Property<Guid>("PlanId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("pending_plan_id");
+
+                            b1.Property<Guid?>("PlanPriceId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("pending_plan_price_id");
+
+                            b1.HasKey("GymSubscriptionId");
+
+                            b1.ToTable("gym_subscriptions", "platform");
+
+                            b1.WithOwner()
+                                .HasForeignKey("GymSubscriptionId")
+                                .HasConstraintName("fk_gym_subscriptions_gym_subscriptions_id");
+                        });
+
+                    b.Navigation("PendingChange");
                 });
 
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanPrice", b =>
