@@ -173,21 +173,49 @@ internal sealed class AssignSubscriptionCommandHandler
                     return Result.Failure<SubscriptionDetail>(SubscriptionErrors.PlanInactive(plan.Code));
                 }
 
-                // Same plan at the same terms is not a change — it is either the gesture that cancels
-                // a scheduled one, or a mistake worth naming. Terms are compared by value rather than
-                // by price-row id, so a negotiated subscription (null price id) answers the same way.
+                // Terms are compared by value rather than by price-row id, so a negotiated
+                // subscription (null price id) answers the same way.
                 bool sameTerms = existing.PlanId == plan.Id
                     && existing.BillingCycle == terms.Value.BillingCycle
                     && existing.Price == terms.Value.Price;
 
                 if (sameTerms)
                 {
-                    if (existing.PendingChange is null)
-                    {
-                        return Result.Failure<SubscriptionDetail>(SubscriptionErrors.ChangeToSamePlan);
-                    }
-
+                    // Idempotent on purpose — this is a PUT, and a retry after a lost response must
+                    // succeed. "Put me on the terms I already have" leaves the subscription with no
+                    // pending change: cancelling one if scheduled, changing nothing otherwise.
                     existing.CancelPendingPlanChange();
+                }
+                else if (existing.Status == SubscriptionStatus.Trialing)
+                {
+                    // Nothing has been paid, so there is nothing to prorate and nothing to credit.
+                    // The trial continues on the new plan, and conversion bills that plan's full
+                    // first period — trials bill at conversion, never before.
+                    existing.ChangePlan(plan, terms.Value);
+                }
+                else if (_clock.UtcNow >= existing.CurrentPeriodEndUtc)
+                {
+                    // The paid period is over, so there is no remainder to price: apply now, bill
+                    // nothing. Scheduling here would date the change in the past and park it until
+                    // a job that does not exist yet — an admin resolving a lapsed account needs the
+                    // change to be real when the API says success.
+                    existing.ChangePlan(plan, terms.Value);
+                }
+                else if (existing.Status == SubscriptionStatus.PastDue)
+                {
+                    // The current period is not settled: crediting "unused time" the gym never paid
+                    // for would be wrong, and stacking a proration charge on top of an unpaid
+                    // invoice would be worse. The change waits at the period boundary, where no
+                    // proration arises.
+                    existing.SchedulePlanChange(plan, terms.Value, existing.CurrentPeriodEndUtc);
+                }
+                else if (existing.BillingCycle != terms.Value.BillingCycle)
+                {
+                    // Cross-cycle proration is ill-defined: the two prices buy different lengths of
+                    // time, and allocating an annual price over the days of a monthly period would
+                    // charge a year's money for weeks of service. At the period boundary no
+                    // proration arises, so that is where a cycle changes.
+                    existing.SchedulePlanChange(plan, terms.Value, existing.CurrentPeriodEndUtc);
                 }
                 else
                 {
@@ -204,6 +232,9 @@ internal sealed class AssignSubscriptionCommandHandler
 
                     if (proration is null || proration.Net.IsNegative)
                     {
+                        // Null is nearly unreachable here — the expired-period branch above catches
+                        // an ended period — but a sub-day remainder rounds to zero days, and
+                        // scheduling at the imminent boundary is the honest answer for it too.
                         existing.SchedulePlanChange(plan, terms.Value, existing.CurrentPeriodEndUtc);
                     }
                     else

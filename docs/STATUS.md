@@ -22,7 +22,7 @@ before resuming work on any machine.
 | **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — **734 tests green**, verified live · ⬅ **awaiting review** |
 | **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
 | **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
-| **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ complete on branch `m3.3-invoices` — **1038 tests green**, verified live incl. idempotent replay · ⬅ **awaiting review, not merged** |
+| **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ complete on branch `m3.3-invoices` — **1049 tests green**, verified live incl. idempotent replay, **post-review fixes applied (10/10 findings)** · ⬅ **ready to merge on approval** |
 | M3.4 — renewal/overdue jobs | **blocked**: a job runner (see below); nothing yet runs work on a schedule |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
@@ -511,11 +511,16 @@ commit. Design: `docs/superpowers/specs/2026-08-08-invoices-design.md`. Plan:
 | 6 — infrastructure queries + endpoints + OpenAPI snapshot (5 new operations only) | ✅ `f7ae208` |
 | 7 — docs, exemplar cleanup, full verification, live idempotent-replay proof | ✅ (this commit) |
 
-**Test counts after task 7** — every project run complete, no `Aborted`, 0 build warnings:
-SharedKernel 126 · BuildingBlocks 42 · Architecture **133** · Domain 325 · Application **173** ·
-Infrastructure **67** · Integration **172** = **1038** (was 997). Architecture went down by two:
-removing the two seeded idempotency exemplars deletes four theory rows while the real
-`MarkInvoicePaidCommand` adds two.
+**Test counts after the review fixes** — every project run complete, no `Aborted`, 0 build warnings:
+SharedKernel 126 · BuildingBlocks 42 · Architecture **133** · Domain **326** · Application **181** ·
+Infrastructure **67** · Integration **174** = **1049** (was 997 after task 2). Architecture went down
+by two versus task 2: removing the two seeded idempotency exemplars deletes four theory rows while
+the real `MarkInvoicePaidCommand` adds two.
+
+**Unrelated latent failure fixed in passing:** `IdempotencyPipelineTests` pinned a `FakeClock` at
+2026-08-07 while the store compares expiry against PostgreSQL's real `now()`; with 72h retention,
+every stored outcome was born expired once real time passed 2026-08-10 12:00 UTC and all four tests
+failed on any checkout. They now use `SystemClock`, like `IdempotencyStoreTests` always did.
 
 ### Decisions taken in tasks 3–7
 
@@ -524,12 +529,12 @@ removing the two seeded idempotency exemplars deletes four theory rows while the
   window (PostgreSQL can surface it as a catalog unique violation). The function catches
   `duplicate_object`/`unique_violation` and proceeds — the loser uses the winner's sequence. The
   persistence test runs its 8 parallel callers **cold** so the guard itself is exercised.
-- **"Change to same plan" is keyed on plan *and terms*, not plan id alone.** The plan text keyed the
-  refusal on plan id, but that would forbid a same-plan cycle change (monthly → yearly) — which is
-  exactly the adjustment `AGymAlreadyOnAWithdrawnPlan_CanChangeItsTerms` protects. Same plan + same
-  cycle + same price → refusal (`subscriptions.change_to_same_plan`) or pending-cancellation; anything
-  else takes the proration path. That test was updated to change cycle for real (it previously
-  re-sent identical terms, which is now the refusal by design).
+- **"Same plan" is keyed on plan *and terms*, not plan id alone** — plan-id-only keying would forbid
+  a same-plan cycle change (monthly → yearly), the adjustment
+  `AGymAlreadyOnAWithdrawnPlan_CanChangeItsTerms` protects. **Post-review:** re-sending the current
+  terms is an idempotent **no-op success** (the route is a PUT; retry-after-timeout must succeed),
+  not the `change_to_same_plan` refusal originally built — that error is gone. With a pending change
+  it is still the cancellation gesture.
 - **`InvoiceIssuer` only Adds; the calling handler saves** — invoice and subscription change commit in
   one transaction (`SuperAdminGuard` precedent). `SubscriptionStateCommandHandlers.MutateAsync` gained
   an async-mutate overload so trial conversion can load the plan and issue inside the same flow.
@@ -551,6 +556,29 @@ removing the two seeded idempotency exemplars deletes four theory rows while the
   missing key → 400 `idempotency.key_required`; replay → byte-identical body + `Idempotency-Replayed: true`;
   reused key with different body → 422 `idempotency.key_reuse_mismatch`; deterministic failure
   (`invoices.already_paid`) stored and replayed under its own key.
+
+### Post-plan review fixes (workflow review, 10 confirmed findings, all fixed)
+
+A high-effort adversarial review before merge confirmed ten findings — six of them real money bugs
+concentrated in the plan-change path. All are fixed with a pinning test each:
+
+- **Plan changes are gated by state before proration runs** (the decision tree in
+  `docs/BusinessRules/Invoices.md`): Trialing → change now, bill nothing (was: prorated a period the
+  gym never paid for, then double-billed at conversion); period already ended → change now, bill
+  nothing (was: parked on a pending change dated in the past that no job applies); PastDue →
+  scheduled at period end (was: credited unpaid time); cross-cycle → scheduled at period end (was:
+  allocated e.g. an annual price over a monthly period, a ~12× overcharge).
+- **`GymSubscription.ChangePlan` clears `PendingChange`** — an applied change supersedes a scheduled
+  one, or the renewal job would revert a paid upgrade.
+- **Same-terms re-assign is an idempotent no-op success**; `subscriptions.change_to_same_plan`
+  removed (PUT retry safety, restoring main's behavior).
+- **PastDue recovery requires the period to be *settled***: mark-paid flips the subscription only
+  when no other open invoice of the current period remains
+  (`IInvoiceRepository.AnyOtherOpenForSubscriptionAsync` — `InvoiceStatusTransitions.IsOpen`'s first
+  consumer).
+- **`ListForGymAsync` pages until complete** (was: silently truncated at 200), **invoice search
+  escapes LIKE metacharacters**, **the status filter validates against enum names** (Enum.TryParse
+  accepts any integer string), and the **overdue predicate has one definition** in `InvoiceQueries`.
 
 ### Decisions taken in tasks 1–2
 

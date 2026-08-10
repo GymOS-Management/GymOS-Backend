@@ -19,6 +19,20 @@ internal sealed class InvoiceRepository : IInvoiceRepository
             .Include(invoice => invoice.Lines)
             .SingleOrDefaultAsync(invoice => invoice.Id == invoiceId, cancellationToken);
 
+    public Task<bool> AnyOtherOpenForSubscriptionAsync(
+        Guid subscriptionId,
+        DateTimeOffset issuedOnOrAfterUtc,
+        Guid excludingInvoiceId,
+        CancellationToken cancellationToken) =>
+        // The two statuses are InvoiceStatusTransitions.IsOpen, inlined because EF cannot
+        // translate a method call — the transition table remains the definition of "open".
+        _dbContext.Set<Invoice>().AnyAsync(
+            invoice => invoice.SubscriptionId == subscriptionId
+                && invoice.Id != excludingInvoiceId
+                && invoice.IssuedAtUtc >= issuedOnOrAfterUtc
+                && (invoice.Status == InvoiceStatus.Issued || invoice.Status == InvoiceStatus.Overdue),
+            cancellationToken);
+
     public void Add(Invoice invoice) => _dbContext.Set<Invoice>().Add(invoice);
 
     public void ExpectVersion(Invoice invoice, uint expectedVersion) =>

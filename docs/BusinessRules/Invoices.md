@@ -28,22 +28,27 @@ subscription change that caused it — so a gym can never be charged for somethi
    charge for the remainder of the period on the new one (days-based, via `Money.Allocate`, so the
    split conserves every cent).
 
-## The net-sign policy
+## The plan-change decision tree
 
-A plan change's proration nets in one of three directions, and each has exactly one behavior:
+Proration only applies when it is well-defined: a **paid, running period, same billing cycle**. The
+handler settles the cheap questions first, in this order:
 
-| Net | Behavior | Why |
+| Case | Behavior | Why |
 |---|---|---|
-| **Positive** (upgrade) | Plan changes now; a two-line proration invoice is issued | Money owed to the platform is billed when the value is delivered. |
-| **Zero** | Plan changes now; **no invoice** | There is nothing to bill, and a €0.00 invoice is noise an accountant has to explain. |
-| **Negative** (downgrade) | Plan does **not** change; the change is **scheduled** for the period end (`pending_*` columns, visible as `pendingChange`) | The gym paid to the period end, and there is no credit-note document to carry a mid-period refund. Never issued as a negative invoice. |
+| **Same plan, same terms** | Succeeds as a **no-op** (cancelling a pending change if one is scheduled) | The route is a PUT: a retry after a lost response must succeed. "Put me on the terms I already have" leaves the subscription with no pending change either way. |
+| **Trialing** | Plan changes now; **no invoice** | Nothing has been paid, so there is nothing to prorate or credit. Conversion bills the new plan's full first period — trials bill at conversion, never before. |
+| **Period already ended** | Plan changes now; **no invoice** | No remainder exists to price, and scheduling would date the change in the past where no job applies it. An admin resolving a lapsed account needs "success" to be true. |
+| **PastDue** | Change is **scheduled** for the period end | The period is not settled: crediting "unused time" the gym never paid for would be wrong, and stacking a charge on an unpaid invoice would be worse. |
+| **Different billing cycle** | Change is **scheduled** for the period end | Cross-cycle proration is ill-defined — the two prices buy different lengths of time. At the boundary no proration arises. |
+| Otherwise, the **net-sign policy**: | | |
+| **Net positive** (upgrade) | Plan changes now; a two-line proration invoice is issued | Money owed to the platform is billed when the value is delivered. |
+| **Net zero** | Plan changes now; **no invoice** | There is nothing to bill, and a €0.00 invoice is noise an accountant has to explain. |
+| **Net negative** (downgrade) | Change is **scheduled** for the period end (`pending_*` columns, visible as `pendingChange`) | The gym paid to the period end, and there is no credit-note document to carry a mid-period refund. Never issued as a negative invoice. |
 
-A scheduled change is **visible, replaceable state**: requesting a third plan replaces it, and
-re-requesting the current plan at the current terms cancels it. Re-requesting the current terms with
-nothing pending is refused (`subscriptions.change_to_same_plan`) rather than treated as a no-op —
-"nothing changed" and "your request did something" must not look identical. A change of *terms* on the
-same plan (monthly → yearly) is a real change and takes the proration path, which is what keeps a gym
-on a withdrawn plan adjustable.
+A scheduled change is **visible, replaceable state**: requesting a third plan replaces it,
+re-requesting the current plan at the current terms cancels it, and a change **applied** now clears
+one automatically — a change applied today always supersedes a change scheduled for later, or the
+renewal job would revert an upgrade the gym just paid for.
 
 ## Numbering
 
@@ -64,9 +69,11 @@ the mechanism changes; the interface (`IInvoiceNumberGenerator`) does not.
   with a different body is a 422 (`idempotency.key_reuse_mismatch`).
 - **The payment reference is required** (`invoices.payment_reference_invalid`, trimmed, ≤ 200 chars):
   "paid" without a reference is an assertion nobody can check months later.
-- **Paying the current period's invoice recovers a past-due subscription** in the same transaction —
-  that is what "the payment arrived" means. Paying an *old* invoice does not: the subscription is past
-  due about the current period, not the archive.
+- **A past-due subscription recovers when a payment *settles the current period*** — the paid invoice
+  belongs to the period **and** no other open invoice of the period remains, checked and flipped in
+  the same transaction. Paying an *old* invoice changes nothing (past due is about the current period,
+  not the archive), and paying a small proration invoice while the period's main invoice is still open
+  does not open the gate either.
 - **Void requires confirmation** — the `X-Confirm-Action` header carrying the invoice number (the M2
   deletion pattern). Voided is a state, not a deletion: the row stays, because "this was withdrawn" is
   exactly what the record must be able to show. A paid invoice cannot be voided.
@@ -85,7 +92,9 @@ the mechanism changes; the interface (`IInvoiceNumberGenerator`) does not.
 | `invoices.already_void` | Conflict | Voiding twice |
 | `invoices.not_payable` | Conflict | Paying anything not in `Issued` |
 | `invoices.confirmation_mismatch` | Conflict | Void without the invoice number in `X-Confirm-Action` |
-| `subscriptions.change_to_same_plan` | Conflict | Re-requesting the current plan and terms with nothing pending |
+
+(Re-requesting the current plan at the current terms is deliberately **not** an error: the assign
+route is a PUT, and an identical retry after a lost response must succeed as a no-op.)
 
 ## Invariants
 

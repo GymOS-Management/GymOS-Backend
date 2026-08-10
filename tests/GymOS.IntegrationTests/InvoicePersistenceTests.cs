@@ -1,8 +1,12 @@
+using GymOS.BuildingBlocks.Application.Models;
+using GymOS.BuildingBlocks.Infrastructure.Time;
+using GymOS.Platform.Application.Invoices.Abstractions;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Invoices;
 using GymOS.Platform.Domain.Subscriptions;
 using GymOS.Platform.Infrastructure.Invoices;
 using GymOS.Platform.Infrastructure.Persistence;
+using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.SharedKernel;
 using GymOS.SharedKernel.Currencies;
 using Microsoft.EntityFrameworkCore;
@@ -229,6 +233,58 @@ public sealed class InvoicePersistenceTests : IAsyncLifetime
         Assert.Equal(19.99m, pending.Amount);
         Assert.Equal("EUR", pending.CurrencyCode);
     }
+
+    [Fact]
+    public async Task The_gym_invoice_list_is_complete_beyond_one_page()
+    {
+        (Guid gymId, Guid subscriptionId) = await SeedGymWithSubscriptionAsync();
+
+        // One more than MaxPageSize (200): a single-page implementation silently truncates here.
+        const int Count = 201;
+        await using (AppDbContext write = CreateContext())
+        {
+            for (int i = 1; i <= Count; i++)
+            {
+                write.Add(IssueTwoLineInvoice(gymId, subscriptionId, $"2026-{100000 + i:D6}"));
+            }
+
+            await write.SaveChangesAsync();
+        }
+
+        await using AppDbContext read = CreateContext();
+        var queries = new InvoiceQueries(read, new SystemClock());
+
+        IReadOnlyList<InvoiceListItem> all = await queries.ListForGymAsync(gymId, CancellationToken.None);
+
+        Assert.Equal(Count, all.Count);
+        Assert.Equal(Count, all.Select(item => item.InvoiceNumber).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Search_matches_like_metacharacters_literally()
+    {
+        (Guid gymId, Guid subscriptionId) = await SeedGymWithSubscriptionAsync();
+        await using (AppDbContext write = CreateContext())
+        {
+            write.Add(IssueTwoLineInvoice(gymId, subscriptionId, "2026-000001"));
+            write.Add(IssueTwoLineInvoice(gymId, subscriptionId, "2026-010101"));
+            await write.SaveChangesAsync();
+        }
+
+        await using AppDbContext read = CreateContext();
+        var queries = new InvoiceQueries(read, new SystemClock());
+
+        // '_' and '%' are LIKE wildcards; unescaped, "0_0" would match both rows and "%" all of them.
+        Assert.Empty((await ListSearchingAsync(queries, "0_0")).Items);
+        Assert.Empty((await ListSearchingAsync(queries, "%")).Items);
+        Assert.Single((await ListSearchingAsync(queries, "01010")).Items);
+    }
+
+    private static Task<PagedResult<InvoiceListItem>> ListSearchingAsync(
+        InvoiceQueries queries, string search) =>
+        queries.ListAsync(
+            new InvoiceListFilter(new PageRequest(1, 50, null, null, search), null, null, null),
+            CancellationToken.None);
 
     [Fact]
     public async Task A_subscription_without_a_pending_change_reads_back_null()

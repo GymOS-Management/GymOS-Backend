@@ -168,6 +168,11 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
 
         Guid fromPlanId = PlanId;
 
+        // A change applied NOW supersedes any change scheduled for LATER. Leaving the schedule in
+        // place would let the renewal job silently revert this change at the period end — a gym
+        // that paid a prorated upgrade would find itself moved back to the plan it left.
+        PendingChange = null;
+
         PlanId = plan.Id;
         PlanPriceId = terms.PlanPriceId;
         BillingCycle = terms.BillingCycle;

@@ -113,9 +113,10 @@ public sealed class InvoiceIssuingTests
             return plan;
         }
 
-        public Task<Result<SubscriptionDetail>> AssignAsync(Guid gymId, Guid planId) =>
+        public Task<Result<SubscriptionDetail>> AssignAsync(
+            Guid gymId, Guid planId, string cycle = "Monthly") =>
             Dispatcher.SendAsync(
-                new AssignSubscriptionCommand(gymId, planId, "Monthly", "EUR", null),
+                new AssignSubscriptionCommand(gymId, planId, cycle, "EUR", null),
                 CancellationToken.None);
     }
 
@@ -278,17 +279,134 @@ public sealed class InvoiceIssuingTests
     }
 
     [Fact]
-    public async Task RequestingTheCurrentPlanWithNothingPending_IsRefused()
+    public async Task RequestingTheCurrentPlanWithNothingPending_SucceedsAsANoOp()
     {
         var context = new Context(Manage);
         Gym gym = context.GivenGym();
         SubscriptionPlan pro = context.GivenPlan("PRO", amount: 20m);
         await context.AssignAsync(gym.Id, pro.Id);
 
+        // This is a PUT: a client whose response was lost to a timeout retries the identical
+        // request, and the retry must succeed. Nothing changes, nothing is billed.
         Result<SubscriptionDetail> result = await context.AssignAsync(gym.Id, pro.Id);
 
-        Assert.True(result.IsFailure);
-        Assert.Equal("subscriptions.change_to_same_plan", result.Error!.Code);
+        Assert.True(result.IsSuccess);
+        Assert.Equal(pro.Id, result.Value.PlanId);
+        Assert.Null(result.Value.PendingChange);
+        Assert.Single(context.Invoices.Invoices);
+    }
+
+    [Fact]
+    public async Task ChangingPlanDuringATrial_SwapsThePlanAndBillsNothing()
+    {
+        var context = new Context(Manage);
+        Gym gym = context.GivenGym();
+        SubscriptionPlan basic = context.GivenPlan("BASIC", trialDays: 14, amount: 10m);
+        SubscriptionPlan pro = context.GivenPlan("PRO", amount: 20m);
+        await context.AssignAsync(gym.Id, basic.Id);
+        context.Clock.Advance(TimeSpan.FromDays(5));
+
+        Result<SubscriptionDetail> result = await context.AssignAsync(gym.Id, pro.Id);
+
+        // Nothing has been paid, so there is nothing to prorate: the trial continues on the new
+        // plan, and conversion bills that plan's full first period.
+        Assert.True(result.IsSuccess);
+        Assert.Equal(pro.Id, result.Value.PlanId);
+        Assert.Equal("Trialing", result.Value.Status);
+        Assert.Empty(context.Invoices.Invoices);
+
+        await context.Dispatcher.SendAsync(new ConvertTrialCommand(gym.Id, null), CancellationToken.None);
+        Invoice invoice = Assert.Single(context.Invoices.Invoices);
+        Assert.Equal(Money.Of(20m, Currency.Euro), invoice.Total);
+    }
+
+    [Fact]
+    public async Task UpgradingAfterASheduledDowngrade_ClearsThePending()
+    {
+        var context = new Context(Manage);
+        Gym gym = context.GivenGym();
+        SubscriptionPlan pro = context.GivenPlan("PRO", amount: 20m);
+        SubscriptionPlan basic = context.GivenPlan("BASIC", amount: 10m);
+        SubscriptionPlan elite = context.GivenPlan("ELITE", amount: 40m);
+        await context.AssignAsync(gym.Id, pro.Id);
+        context.Clock.Advance(TimeSpan.FromDays(10));
+        await context.AssignAsync(gym.Id, basic.Id); // scheduled downgrade
+
+        Result<SubscriptionDetail> result = await context.AssignAsync(gym.Id, elite.Id);
+
+        // The paid upgrade supersedes the scheduled downgrade — leaving it queued would let the
+        // renewal job revert a change the gym just paid a proration invoice for.
+        Assert.True(result.IsSuccess);
+        Assert.Equal(elite.Id, result.Value.PlanId);
+        Assert.Null(result.Value.PendingChange);
+        GymSubscription subscription = Assert.Single(context.Subscriptions.Subscriptions);
+        Assert.Null(subscription.PendingChange);
+        Assert.Equal(2, context.Invoices.Invoices.Count); // assignment + upgrade proration
+    }
+
+    [Fact]
+    public async Task ChangingBillingCycle_IsScheduledRatherThanProrated()
+    {
+        var context = new Context(Manage);
+        Gym gym = context.GivenGym();
+        SubscriptionPlan monthly = context.GivenPlan("MONTHLY", amount: 50m);
+        SubscriptionPlan yearly = context.GivenPlan("YEARLY", amount: 999m);
+        yearly.SetPrice(BillingCycle.Yearly, Money.Of(480m, Currency.Euro));
+        await context.AssignAsync(gym.Id, monthly.Id);
+        context.Clock.Advance(TimeSpan.FromDays(10));
+
+        Result<SubscriptionDetail> result = await context.AssignAsync(gym.Id, yearly.Id, "Yearly");
+
+        // Cross-cycle proration is ill-defined — allocating an annual price over a monthly period
+        // charges a year's money for weeks of service — so the cycle changes at the boundary.
+        Assert.True(result.IsSuccess);
+        Assert.Equal(monthly.Id, result.Value.PlanId);
+        PendingPlanChangeDetail pending = Assert.IsType<PendingPlanChangeDetail>(result.Value.PendingChange);
+        Assert.Equal(yearly.Id, pending.PlanId);
+        Assert.Equal("Yearly", pending.BillingCycle);
+        Assert.Single(context.Invoices.Invoices); // only the original assignment invoice
+    }
+
+    [Fact]
+    public async Task ChangingPlanAfterThePeriodEnded_AppliesImmediatelyAndBillsNothing()
+    {
+        var context = new Context(Manage);
+        Gym gym = context.GivenGym();
+        SubscriptionPlan pro = context.GivenPlan("PRO", amount: 20m);
+        SubscriptionPlan basic = context.GivenPlan("BASIC", amount: 10m);
+        await context.AssignAsync(gym.Id, pro.Id);
+        context.Clock.Advance(TimeSpan.FromDays(45)); // past the monthly period end
+
+        Result<SubscriptionDetail> result = await context.AssignAsync(gym.Id, basic.Id);
+
+        // The paid period is over: there is no remainder to price, and scheduling would park the
+        // change on a date in the past that no job applies. The API saying success must mean it.
+        Assert.True(result.IsSuccess);
+        Assert.Equal(basic.Id, result.Value.PlanId);
+        Assert.Null(result.Value.PendingChange);
+        Assert.Single(context.Invoices.Invoices);
+    }
+
+    [Fact]
+    public async Task ChangingPlanWhilePastDue_IsScheduledRatherThanProrated()
+    {
+        var context = new Context(Manage);
+        Gym gym = context.GivenGym();
+        SubscriptionPlan pro = context.GivenPlan("PRO", amount: 20m);
+        SubscriptionPlan elite = context.GivenPlan("ELITE", amount: 40m);
+        await context.AssignAsync(gym.Id, pro.Id);
+        await context.Dispatcher.SendAsync(
+            new SetSubscriptionPaymentStateCommand(gym.Id, PastDue: true, null), CancellationToken.None);
+        context.Clock.Advance(TimeSpan.FromDays(10));
+
+        Result<SubscriptionDetail> result = await context.AssignAsync(gym.Id, elite.Id);
+
+        // The current period is not settled: crediting unpaid time would be wrong, and stacking a
+        // proration charge on an unpaid invoice would be worse. The change waits at the boundary.
+        Assert.True(result.IsSuccess);
+        Assert.Equal(pro.Id, result.Value.PlanId);
+        Assert.NotNull(result.Value.PendingChange);
+        Assert.Single(context.Invoices.Invoices);
     }
 
     [Fact]

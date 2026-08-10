@@ -23,6 +23,17 @@ internal sealed class FakeInvoiceRepository : IInvoiceRepository
     public Task<Invoice?> FindByIdAsync(Guid invoiceId, CancellationToken cancellationToken) =>
         Task.FromResult(_invoices.SingleOrDefault(invoice => invoice.Id == invoiceId));
 
+    public Task<bool> AnyOtherOpenForSubscriptionAsync(
+        Guid subscriptionId,
+        DateTimeOffset issuedOnOrAfterUtc,
+        Guid excludingInvoiceId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(_invoices.Any(invoice =>
+            invoice.SubscriptionId == subscriptionId
+            && invoice.Id != excludingInvoiceId
+            && invoice.IssuedAtUtc >= issuedOnOrAfterUtc
+            && InvoiceStatusTransitions.IsOpen(invoice.Status)));
+
     public void Add(Invoice invoice) => _invoices.Add(invoice);
 
     public void ExpectVersion(Invoice invoice, uint expectedVersion)

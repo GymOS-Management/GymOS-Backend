@@ -246,6 +246,44 @@ public sealed class InvoiceCommandTests
     }
 
     [Fact]
+    public async Task PayingASideInvoice_LeavesPastDueUntilThePeriodIsSettled()
+    {
+        var context = new Context(Manage);
+        Gym gym = context.GivenGym();
+        GymSubscription subscription = context.GivenSubscription(gym, pastDue: true);
+        Invoice main = context.GivenInvoice(gym, subscription, "2026-000001");
+        Invoice proration = context.GivenInvoice(gym, subscription, "2026-000002");
+
+        // Paying the small proration invoice settles nothing while the period's main invoice is
+        // still open — the gym must not escape past-due status for 20 EUR of a 500 EUR debt.
+        Result<InvoiceDetail> paidSide = await context.MarkPaidAsync(proration.Id);
+        Assert.True(paidSide.IsSuccess);
+        Assert.Equal(SubscriptionStatus.PastDue, subscription.Status);
+
+        // Paying the LAST open invoice of the period is what "the payment arrived" means.
+        Result<InvoiceDetail> paidMain = await context.MarkPaidAsync(main.Id);
+        Assert.True(paidMain.IsSuccess);
+        Assert.Equal(SubscriptionStatus.Active, subscription.Status);
+    }
+
+    [Theory]
+    [InlineData("999")]
+    [InlineData("2")]
+    public async Task NumericStatusValues_AreRefusedLikeAnyOtherUnknown(string status)
+    {
+        // Enum.TryParse would accept any integer string; the filter validates against the NAMES,
+        // so a numeric value cannot slip through to a silently empty page.
+        var context = new Context(Read);
+
+        Result<PagedResult<InvoiceListItem>> result = await context.Dispatcher.QueryAsync(
+            new ListInvoicesQuery(new InvoiceListFilter(new PageRequest(), status, null, null)),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("invoices.status_invalid", result.Error!.Code);
+    }
+
+    [Fact]
     public async Task PayingAnOldInvoice_LeavesAPastDueSubscriptionPastDue()
     {
         var context = new Context(Manage);

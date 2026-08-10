@@ -110,6 +110,19 @@ public sealed class PendingPlanChangeTests
     }
 
     [Fact]
+    public void ApplyingAChangeNowSupersedesTheScheduledOne()
+    {
+        GymSubscription subscription = Assigned();
+        subscription.SchedulePlanChange(Plan("STARTER"), Terms(19.99m), subscription.CurrentPeriodEndUtc);
+
+        subscription.ChangePlan(Plan("ELITE"), Terms(99.99m));
+
+        // A change applied now supersedes the one scheduled for later — otherwise the renewal job
+        // would silently revert an upgrade the gym just paid for.
+        Assert.Null(subscription.PendingChange);
+    }
+
+    [Fact]
     public void CancellingClearsThePendingChange()
     {
         GymSubscription subscription = Assigned();

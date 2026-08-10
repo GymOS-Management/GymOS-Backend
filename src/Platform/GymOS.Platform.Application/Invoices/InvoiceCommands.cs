@@ -126,14 +126,21 @@ internal sealed class MarkInvoicePaidCommandHandler
                 Error.Conflict("invoices.invalid_state", exception.Message));
         }
 
-        // Paying the current period's invoice is what "the payment arrived" means, so a past-due
-        // subscription recovers in the same transaction. An *old* invoice settling does not: the
-        // subscription is past due about the current period, not the archive.
+        // A past-due subscription recovers when this payment SETTLES the current period: the
+        // invoice belongs to the period, and no other open invoice of the period remains. Paying
+        // an old invoice changes nothing (past due is about the current period, not the archive),
+        // and paying a small proration invoice while the period's main invoice is still open must
+        // not open the gate either.
         GymSubscription? subscription = await _subscriptions.FindByIdAsync(
             invoice.SubscriptionId, cancellationToken);
         if (subscription is not null
             && subscription.Status == SubscriptionStatus.PastDue
-            && invoice.IssuedAtUtc >= subscription.CurrentPeriodStartUtc)
+            && invoice.IssuedAtUtc >= subscription.CurrentPeriodStartUtc
+            && !await _invoices.AnyOtherOpenForSubscriptionAsync(
+                subscription.Id,
+                subscription.CurrentPeriodStartUtc,
+                invoice.Id,
+                cancellationToken))
         {
             subscription.ResumePayment();
         }
@@ -227,9 +234,11 @@ internal sealed class ListInvoicesQueryHandler
         ArgumentNullException.ThrowIfNull(query);
 
         // An unknown status is a 400 naming the mistake, never a silently empty page — an operator
-        // filtering on a typo should learn about the typo, not conclude nothing matches.
+        // filtering on a typo should learn about the typo, not conclude nothing matches. Matched
+        // against the NAMES, not Enum.TryParse: TryParse accepts any numeric string ("999") even
+        // when no such value is defined, which is exactly the silent empty page this guard bans.
         if (query.Filter.Status is { } status
-            && !Enum.TryParse<InvoiceStatus>(status, ignoreCase: true, out _))
+            && !Enum.GetNames<InvoiceStatus>().Contains(status, StringComparer.OrdinalIgnoreCase))
         {
             return Result.Failure<PagedResult<InvoiceListItem>>(InvoiceErrors.StatusInvalid(status));
         }
