@@ -1,6 +1,7 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-10 · M3.4 complete, reviewed and **merged to `main`** (`bd722bb`)
+**Last updated:** 2026-08-10 · M3.4 merged to `main` (`bd722bb`); API reference (OpenAPI security
+scheme, exposure gate, Scalar UI) built on top — **1116 tests green**
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -24,6 +25,7 @@ before resuming work on any machine.
 | **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
 | **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ **merged to `main`** (`e39eb73`) — reviewed at high effort (10 findings, all fixed), **1049 tests green**, verified live incl. idempotent replay |
 | **M3.4 — job runner + renewal/overdue jobs** (JobHost + advisory locks, RetentionJob, renewal sweep, overdue sweep with auto-PastDue) | ✅ **merged to `main`** (`bd722bb`) — design approved 2026-08-10, reviewed at high effort (10 findings, all fixed), **1101 tests green**, renewal verified live on the first 15-minute tick |
+| **API reference** (OpenAPI bearer scheme + per-operation security, `OpenApi:Enabled` exposure gate, Scalar UI at `/scalar/v1`, browser opens on startup) | ✅ complete — **1116 tests green**, verified live · ⬅ **awaiting review** |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
 | M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
@@ -300,9 +302,9 @@ usual casualties. Verify class by class when it bites:
 dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTests"
 ```
 
-Full counts per project, for checking a run was complete — **re-measured 2026-08-10 at `bd722bb`,
-every project complete with no `Aborted`**: SharedKernel 126 · BuildingBlocks 55 · Architecture 136 ·
-Domain 337 · Application 201 · Infrastructure 67 · Integration 179 = **1101**.
+Full counts per project, for checking a run was complete — **re-measured 2026-08-10, every project
+complete with no `Aborted`**: SharedKernel 126 · BuildingBlocks 55 · Architecture 136 ·
+Domain 337 · Application 201 · Infrastructure 67 · Integration 194 = **1116**.
 
 Capping the test connection pools (above) may also have helped here — the last several full runs completed
 first time, where they previously needed retries.
@@ -696,6 +698,66 @@ concentrated in the plan-change path. All are fixed with a pinning test each:
   the argument terminates early and git reads the rest as pathspecs. Write the message to a file and use
   `git commit -F` for anything with quotes in it.
 
+## API reference (OpenAPI + Scalar) as built
+
+No migration, no domain change — host and contract only. New package: `Scalar.AspNetCore` (MIT,
+host-only; approved in `docs/Engineering/DEPENDENCY_POLICY.md` in the same commit as the
+`ForbiddenPackagesTests` entry, per policy rule 5).
+
+1. **The document now declares authentication.** `components.securitySchemes.bearerAuth` (http /
+   bearer / JWT) plus a per-operation `security` requirement. It previously documented 25 separate
+   `401` responses while never saying how to avoid one — generated clients emitted no auth handling
+   and a UI had nothing to bind an authorize control to. The requirement is derived from each
+   endpoint's own `IAuthorizeData`/`IAllowAnonymous` metadata rather than a hand-kept list, so the
+   document cannot drift from the pipeline. **43 of 45 operations are secured; the two that are not
+   are `POST /auth/login` and `POST /auth/refresh`** — login issues the token, and refresh reads a
+   rotating token from an httpOnly cookie, not the bearer header. Per-operation rather than a root
+   `security` block for exactly that reason.
+2. **Publication is opt-in outside Development** (`OpenApi:Enabled`). `MapOpenApi()` was previously
+   ungated and unauthenticated in *every* environment, publishing a complete map of endpoints,
+   parameters and schemas to anonymous callers. The default is derived from the environment **in
+   code**, not from `appsettings.Development.json`, so a host that loads no settings file — the
+   integration-test host — still behaves like a developer machine. Same opt-in shape as
+   `Security:ForwardedHeaders`.
+3. **Scalar API reference at `/scalar/v1`**, gated by the same flag: a UI that loads but cannot
+   fetch its document is worse than no UI, so the two are mapped and asserted as a pair.
+4. **The browser opens on startup** — `ApiReferenceBrowserLauncher`, an `IHostedService` that opens
+   `/scalar/v1` once the server is listening.
+
+### Decisions and traps found
+
+- **`launchSettings.json`'s `launchBrowser` does not work under `dotnet run`** — it is honoured by
+  Visual Studio, Rider and `dotnet watch` only. Verified, not assumed: with `launchBrowser: true`,
+  `dotnet run` opened nothing (browser process count unchanged). The launcher therefore lives in the
+  application, which covers every launcher with one mechanism, and `launchBrowser` stays **false**
+  so the two cannot open two tabs. Confirmed working: Chrome opened in the same second the host
+  logged `Now listening`.
+- **A server process that opens a browser must be impossible to get by accident.** It is registered
+  only when the reference is published, the environment is Development, and
+  `DOTNET_RUNNING_IN_CONTAINER` is not set — a containerised host has no display. `OpenApi:LaunchBrowser`
+  overrides either way. The decision matrix is pinned by tests, because the registration is the part
+  a later edit could quietly widen.
+- **It does not fire under `WebApplicationFactory`** — `TestServer` binds no address, so the launcher
+  no-ops. Verified by running a test and counting browser processes (delta 0). That is a property of
+  the test host rather than of this code, which is why the registration tests exist.
+- **The OpenAPI snapshot was regenerated deliberately** and the diff read semantically: 45 operations
+  before and after, 43 schemas before and after, **zero** added or removed — the only change is
+  security metadata.
+- **A new integration suite must take an isolated database — this one did not, and the shared suite
+  went flaky.** The first version of `OpenApiExposureTests` booted seven hosts against
+  `PostgresFixture.ConnectionString`, and because `Jobs:Enabled` defaults to **true**, each of them
+  started the renewal and overdue sweeps against the database other suites were asserting on. One
+  full run failed; the next passed. Fixed with `CreateIsolatedDatabaseAsync` plus
+  `Jobs:Enabled=false` and `Database:MigrateOnStartup=false` — the suite routes HTTP and reads no
+  data, so it needs neither. The integration suite also got **40 seconds faster**. Restates the M1.3
+  lesson with a second mechanism: it is not only assertions on row counts that leak between suites,
+  it is background jobs.
+- **Test counts after this work: 1116** (was 1101) — Integration 179 → 194.
+- `Scalar.AspNetCore` **reads** the document and never generates it, so `Microsoft.AspNetCore.OpenApi`
+  remains the single source of the contract and the M1.3 snapshot gate is untouched. Commercial-pivot
+  watch applies (Scalar sells a hosted product beside the MIT library); it is confined to the
+  presentation edge and nothing depends on its types, so replacing it is deleting two calls.
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -736,7 +798,7 @@ To work on it — API on the host, database in a container:
 ```
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d postgres      # PostgreSQL 17 only
-dotnet test GymOS.Backend.slnx     # expect 1101 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 1116 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi

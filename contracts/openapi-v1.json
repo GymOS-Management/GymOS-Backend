@@ -1987,6 +1987,14 @@
         ],
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "JWT",
+        "description": "Access token from POST /api/v1/auth/login, sent as \u0060Authorization: Bearer \u003Ctoken\u003E\u0060. Lifetime is 15 minutes; refresh through POST /api/v1/auth/refresh, which reads its rotating token from an httpOnly cookie rather than this header.",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -2110,6 +2118,9 @@
             "description": "Forbidden"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Search the audit trail",
         "tags": [
           "Audit log"
@@ -2173,6 +2184,9 @@
             "description": "Not Found"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "One entry with its before/after values",
         "tags": [
           "Audit log"
@@ -2218,6 +2232,9 @@
             "description": "Unauthorized"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Change your own password",
         "tags": [
           "Authentication"
@@ -2305,6 +2322,9 @@
             "description": "Unauthorized"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Revoke the current session",
         "tags": [
           "Authentication"
@@ -2347,6 +2367,9 @@
             "description": "Not Found"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "The signed-in user and their effective permissions",
         "tags": [
           "Authentication"
@@ -2500,6 +2523,9 @@
             "description": "Forbidden"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "List gyms",
         "tags": [
           "Gyms"
@@ -2570,6 +2596,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Provision a gym",
         "tags": [
           "Gyms"
@@ -2636,6 +2665,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Soft-delete a gym",
         "tags": [
           "Gyms"
@@ -2697,6 +2729,9 @@
             "description": "Not Found"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "One gym, with its branding",
         "tags": [
           "Gyms"
@@ -2788,6 +2823,9 @@
             "description": "Precondition Required"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Change a gym\u0027s details",
         "tags": [
           "Gyms"
@@ -2851,6 +2889,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Open a provisioned gym for business",
         "tags": [
           "Gyms"
@@ -2944,6 +2985,9 @@
             "description": "Precondition Required"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Replace a gym\u0027s branding",
         "tags": [
           "Gyms"
@@ -3000,6 +3044,9 @@
             "description": "Forbidden"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Every invoice ever issued to one gym",
         "tags": [
           "Invoices"
@@ -3063,6 +3110,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Lift a suspension",
         "tags": [
           "Gyms"
@@ -3126,6 +3176,9 @@
             "description": "Not Found"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "A gym\u0027s current subscription",
         "tags": [
           "Gym subscriptions"
@@ -3207,6 +3260,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Put the gym on a plan, or move it to another",
         "tags": [
           "Gym subscriptions"
@@ -3280,6 +3336,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Cancel the subscription",
         "tags": [
           "Gym subscriptions"
@@ -3343,6 +3402,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "End the trial and start billing",
         "tags": [
           "Gym subscriptions"
@@ -3399,6 +3461,9 @@
             "description": "Forbidden"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Every subscription this gym has had",
         "tags": [
           "Gym subscriptions"
@@ -3472,6 +3537,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Record that payment is late, or has arrived",
         "tags": [
           "Gym subscriptions"
@@ -3535,6 +3603,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Withdraw a scheduled cancellation",
         "tags": [
           "Gym subscriptions"
@@ -3618,6 +3689,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Withhold service from a gym",
         "tags": [
           "Gyms"
@@ -3739,6 +3813,9 @@
             "description": "Forbidden"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "List invoices",
         "tags": [
           "Invoices"
@@ -3802,6 +3879,9 @@
             "description": "Not Found"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "One invoice, with its lines",
         "tags": [
           "Invoices"
@@ -3911,6 +3991,9 @@
             "description": "Unprocessable Entity"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Mark an invoice paid",
         "tags": [
           "Invoices"
@@ -3984,6 +4067,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Void an unpaid invoice",
         "tags": [
           "Invoices"
@@ -4088,6 +4174,9 @@
             "description": "Forbidden"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "List subscription plans",
         "tags": [
           "Subscription plans"
@@ -4158,6 +4247,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Create a subscription plan",
         "tags": [
           "Subscription plans"
@@ -4221,6 +4313,9 @@
             "description": "Not Found"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "One plan, with its prices",
         "tags": [
           "Subscription plans"
@@ -4312,6 +4407,9 @@
             "description": "Precondition Required"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Change a plan\u0027s details",
         "tags": [
           "Subscription plans"
@@ -4375,6 +4473,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Return a plan to the catalogue",
         "tags": [
           "Subscription plans"
@@ -4438,6 +4539,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Withdraw a plan from the catalogue",
         "tags": [
           "Subscription plans"
@@ -4521,6 +4625,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Set the price for one cycle and currency",
         "tags": [
           "Subscription plans"
@@ -4593,6 +4700,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Withdraw a price",
         "tags": [
           "Subscription plans"
@@ -4638,6 +4748,9 @@
             "description": "Forbidden"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "List platform roles",
         "tags": [
           "Roles"
@@ -4701,6 +4814,9 @@
             "description": "Not Found"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "One role and its permission grants",
         "tags": [
           "Roles"
@@ -4797,6 +4913,9 @@
             "description": "Forbidden"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "List platform administrators",
         "tags": [
           "Platform users"
@@ -4867,6 +4986,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Create an administrator account",
         "tags": [
           "Platform users"
@@ -4930,6 +5052,9 @@
             "description": "Not Found"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "One administrator, with roles and resolved permissions",
         "tags": [
           "Platform users"
@@ -5021,6 +5146,9 @@
             "description": "Precondition Required"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Change an administrator\u0027s name",
         "tags": [
           "Platform users"
@@ -5084,6 +5212,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Lift a suspension",
         "tags": [
           "Platform users"
@@ -5177,6 +5308,9 @@
             "description": "Precondition Required"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Replace an administrator\u0027s roles",
         "tags": [
           "Platform users"
@@ -5260,6 +5394,9 @@
             "description": "Conflict"
           }
         },
+        "security": [
+          {}
+        ],
         "summary": "Suspend an administrator and end their sessions",
         "tags": [
           "Platform users"

@@ -51,12 +51,20 @@ dotnet ef database update --project src/Platform/GymOS.Platform.Infrastructure -
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"  --project src/Host/GymOS.WebApi
 dotnet user-secrets set "Seed:SuperAdmin:Password" "<12+ chars>"   --project src/Host/GymOS.WebApi
 
-dotnet run --project src/Host/GymOS.WebApi       # http://localhost:5080/health/ready
+dotnet run --project src/Host/GymOS.WebApi       # opens http://localhost:5080/scalar/v1
 ```
 
-Then sign in against `POST /api/v1/auth/login`; the API surface is at
-`http://localhost:5080/openapi/v1.json` (`/auth`, `/users`, `/roles`, `/audit-logs`). The
-development JWT signing key lives in `appsettings.Development.json` and is public by
+Starting the API opens the **Scalar API reference** at `http://localhost:5080/scalar/v1` in
+your browser; the document behind it is `http://localhost:5080/openapi/v1.json`. Sign in
+against `POST /api/v1/auth/login` and paste the access token into Scalar's authorize control
+to call the secured endpoints.
+
+Both are **published in Development only** — the document maps every endpoint, parameter and
+schema, so elsewhere it is off unless an operator sets `OpenApi:Enabled` (or
+`OpenApi__Enabled=true`). Set `OpenApi:LaunchBrowser` to `false` if you would rather no tab
+opened; it never opens from a container.
+
+The development JWT signing key lives in `appsettings.Development.json` and is public by
 design — every other environment must supply `Security:Jwt:SigningKey` (startup fails fast
 without it).
 

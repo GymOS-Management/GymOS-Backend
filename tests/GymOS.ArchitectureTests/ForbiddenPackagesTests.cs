@@ -34,6 +34,9 @@ public sealed class ForbiddenPackagesTests
         "Konscious.Security.Cryptography.Argon2",
         "Asp.Versioning.Http",
         "NSubstitute",
+
+        // Approved with the API reference UI — MIT, host-only. See DEPENDENCY_POLICY.md.
+        "Scalar.AspNetCore",
     };
 
     /// <summary>Approved package families (prefix match, pre-approved by the frozen spec).</summary>

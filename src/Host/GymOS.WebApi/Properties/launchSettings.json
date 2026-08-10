@@ -3,6 +3,7 @@
   "profiles": {
     "GymOS.WebApi": {
       "commandName": "Project",
+      "//launchBrowser": "Deliberately false: the API reference is opened by ApiReferenceBrowserLauncher instead, which `dotnet run` honours and this setting does not. Setting both would open two tabs under Visual Studio.",
       "launchBrowser": false,
       "applicationUrl": "http://localhost:5080",
       "environmentVariables": {

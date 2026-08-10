@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
@@ -90,5 +91,78 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
         string body = await response.Content.ReadAsStringAsync();
         Assert.Contains("\"openapi\"", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OpenApiDocument_DeclaresTheBearerScheme()
+    {
+        JsonElement document = await GetOpenApiDocumentAsync();
+
+        JsonElement scheme = document
+            .GetProperty("components")
+            .GetProperty("securitySchemes")
+            .GetProperty("bearerAuth");
+
+        Assert.Equal("http", scheme.GetProperty("type").GetString());
+        Assert.Equal("bearer", scheme.GetProperty("scheme").GetString());
+        Assert.Equal("JWT", scheme.GetProperty("bearerFormat").GetString());
+    }
+
+    /// <summary>
+    /// The document must agree with the pipeline about which endpoints need a token. These two
+    /// are the only ones that cannot: login issues the token, and refresh reads a rotating token
+    /// from an httpOnly cookie rather than the bearer header. Everything else is secured — and a
+    /// new endpoint that forgets <c>RequireAuthorization</c> lands in this list and fails here.
+    /// </summary>
+    [Fact]
+    public async Task EveryOperation_DeclaresBearerAuth_ExceptTheTwoThatCannotRequireIt()
+    {
+        JsonElement document = await GetOpenApiDocumentAsync();
+
+        var anonymous = new List<string>();
+        var secured = new List<string>();
+
+        foreach (JsonProperty path in document.GetProperty("paths").EnumerateObject())
+        {
+            foreach (JsonProperty operation in path.Value.EnumerateObject())
+            {
+                if (!HttpMethods.Contains(operation.Name))
+                {
+                    continue;
+                }
+
+                string id = $"{operation.Name.ToUpperInvariant()} {path.Name}";
+
+                if (operation.Value.TryGetProperty("security", out JsonElement security) &&
+                    security.GetArrayLength() > 0)
+                {
+                    secured.Add(id);
+                }
+                else
+                {
+                    anonymous.Add(id);
+                }
+            }
+        }
+
+        Assert.Equal(
+            ["POST /api/v1/auth/login", "POST /api/v1/auth/refresh"],
+            anonymous.Order(StringComparer.Ordinal));
+
+        Assert.NotEmpty(secured);
+        Assert.All(
+            secured,
+            _ => Assert.Contains("bearerAuth", document.GetProperty("components")
+                .GetProperty("securitySchemes").EnumerateObject().Select(scheme => scheme.Name)));
+    }
+
+    private static readonly string[] HttpMethods = ["get", "post", "put", "patch", "delete"];
+
+    private async Task<JsonElement> GetOpenApiDocumentAsync()
+    {
+        HttpResponseMessage response = await _client.GetAsync(new Uri("/openapi/v1.json", UriKind.Relative));
+        response.EnsureSuccessStatusCode();
+
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
     }
 }

@@ -24,6 +24,7 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Formatting.Compact;
 
@@ -113,6 +114,7 @@ try
     // per API version. The CI breaking-change gate diffs it against its committed
     // snapshot (M1.3).
     builder.Services.AddGymOSOpenApi("v1");
+    builder.Services.AddGymOSApiReferenceBrowser(builder.Configuration, builder.Environment);
 
     // Readiness gates on the database only (AD-48); liveness has no dependencies.
     builder.Services.AddHealthChecks()
@@ -195,7 +197,18 @@ try
 
     app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/ready");
-    app.MapOpenApi();
+
+    // The contract and its reference UI travel together — publishing one without the other
+    // serves a UI that cannot load its own document. Off outside Development unless
+    // OpenApi:Enabled says otherwise; see OpenApiExtensions.IsOpenApiExposed.
+    if (OpenApiExtensions.IsOpenApiExposed(app.Configuration, app.Environment))
+    {
+        app.MapOpenApi();
+        app.MapScalarApiReference(options => options
+            .WithTitle("GymOS API v1")
+            .WithOpenApiRoutePattern("/openapi/v1.json"));
+    }
+
     app.MapAuthEndpoints();
     app.MapGymEndpoints();
     app.MapPlanEndpoints();
