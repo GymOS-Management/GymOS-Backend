@@ -1,9 +1,11 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Idempotency;
+using GymOS.BuildingBlocks.Application.Jobs;
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Idempotency;
+using GymOS.Platform.Infrastructure.Jobs;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
@@ -57,6 +59,9 @@ public static class PlatformInfrastructureServiceCollectionExtensions
             .ValidateOnStart();
 
         services.TryAddScoped<IdempotencyRecordMaintainer>();
+
+        // Cross-instance job coordination rides the same database as everything else (M3.4).
+        services.TryAddScoped<IJobLock, PostgresJobLock>();
 
         services.TryAddScoped<IAuditTrail>(provider => new AuditTrail(
             provider.GetRequiredService<AppDbContext>(),

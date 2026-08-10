@@ -11,5 +11,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <!-- The job runner (M3.4): BackgroundService/AddHostedService live in Hosting.Abstractions;
+         BindConfiguration in Options.ConfigurationExtensions. Both Microsoft.Extensions.*,
+         the spec-approved family. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
   </ItemGroup>
 </Project>
