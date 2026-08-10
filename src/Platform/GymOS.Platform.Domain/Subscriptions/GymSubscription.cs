@@ -347,6 +347,23 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
         Raise(new SubscriptionRenewed(Id, GymId, CurrentPeriodStartUtc, CurrentPeriodEndUtc));
     }
 
+    /// <summary>
+    /// Turns off auto-renewal: the subscription runs its paid period out and then
+    /// <see cref="Expire"/>s instead of renewing (the M3.4 sweep's third question).
+    ///
+    /// <para>No endpoint calls this yet — cancellation is the gesture the console offers today,
+    /// and it communicates more (a reason, an explicit decision). This exists because §2.3's
+    /// <c>auto_renew</c> column and the sweep's expiry branch are one policy, and the AD-45
+    /// settings surface will want the lever. No event, like
+    /// <see cref="CancelPendingPlanChange"/>: nothing downstream acts before the period ends, and
+    /// the audit trail records the column change.</para>
+    /// </summary>
+    public void DisableAutoRenew()
+    {
+        EnsureLive();
+        AutoRenew = false;
+    }
+
     /// <summary>Clears the provenance pointer when the plan price it named is withdrawn.</summary>
     public void ForgetPlanPrice() => PlanPriceId = null;
 

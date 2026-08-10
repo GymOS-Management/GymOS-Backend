@@ -209,6 +209,19 @@ internal sealed class FakeSubscriptionQueries : ISubscriptionQueries
                 .Select(detail => detail!)
                 .ToList());
 
+    public Task<IReadOnlyList<Guid>> ListDueForRenewalAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>(
+            _subscriptions.Subscriptions
+                .Where(subscription => subscription.IsLive
+                    && (subscription.CurrentPeriodEndUtc <= now
+                        || (subscription.Status == SubscriptionStatus.Trialing
+                            && subscription.TrialEndsAtUtc <= now)))
+                .OrderBy(subscription => subscription.CurrentPeriodEndUtc)
+                .Select(subscription => subscription.Id)
+                .ToList());
+
     private SubscriptionDetail? Project(GymSubscription subscription)
     {
         SubscriptionPlan? plan = _plans.Plans.SingleOrDefault(candidate => candidate.Id == subscription.PlanId);
