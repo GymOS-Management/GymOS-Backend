@@ -3,6 +3,7 @@ using GymOS.BuildingBlocks.Infrastructure.Auditing;
 using GymOS.BuildingBlocks.Infrastructure.Idempotency;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.Platform.Domain.Identity;
+using GymOS.Platform.Domain.Invoices;
 using GymOS.Platform.Domain.Subscriptions;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -54,6 +55,11 @@ public sealed class ConcurrencyModelTests
         // moves when a scheduled change is written, replaced, or cleared. A second token here would
         // describe the same row twice.
         [typeof(PendingPlanChange)] = "owned by GymSubscription, stored in its row and guarded by its xmin",
+
+        // Written once when the invoice is issued and never afterwards — an issued invoice is a
+        // statement of what was charged, and the aggregate exposes no way to edit a line. The two
+        // writes that do exist (mark-paid, void) touch the invoice row, whose xmin guards them.
+        [typeof(InvoiceLine)] = "write-once at issue; the Invoice aggregate's xmin guards its only mutations",
 
         // Reconciled from code at startup; not editable through any API.
         [typeof(Permission)] = "code-canonical catalog, no API writes",

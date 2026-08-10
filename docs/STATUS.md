@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-09 · mid-M3.3, after tasks 1–2 of 7 (branch `m3.3-invoices`)
+**Last updated:** 2026-08-10 · M3.3 complete, all 7 tasks (branch `m3.3-invoices`, not merged)
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -22,7 +22,7 @@ before resuming work on any machine.
 | **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — **734 tests green**, verified live · ⬅ **awaiting review** |
 | **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
 | **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
-| **M3.3 — invoices** | 🚧 **in progress on branch `m3.3-invoices`** — tasks 1–2 of 7 done, **997 tests green**. Resume at task 3. See "M3.3 in progress" below. |
+| **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ complete on branch `m3.3-invoices` — **1038 tests green**, verified live incl. idempotent replay · ⬅ **awaiting review, not merged** |
 | M3.4 — renewal/overdue jobs | **blocked**: a job runner (see below); nothing yet runs work on a schedule |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
@@ -493,41 +493,64 @@ theory that enforces this live against an in-test-assembly exemplar until then.
    retention, same shape as `AuditLogPartitionMaintainer` (M1.3). Both fold into the M3.4 retention
    job once it exists (see Known open items).
 
-## M3.3 in progress — where to pick it up
+## M3.3 as built
 
-**Branch `m3.3-invoices`** (pushed, not merged; `main` is untouched). Two of seven tasks done, each its
-own commit. Design: `docs/superpowers/specs/2026-08-08-invoices-design.md`. Plan:
-`docs/superpowers/plans/2026-08-08-invoices.md` — **its checkboxes are ticked through task 2 and each
-finished task carries an "As built" block recording what actually happened.** Read those blocks before
-task 3; two of them change what task 3 has to do.
+**Branch `m3.3-invoices`** (not merged; `main` is untouched). All seven tasks done, each its own
+commit. Design: `docs/superpowers/specs/2026-08-08-invoices-design.md`. Plan:
+`docs/superpowers/plans/2026-08-08-invoices.md`. Business rules as built:
+**`docs/BusinessRules/Invoices.md`**. Per the increment protocol this whole branch is
+**awaiting review before merge**.
 
 | Task | State |
 |---|---|
 | 1 — Invoice domain (aggregate, transition table, rules, events) | ✅ `dbae5dc` |
 | 2 — proration calculator + scheduled plan change | ✅ `3936aba` |
-| **3 — persistence (EF config, `AddInvoices` migration, repository, number generator)** | ⬅ **next, not started** |
-| 4 — issuing on assignment / trial conversion / plan change | not started |
-| 5 — mark-paid (first production `IIdempotentCommand`), void, queries | not started |
-| 6 — infrastructure queries + endpoints + OpenAPI snapshot | not started |
-| 7 — docs, exemplar cleanup, full verification | not started |
+| 3 — persistence (EF config, `AddInvoices` migration, repository, number generator) | ✅ `615fdd1` |
+| 4 — issuing on assignment / trial conversion / plan change, net-sign policy | ✅ `1f46070` |
+| 5 — mark-paid (first production `IIdempotentCommand`), void, queries | ✅ `9ab1436` |
+| 6 — infrastructure queries + endpoints + OpenAPI snapshot (5 new operations only) | ✅ `f7ae208` |
+| 7 — docs, exemplar cleanup, full verification, live idempotent-replay proof | ✅ (this commit) |
 
-**Test counts after task 2** — every project run complete, no `Aborted`, 0 build warnings:
-SharedKernel 126 · BuildingBlocks 42 · Architecture **135** · Domain **325** · Application 147 ·
-Infrastructure 67 · Integration 155 = **997** (was 902). Integration ran 4m45s against real PostgreSQL,
-so the new migration is proven applied, not just modelled.
+**Test counts after task 7** — every project run complete, no `Aborted`, 0 build warnings:
+SharedKernel 126 · BuildingBlocks 42 · Architecture **133** · Domain 325 · Application **173** ·
+Infrastructure **67** · Integration **172** = **1038** (was 997). Architecture went down by two:
+removing the two seeded idempotency exemplars deletes four theory rows while the real
+`MarkInvoicePaidCommand` adds two.
 
-### Two things task 3 must know before starting
+### Decisions taken in tasks 3–7
 
-1. **The `pending_*` columns are already done — do not redo them.** Task 3's file list says to modify
-   `GymSubscriptionConfiguration` and include those columns in `AddInvoices`. That work moved into task 2
-   because it had to: EF discovers `PendingChange` as a navigation the moment the property exists, and the
-   model then fails to build (*"The entity type 'PendingPlanChange' requires a primary key"*), taking three
-   Infrastructure tests down. The `OwnsOne` block and migration **`AddPendingPlanChange`** are committed.
-   `AddInvoices` should contain **only** the invoice tables, `platform.next_invoice_number`, and the
-   single-currency CHECK.
-2. **R4 is already settled — task 3's `TaxRate` decision tree is spent.** `MoneyTypeTests` matches "tax"
-   anywhere in a member name, so `Invoice.TaxRate` and `Invoice.Issue` are on the exemption list with the
-   reason "a rate is a scalar multiplier, not an amount". Nothing left to decide.
+- **The number function guards its own creation race.** Two first-of-the-year issuers can both pass
+  the `pg_sequences` existence check and race `CREATE SEQUENCE`; `IF NOT EXISTS` does not close that
+  window (PostgreSQL can surface it as a catalog unique violation). The function catches
+  `duplicate_object`/`unique_violation` and proceeds — the loser uses the winner's sequence. The
+  persistence test runs its 8 parallel callers **cold** so the guard itself is exercised.
+- **"Change to same plan" is keyed on plan *and terms*, not plan id alone.** The plan text keyed the
+  refusal on plan id, but that would forbid a same-plan cycle change (monthly → yearly) — which is
+  exactly the adjustment `AGymAlreadyOnAWithdrawnPlan_CanChangeItsTerms` protects. Same plan + same
+  cycle + same price → refusal (`subscriptions.change_to_same_plan`) or pending-cancellation; anything
+  else takes the proration path. That test was updated to change cycle for real (it previously
+  re-sent identical terms, which is now the refusal by design).
+- **`InvoiceIssuer` only Adds; the calling handler saves** — invoice and subscription change commit in
+  one transaction (`SuperAdminGuard` precedent). `SubscriptionStateCommandHandlers.MutateAsync` gained
+  an async-mutate overload so trial conversion can load the plan and issue inside the same flow.
+- **Invoice line display order is a projection decision**: `invoice_lines` deliberately has no
+  insertion-order column (lines are write-once), so the detail orders charges before credits
+  (amount descending). The plan's "ordered by creation" was unimplementable without a schema addition
+  nobody needs.
+- **`InvoiceLine` is exempt from the concurrency-token rule**: write-once at issue, and the only
+  mutations that exist (mark-paid, void) touch the invoice row, whose `xmin` guards them.
+- **PastDue interplay is scoped to the current period**: paying an invoice issued on or after
+  `CurrentPeriodStartUtc` flips a PastDue subscription back to Active in the same save; paying an
+  older invoice does not.
+- **The gym invoice tab returns an empty list for an unknown gym**, not 404 — "no invoices" is the
+  truthful answer either way, and gym existence is the gym endpoints' question.
+- **OpenAPI snapshot diff verified semantically**: exactly five operations added (`ListInvoices`,
+  `GetInvoice`, `MarkInvoicePaid`, `VoidInvoice`, `ListGymInvoices`), none removed — the raw diff is
+  large only because path insertion re-orders the document.
+- The AD-39 HTTP tests deferred from that increment landed in `InvoiceApiTests.MarkPaidIsIdempotentEndToEnd`:
+  missing key → 400 `idempotency.key_required`; replay → byte-identical body + `Idempotency-Replayed: true`;
+  reused key with different body → 422 `idempotency.key_reuse_mismatch`; deterministic failure
+  (`invoices.already_paid`) stored and replayed under its own key.
 
 ### Decisions taken in tasks 1–2
 
