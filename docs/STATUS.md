@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-10 · M3.3 complete, all 7 tasks (branch `m3.3-invoices`, not merged)
+**Last updated:** 2026-08-10 · M3.4 complete, reviewed and **merged to `main`** (`bd722bb`)
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -23,7 +23,7 @@ before resuming work on any machine.
 | **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
 | **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
 | **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ **merged to `main`** (`e39eb73`) — reviewed at high effort (10 findings, all fixed), **1049 tests green**, verified live incl. idempotent replay |
-| **M3.4 — job runner + renewal/overdue jobs** (JobHost + advisory locks, RetentionJob, renewal sweep, overdue sweep with auto-PastDue) | ✅ complete on branch `m3.4-jobs` — design approved 2026-08-10, all tests green, verified live · ⬅ **awaiting review, not merged** |
+| **M3.4 — job runner + renewal/overdue jobs** (JobHost + advisory locks, RetentionJob, renewal sweep, overdue sweep with auto-PastDue) | ✅ **merged to `main`** (`bd722bb`) — design approved 2026-08-10, reviewed at high effort (10 findings, all fixed), **1101 tests green**, renewal verified live on the first 15-minute tick |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
 | M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
@@ -292,15 +292,17 @@ Two traps it sets:
    with 103 tests is a crash, not a pass. **A run is only trustworthy if its output contains no
    `Aborted`** and the total matches the project's known count.
 
-Longer runs fail more often, so the two largest projects (`Platform.Application.UnitTests` 103,
-`IntegrationTests` 102) rarely finish in one go. Verify them class by class:
+Longer runs fail more often, so the two largest projects (`Platform.Domain.UnitTests` 337,
+`Platform.Application.UnitTests` 201) and the slow one (`IntegrationTests` 179, ~2 min) are the
+usual casualties. Verify class by class when it bites:
 
 ```
 dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTests"
 ```
 
-Full counts per project, for checking a run was complete: SharedKernel 126 · BuildingBlocks 36 ·
-Architecture 120 · Domain 242 · Application 147 · Infrastructure 67 · Integration 151 = **889**.
+Full counts per project, for checking a run was complete — **re-measured 2026-08-10 at `bd722bb`,
+every project complete with no `Aborted`**: SharedKernel 126 · BuildingBlocks 55 · Architecture 136 ·
+Domain 337 · Application 201 · Infrastructure 67 · Integration 179 = **1101**.
 
 Capping the test connection pools (above) may also have helped here — the last several full runs completed
 first time, where they previously needed retries.
@@ -310,15 +312,15 @@ first time, where they previously needed retries.
 One migration: `AddSubscriptionPlans` (`platform.subscription_plans` + `platform.plan_prices`). Rules and
 the full deferral list: **`docs/BusinessRules/Subscriptions.md`**.
 
-**M3 is four increments, and that scoping is the main decision here.** Three of its four parts have
-prerequisites that do not exist:
+**M3 is four increments, and that scoping is the main decision here.** Three of its four parts had
+prerequisites that did not exist at the time (all since built — the State column is updated):
 
-| Increment | State | Blocked on |
+| Increment | State | Was blocked on |
 |---|---|---|
 | M3.1 plans + prices | ✅ built | — |
-| M3.2 subscription assignment | next | M3.1 only |
-| M3.3 invoices | blocked | **AD-39 idempotency framework.** A retried "mark invoice paid" must not pay twice; this is the first genuinely qualifying command the platform has had. |
-| M3.4 renewal / overdue jobs | blocked | **A job runner.** Nothing yet runs work on a schedule. |
+| M3.2 subscription assignment | ✅ built | M3.1 only |
+| M3.3 invoices | ✅ built | **AD-39 idempotency framework.** A retried "mark invoice paid" must not pay twice; this is the first genuinely qualifying command the platform has had. |
+| M3.4 renewal / overdue jobs | ✅ built | **A job runner.** Nothing ran work on a schedule until M3.4 built one. |
 
 `plan_features` (§2.3) moves to **M4**: it points at the `features` catalogue, which does not exist.
 
@@ -490,12 +492,12 @@ theory that enforces this live against an in-test-assembly exemplar until then.
    the INSERT instead of surfacing a false conflict. Past three attempts that stops looking like the
    race and starts looking like a bug, so it throws.
 5. **`IdempotencyRecordMaintainer`** purges expired records at startup — an interim owner of
-   retention, same shape as `AuditLogPartitionMaintainer` (M1.3). Both fold into the M3.4 retention
-   job once it exists (see Known open items).
+   retention, same shape as `AuditLogPartitionMaintainer` (M1.3). Both were folded into M3.4's
+   `RetentionJob`; the startup calls stay for first boot.
 
 ## M3.4 as built
 
-**Branch `m3.4-jobs`** (awaiting review). Design (approved before implementation):
+**Merged to `main`** (`bd722bb`, review complete). Design (approved before implementation):
 `docs/superpowers/specs/2026-08-10-job-runner-design.md` — hand-rolled schedules over a cron
 dependency, auto-PastDue on an overdue current-period invoice, trials auto-convert-and-bill.
 
@@ -566,11 +568,10 @@ fixed with a pinning test each:
 
 ## M3.3 as built
 
-**Branch `m3.3-invoices`** (not merged; `main` is untouched). All seven tasks done, each its own
+**Merged to `main`** (`e39eb73`, review complete). All seven tasks done, each its own
 commit. Design: `docs/superpowers/specs/2026-08-08-invoices-design.md`. Plan:
 `docs/superpowers/plans/2026-08-08-invoices.md`. Business rules as built:
-**`docs/BusinessRules/Invoices.md`**. Per the increment protocol this whole branch is
-**awaiting review before merge**.
+**`docs/BusinessRules/Invoices.md`**.
 
 | Task | State |
 |---|---|
@@ -660,7 +661,8 @@ concentrated in the plan-change path. All are fixed with a pinning test each:
 - **`Draft` and `Overdue` are declared but unreachable in both directions**, asserted by the 5×5 matrix.
   Draft waits on manual invoicing, Overdue on the M3.4 job; until then overdue is derived
   (`Invoice.IsOverdue`), the M3.2 trial-expiry precedent. Whoever gives either a producer adds its
-  transitions deliberately.
+  transitions deliberately. **M3.4 did exactly that for Overdue** (`InvoiceOverdueJob` →
+  `MarkOverdue`, plus `Issued → Overdue` and `Overdue → Paid | Void`); Draft is still unreachable.
 - **A negative invoice total throws.** The design routes a net credit to a scheduled plan change, so a
   negative total is always a caller defect — there is no credit-note document to carry one.
 - **Line quantity must be 1**, refused with a message naming the constraint. Forces the first producer of
@@ -734,7 +736,7 @@ To work on it — API on the host, database in a container:
 ```
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d postgres      # PostgreSQL 17 only
-dotnet test GymOS.Backend.slnx     # expect 889 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 1101 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
@@ -772,14 +774,15 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
   capture side only; lands with the first event handler need.
 - **`platform.audit_logs` is partitioned** (monthly range on `created_at_utc`, migration
   `PartitionAuditLogs`). Future partitions are created by `platform.ensure_audit_log_partitions`,
-  called at startup by `AuditLogPartitionMaintainer`; move that call onto the retention job's
-  schedule when the job runner lands, since creating upcoming partitions and detaching expired
-  ones are two halves of one policy. A DEFAULT partition means an audit write can never fail;
-  rows that land there must be pruned with `DELETE` rather than `DETACH`.
-- **`IdempotencyRecordMaintainer` (AD-39) purges expired `platform.idempotency_records` at
-  startup** — the same interim shape as `AuditLogPartitionMaintainer` above. Both are startup-time
-  stand-ins for a real schedule; fold both into the M3.4 retention job when the job runner lands
-  rather than growing two separate startup sweeps.
+  called by `AuditLogPartitionMaintainer` — **now on `RetentionJob`'s nightly schedule** (M3.4);
+  the startup call stays, because first boot on an empty database needs partitions before the
+  first request. Partition **detachment**, the other half of the policy, still waits on the
+  counsel-supplied retention window and belongs in the same job when it arrives. A DEFAULT
+  partition means an audit write can never fail; rows that land there must be pruned with
+  `DELETE` rather than `DETACH`.
+- **`IdempotencyRecordMaintainer` (AD-39) purges expired `platform.idempotency_records`** — also
+  **folded into `RetentionJob`** (M3.4), keeping its startup call for the same reason. The
+  standing instruction to merge the two startup sweeps rather than grow a third is discharged.
 - **AD-39 key scope is (tenant, operation, key) — caller-chosen keys are cross-user**: two users
   picking the same key for the same operation collide (spurious 422, or a replay of the other
   caller's response when the hashes match). Per-user scoping would need a superseding ADR;
@@ -787,8 +790,6 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
 - **Permission resolution costs one query per authenticated request** (memoized per request).
   Deliberate: it buys immediate revocation. The cache-with-invalidation version belongs with
   the AD-45 settings/cache work, and should not be added before it is measured.
-- Outbox **processor** (delivery to handlers with SKIP LOCKED claiming) still not built —
-  capture side only; lands with the first event handler need.
 - `POST /users/{id}/reset-password` (§3.6) is **not** implemented: it sends a time-boxed reset
   link, so it needs email delivery. Invited accounts therefore cannot activate themselves yet —
   the only way to give an account a password today is the `Seed:SuperAdmin` path. This is the
