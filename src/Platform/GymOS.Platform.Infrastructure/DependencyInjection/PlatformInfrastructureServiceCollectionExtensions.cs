@@ -2,6 +2,7 @@ using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Idempotency;
 using GymOS.BuildingBlocks.Application.Jobs;
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
+using GymOS.BuildingBlocks.Infrastructure.Jobs;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Idempotency;
@@ -62,6 +63,10 @@ public static class PlatformInfrastructureServiceCollectionExtensions
 
         // Cross-instance job coordination rides the same database as everything else (M3.4).
         services.TryAddScoped<IJobLock, PostgresJobLock>();
+
+        // The recurring half of retention (AD-23) — the startup maintainers above cover first
+        // boot; this covers every night after.
+        services.AddScheduledJob<RetentionJob>();
 
         services.TryAddScoped<IAuditTrail>(provider => new AuditTrail(
             provider.GetRequiredService<AppDbContext>(),
