@@ -6,6 +6,7 @@ using GymOS.Platform.Application.Subscriptions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
+using GymOS.WebApi.Extensions;
 
 namespace GymOS.WebApi.Endpoints;
 
@@ -73,6 +74,7 @@ public static class PlanEndpoints
 
         group.MapPut("/{planId:guid}", UpdateAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
+            .RequiresIfMatch()
             .WithName("UpdatePlan")
             .WithSummary("Change a plan's details")
             .WithDescription(
@@ -88,6 +90,7 @@ public static class PlanEndpoints
 
         group.MapPut("/{planId:guid}/prices", SetPriceAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
+            .HonoursIfMatch()
             .WithName("SetPlanPrice")
             .WithSummary("Set the price for one cycle and currency")
             .WithDescription(
@@ -104,6 +107,7 @@ public static class PlanEndpoints
 
         group.MapDelete("/{planId:guid}/prices/{planPriceId:guid}", RemovePriceAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
+            .HonoursIfMatch()
             .WithName("RemovePlanPrice")
             .WithSummary("Withdraw a price")
             .WithDescription(
@@ -116,6 +120,7 @@ public static class PlanEndpoints
 
         group.MapPost("/{planId:guid}/deactivate", DeactivateAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
+            .HonoursIfMatch()
             .WithName("DeactivatePlan")
             .WithSummary("Withdraw a plan from the catalogue")
             .WithDescription(
@@ -130,6 +135,7 @@ public static class PlanEndpoints
 
         group.MapPost("/{planId:guid}/activate", ActivateAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
+            .HonoursIfMatch()
             .WithName("ActivatePlan")
             .WithSummary("Return a plan to the catalogue")
             .WithDescription("Makes a withdrawn plan assignable again. Returns the updated plan.")

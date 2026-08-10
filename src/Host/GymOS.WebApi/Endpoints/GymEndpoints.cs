@@ -6,6 +6,7 @@ using GymOS.Platform.Application.Gyms;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
+using GymOS.WebApi.Extensions;
 
 namespace GymOS.WebApi.Endpoints;
 
@@ -74,6 +75,7 @@ public static class GymEndpoints
 
         group.MapPut("/{gymId:guid}", UpdateAsync)
             .RequireAuthorization(PlatformPermissions.GymsUpdate)
+            .RequiresIfMatch()
             .WithName("UpdateGym")
             .WithSummary("Change a gym's details")
             .WithDescription(
@@ -90,6 +92,7 @@ public static class GymEndpoints
 
         group.MapPost("/{gymId:guid}/activate", ActivateAsync)
             .RequireAuthorization(PlatformPermissions.GymsUpdate)
+            .HonoursIfMatch()
             .WithName("ActivateGym")
             .WithSummary("Open a provisioned gym for business")
             .WithDescription(
@@ -104,6 +107,7 @@ public static class GymEndpoints
 
         group.MapPost("/{gymId:guid}/suspend", SuspendAsync)
             .RequireAuthorization(PlatformPermissions.GymsSuspend)
+            .HonoursIfMatch()
             .WithName("SuspendGym")
             .WithSummary("Withhold service from a gym")
             .WithDescription(
@@ -118,6 +122,7 @@ public static class GymEndpoints
 
         group.MapPost("/{gymId:guid}/reactivate", ReactivateAsync)
             .RequireAuthorization(PlatformPermissions.GymsSuspend)
+            .HonoursIfMatch()
             .WithName("ReactivateGym")
             .WithSummary("Lift a suspension")
             .WithDescription(
@@ -131,6 +136,8 @@ public static class GymEndpoints
 
         group.MapDelete("/{gymId:guid}", DeleteAsync)
             .RequireAuthorization(PlatformPermissions.GymsDelete)
+            .RequiresConfirmAction()
+            .HonoursIfMatch()
             .WithName("DeleteGym")
             .WithSummary("Soft-delete a gym")
             .WithDescription(
@@ -148,6 +155,7 @@ public static class GymEndpoints
 
         group.MapPut("/{gymId:guid}/branding", UpdateBrandingAsync)
             .RequireAuthorization(PlatformPermissions.GymsUpdate)
+            .RequiresIfMatch()
             .WithName("UpdateGymBranding")
             .WithSummary("Replace a gym's branding")
             .WithDescription(
