@@ -232,6 +232,14 @@ internal sealed class FakeSubscriptionQueries : ISubscriptionQueries
             subscription.AutoRenew,
             subscription.CancellationReason,
             subscription.CreatedAtUtc,
-            RowVersion.ToString(CultureInfo.InvariantCulture));
+            RowVersion.ToString(CultureInfo.InvariantCulture),
+            subscription.PendingChange is not { } pending
+                ? null
+                : new PendingPlanChangeDetail(
+                    pending.PlanId,
+                    pending.BillingCycle.ToString(),
+                    pending.Amount,
+                    pending.CurrencyCode,
+                    pending.ChangeAtUtc));
     }
 }

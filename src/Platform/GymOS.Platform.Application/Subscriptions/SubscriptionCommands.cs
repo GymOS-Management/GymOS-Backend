@@ -3,6 +3,7 @@ using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
 using GymOS.Platform.Application.Gyms;
 using GymOS.Platform.Application.Gyms.Abstractions;
+using GymOS.Platform.Application.Invoices;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Identity;
@@ -78,6 +79,7 @@ internal sealed class AssignSubscriptionCommandHandler
     private readonly IPlanRepository _plans;
     private readonly ISubscriptionRepository _subscriptions;
     private readonly ISubscriptionQueries _subscriptionQueries;
+    private readonly InvoiceIssuer _issuer;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
 
@@ -86,6 +88,7 @@ internal sealed class AssignSubscriptionCommandHandler
         IPlanRepository plans,
         ISubscriptionRepository subscriptions,
         ISubscriptionQueries subscriptionQueries,
+        InvoiceIssuer issuer,
         IUnitOfWork unitOfWork,
         IClock clock)
     {
@@ -93,6 +96,7 @@ internal sealed class AssignSubscriptionCommandHandler
         _plans = plans;
         _subscriptions = subscriptions;
         _subscriptionQueries = subscriptionQueries;
+        _issuer = issuer;
         _unitOfWork = unitOfWork;
         _clock = clock;
     }
@@ -146,6 +150,14 @@ internal sealed class AssignSubscriptionCommandHandler
                     command.GymId, plan, terms.Value, _clock.UtcNow);
 
                 _subscriptions.Add(assigned);
+
+                if (assigned.Status == SubscriptionStatus.Active)
+                {
+                    // Trials bill at conversion, not at assignment — nothing is owed until the gym
+                    // commits. The issuer only Adds; the SaveChangesAsync below commits subscription
+                    // and invoice together or not at all.
+                    await _issuer.IssueForPeriodAsync(assigned, plan, cancellationToken);
+                }
             }
             else
             {
@@ -161,7 +173,53 @@ internal sealed class AssignSubscriptionCommandHandler
                     return Result.Failure<SubscriptionDetail>(SubscriptionErrors.PlanInactive(plan.Code));
                 }
 
-                existing.ChangePlan(plan, terms.Value);
+                // Same plan at the same terms is not a change — it is either the gesture that cancels
+                // a scheduled one, or a mistake worth naming. Terms are compared by value rather than
+                // by price-row id, so a negotiated subscription (null price id) answers the same way.
+                bool sameTerms = existing.PlanId == plan.Id
+                    && existing.BillingCycle == terms.Value.BillingCycle
+                    && existing.Price == terms.Value.Price;
+
+                if (sameTerms)
+                {
+                    if (existing.PendingChange is null)
+                    {
+                        return Result.Failure<SubscriptionDetail>(SubscriptionErrors.ChangeToSamePlan);
+                    }
+
+                    existing.CancelPendingPlanChange();
+                }
+                else
+                {
+                    // The net-sign policy (M3.3 design §net-sign): money owed to the platform is
+                    // billed now; money owed to the gym is never refunded mid-period — the change
+                    // waits for the period end instead, because there is no credit-note document to
+                    // carry a negative invoice.
+                    ProrationResult? proration = Proration.Compute(
+                        existing.Price,
+                        terms.Value.Price,
+                        existing.CurrentPeriodStartUtc,
+                        existing.CurrentPeriodEndUtc,
+                        _clock.UtcNow);
+
+                    if (proration is null || proration.Net.IsNegative)
+                    {
+                        existing.SchedulePlanChange(plan, terms.Value, existing.CurrentPeriodEndUtc);
+                    }
+                    else
+                    {
+                        existing.ChangePlan(plan, terms.Value);
+
+                        if (proration.Net.Amount > 0m)
+                        {
+                            await _issuer.IssueProrationAsync(
+                                existing, plan, proration, cancellationToken);
+                        }
+
+                        // A net of exactly zero changes the plan and bills nothing — the two plans
+                        // cost the same from here to the period end.
+                    }
+                }
             }
         }
         catch (DomainException exception)
@@ -221,17 +279,23 @@ internal sealed class SubscriptionStateCommandHandlers :
 {
     private readonly ISubscriptionRepository _subscriptions;
     private readonly ISubscriptionQueries _subscriptionQueries;
+    private readonly IPlanRepository _plans;
+    private readonly InvoiceIssuer _issuer;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
 
     public SubscriptionStateCommandHandlers(
         ISubscriptionRepository subscriptions,
         ISubscriptionQueries subscriptionQueries,
+        IPlanRepository plans,
+        InvoiceIssuer issuer,
         IUnitOfWork unitOfWork,
         IClock clock)
     {
         _subscriptions = subscriptions;
         _subscriptionQueries = subscriptionQueries;
+        _plans = plans;
+        _issuer = issuer;
         _unitOfWork = unitOfWork;
         _clock = clock;
     }
@@ -295,7 +359,7 @@ internal sealed class SubscriptionStateCommandHandlers :
         return MutateAsync(
             command.GymId,
             command.ExpectedRowVersion,
-            subscription =>
+            async subscription =>
             {
                 if (subscription.Status != SubscriptionStatus.Trialing)
                 {
@@ -303,6 +367,18 @@ internal sealed class SubscriptionStateCommandHandlers :
                 }
 
                 subscription.ConvertTrial();
+
+                // Conversion is the moment the gym starts paying, so it bills the first period —
+                // the invoice an untrialed assignment would have issued up front. The plan is
+                // loaded for its name on the line; a subscription always points at one.
+                SubscriptionPlan? plan = await _plans.FindByIdAsync(
+                    subscription.PlanId, cancellationToken);
+                if (plan is null)
+                {
+                    return Result.Failure(PlanErrors.NotFound(subscription.PlanId));
+                }
+
+                await _issuer.IssueForPeriodAsync(subscription, plan, cancellationToken);
                 return Result.Success();
             },
             cancellationToken);
@@ -341,10 +417,21 @@ internal sealed class SubscriptionStateCommandHandlers :
             cancellationToken);
     }
 
-    private async Task<Result<SubscriptionDetail>> MutateAsync(
+    private Task<Result<SubscriptionDetail>> MutateAsync(
         Guid gymId,
         string? expectedRowVersion,
         Func<GymSubscription, Result> mutate,
+        CancellationToken cancellationToken) =>
+        MutateAsync(
+            gymId,
+            expectedRowVersion,
+            subscription => Task.FromResult(mutate(subscription)),
+            cancellationToken);
+
+    private async Task<Result<SubscriptionDetail>> MutateAsync(
+        Guid gymId,
+        string? expectedRowVersion,
+        Func<GymSubscription, Task<Result>> mutate,
         CancellationToken cancellationToken)
     {
         GymSubscription? subscription = await _subscriptions.FindLiveByGymAsync(gymId, cancellationToken);
@@ -363,7 +450,7 @@ internal sealed class SubscriptionStateCommandHandlers :
         Result mutation;
         try
         {
-            mutation = mutate(subscription);
+            mutation = await mutate(subscription);
         }
         catch (DomainException exception)
         {

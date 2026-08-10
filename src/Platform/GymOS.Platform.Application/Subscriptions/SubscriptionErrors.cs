@@ -17,6 +17,11 @@ public static class SubscriptionErrors
         "subscriptions.plan_inactive",
         $"Plan '{code}' has been withdrawn and cannot be newly assigned. Gyms already on it keep it.");
 
+    public static Error ChangeToSamePlan => Error.Conflict(
+        "subscriptions.change_to_same_plan",
+        "The gym is already on this plan at these terms. To adjust it, choose different terms; " +
+        "to cancel a scheduled change, this same request does that only while one is pending.");
+
     public static Error PriceNotOffered(string cycle, string currency) => Error.Validation(
         "subscriptions.price_not_offered",
         $"This plan has no {cycle} price in {currency}. Add one to the plan, or choose terms it offers.");
