@@ -15,6 +15,9 @@ public sealed class InvoiceStatusTransitionTests
     {
         { InvoiceStatus.Issued, InvoiceStatus.Paid },
         { InvoiceStatus.Issued, InvoiceStatus.Void },
+        { InvoiceStatus.Issued, InvoiceStatus.Overdue },
+        { InvoiceStatus.Overdue, InvoiceStatus.Paid },
+        { InvoiceStatus.Overdue, InvoiceStatus.Void },
     };
 
     [Theory]
@@ -62,19 +65,26 @@ public sealed class InvoiceStatusTransitionTests
         }
     }
 
-    [Theory]
-    [InlineData(InvoiceStatus.Draft)]
-    [InlineData(InvoiceStatus.Overdue)]
-    public void TheStatesWithNoProducerYetGoNowhere(InvoiceStatus unreachable)
+    [Fact]
+    public void DraftStillHasNoProducerAndGoesNowhere()
     {
-        // Draft waits on manual invoicing; Overdue waits on the M3.4 job. Until something sets them,
-        // no transition out of them exists either — the day one gains a producer, its moves are added
-        // here deliberately rather than found to be already open.
+        // Draft waits on manual invoicing. Until something sets it, no transition touches it —
+        // the day it gains a producer, its moves are added deliberately rather than found open.
+        // (Overdue left this list in M3.4, when the overdue job became its producer.)
         foreach (InvoiceStatus target in Enum.GetValues<InvoiceStatus>())
         {
-            Assert.False(InvoiceStatusTransitions.IsAllowed(unreachable, target));
-            Assert.False(InvoiceStatusTransitions.IsAllowed(target, unreachable));
+            Assert.False(InvoiceStatusTransitions.IsAllowed(InvoiceStatus.Draft, target));
+            Assert.False(InvoiceStatusTransitions.IsAllowed(target, InvoiceStatus.Draft));
         }
+    }
+
+    [Fact]
+    public void AnOverdueInvoiceIsStillOpen()
+    {
+        // Late is not settled: an overdue invoice is paid and voided exactly like an issued one.
+        Assert.True(InvoiceStatusTransitions.IsOpen(InvoiceStatus.Overdue));
+        Assert.True(InvoiceStatusTransitions.IsAllowed(InvoiceStatus.Overdue, InvoiceStatus.Paid));
+        Assert.True(InvoiceStatusTransitions.IsAllowed(InvoiceStatus.Overdue, InvoiceStatus.Void));
     }
 
     [Theory]

@@ -103,7 +103,8 @@ public sealed class Invoice : AggregateRoot, IAuditable
     /// there is something to write it *for* (a dunning email, a report); until then this is the answer
     /// every read model uses.</para>
     /// </summary>
-    public bool IsOverdue(DateTimeOffset now) => Status == InvoiceStatus.Issued && now >= DueAtUtc;
+    public bool IsOverdue(DateTimeOffset now) =>
+        InvoiceStatusTransitions.IsOpen(Status) && now >= DueAtUtc;
 
     /// <summary>
     /// Issues an invoice for the given lines. The only way an <see cref="Invoice"/> comes into
@@ -243,6 +244,35 @@ public sealed class Invoice : AggregateRoot, IAuditable
             PaymentReference,
             Total.Amount,
             Total.Currency.Code));
+    }
+
+    /// <summary>
+    /// Records that the due date passed unpaid — the M3.4 overdue job's write, and the moment the
+    /// derived answer (<see cref="IsOverdue"/>) becomes a durable one dunning and reporting can
+    /// build on. The invoice stays open: payment and voiding work exactly as before.
+    /// </summary>
+    /// <exception cref="DomainException">
+    /// Not issued, or not actually past due at <paramref name="now"/> — a guard against a job run
+    /// with a wrong clock quietly branding punctual customers late.
+    /// </exception>
+    public void MarkOverdue(DateTimeOffset now)
+    {
+        if (now < DueAtUtc)
+        {
+            throw new DomainException(
+                $"This invoice is not due until {DueAtUtc:O}; it cannot be overdue at {now:O}.");
+        }
+
+        TransitionTo(InvoiceStatus.Overdue);
+
+        Raise(new InvoiceBecameOverdue(
+            Id,
+            GymId,
+            SubscriptionId,
+            InvoiceNumber,
+            Total.Amount,
+            Total.Currency.Code,
+            DueAtUtc));
     }
 
     /// <summary>

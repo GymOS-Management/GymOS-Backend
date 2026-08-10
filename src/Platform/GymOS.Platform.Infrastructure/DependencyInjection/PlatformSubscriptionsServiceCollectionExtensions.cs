@@ -1,6 +1,8 @@
+using GymOS.BuildingBlocks.Infrastructure.Jobs;
 using GymOS.Platform.Application.Invoices.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Infrastructure.Invoices;
+using GymOS.Platform.Infrastructure.Jobs;
 using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.Platform.Infrastructure.Persistence.Repositories;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,6 +28,10 @@ public static class PlatformSubscriptionsServiceCollectionExtensions
         services.TryAddScoped<IInvoiceRepository, InvoiceRepository>();
         services.TryAddScoped<IInvoiceNumberGenerator, InvoiceNumberGenerator>();
         services.TryAddScoped<IInvoiceQueries, InvoiceQueries>();
+
+        // The M3.4 sweeps: renewals every quarter hour, overdue hourly.
+        services.AddScheduledJob<RenewalJob>();
+        services.AddScheduledJob<InvoiceOverdueJob>();
 
         return services;
     }

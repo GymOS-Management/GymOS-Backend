@@ -63,6 +63,15 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
 
     public DateTimeOffset CurrentPeriodEndUtc { get; private set; }
 
+    /// <summary>
+    /// The date the billing cycle counts from — assignment, or the boundary where the cycle last
+    /// changed. Stored because it cannot be derived back: <c>AddMonths</c> clamps a Jan 31 into a
+    /// Feb 28, and a period chain computed end-over-end would inherit the clamp forever, billing
+    /// a month-end signup on the 28th for the rest of its life. <see cref="Renew"/> restores the
+    /// anchor's day-of-month whenever the target month has room for it.
+    /// </summary>
+    public DateTimeOffset PeriodAnchorUtc { get; private set; }
+
     /// <summary>When the trial ends. Null when the plan had none.</summary>
     public DateTimeOffset? TrialEndsAtUtc { get; private set; }
 
@@ -131,6 +140,7 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
 
         var subscription = new GymSubscription(Guid.NewGuid(), gymId, plan.Id, terms)
         {
+            PeriodAnchorUtc = now,
             CurrentPeriodStartUtc = now,
             CurrentPeriodEndUtc = now.AddMonths(terms.BillingCycle.Months()),
             Status = plan.TrialDays > 0 ? SubscriptionStatus.Trialing : SubscriptionStatus.Active,
@@ -172,6 +182,14 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
         // place would let the renewal job silently revert this change at the period end — a gym
         // that paid a prorated upgrade would find itself moved back to the plan it left.
         PendingChange = null;
+
+        // A new cycle counts from the boundary where it takes effect (cycle changes always land
+        // at a period boundary — the handler schedules cross-cycle changes there), so the anchor
+        // moves with it; a same-cycle change keeps the original billing day.
+        if (BillingCycle != terms.BillingCycle)
+        {
+            PeriodAnchorUtc = CurrentPeriodEndUtc;
+        }
 
         PlanId = plan.Id;
         PlanPriceId = terms.PlanPriceId;
@@ -342,9 +360,54 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
         }
 
         CurrentPeriodStartUtc = CurrentPeriodEndUtc;
-        CurrentPeriodEndUtc = CurrentPeriodStartUtc.AddMonths(BillingCycle.Months());
+        CurrentPeriodEndUtc = NextAnchoredPeriodEnd(CurrentPeriodStartUtc);
 
         Raise(new SubscriptionRenewed(Id, GymId, CurrentPeriodStartUtc, CurrentPeriodEndUtc));
+    }
+
+    /// <summary>
+    /// Advances the period until it contains <paramref name="now"/> — the catch-up a trial longer
+    /// than one billing cycle needs at conversion, so the first invoice covers the period the gym
+    /// is actually in rather than one that lapsed, unbilled, while the trial ran. One renewal
+    /// event per period crossed; a no-op when the period is already current.
+    /// </summary>
+    public void CatchUpPeriods(DateTimeOffset now)
+    {
+        while (AutoRenew && PeriodHasEnded(now))
+        {
+            Renew();
+        }
+    }
+
+    /// <summary>
+    /// One cycle after <paramref name="from"/>, with the anchor's day-of-month restored whenever
+    /// the target month has room — see <see cref="PeriodAnchorUtc"/> for why plain
+    /// <c>AddMonths</c> chaining is not this.
+    /// </summary>
+    private DateTimeOffset NextAnchoredPeriodEnd(DateTimeOffset from)
+    {
+        DateTimeOffset shifted = from.AddMonths(BillingCycle.Months());
+        int day = Math.Min(PeriodAnchorUtc.Day, DateTime.DaysInMonth(shifted.Year, shifted.Month));
+
+        return new DateTimeOffset(shifted.Year, shifted.Month, day, 0, 0, 0, TimeSpan.Zero)
+            .Add(PeriodAnchorUtc.TimeOfDay);
+    }
+
+    /// <summary>
+    /// Turns off auto-renewal: the subscription runs its paid period out and then
+    /// <see cref="Expire"/>s instead of renewing (the M3.4 sweep's third question).
+    ///
+    /// <para>No endpoint calls this yet — cancellation is the gesture the console offers today,
+    /// and it communicates more (a reason, an explicit decision). This exists because §2.3's
+    /// <c>auto_renew</c> column and the sweep's expiry branch are one policy, and the AD-45
+    /// settings surface will want the lever. No event, like
+    /// <see cref="CancelPendingPlanChange"/>: nothing downstream acts before the period ends, and
+    /// the audit trail records the column change.</para>
+    /// </summary>
+    public void DisableAutoRenew()
+    {
+        EnsureLive();
+        AutoRenew = false;
     }
 
     /// <summary>Clears the provenance pointer when the plan price it named is withdrawn.</summary>

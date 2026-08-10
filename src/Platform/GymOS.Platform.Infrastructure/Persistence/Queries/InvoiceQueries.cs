@@ -215,20 +215,38 @@ internal sealed class InvoiceQueries : IInvoiceQueries
         }
     }
 
+    public async Task<IReadOnlyList<Guid>> ListNewlyOverdueAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        await _dbContext.Set<Invoice>()
+            .AsNoTracking()
+            .Where(invoice => invoice.Status == InvoiceStatus.Issued && invoice.DueAtUtc <= now)
+            .OrderBy(invoice => invoice.DueAtUtc)
+            .Select(invoice => invoice.Id)
+            .ToListAsync(cancellationToken);
+
     // ── One definition of "overdue" ────────────────────────────────────────────────────────────
     // Three bindings of the same predicate — a queryable expression, its negation (EF cannot
     // negate an expression tree for us), and a plain bool for materialized rows. They must agree,
-    // which is why they live together: when M3.4 introduces the stored Overdue status, this block
-    // is the whole change surface. The domain's own answer is Invoice.IsOverdue.
+    // which is why they live together. Since M3.4 the stored status is part of the answer: the
+    // sweep writes Overdue durably, and an Issued invoice past its due date is overdue in the
+    // window before the next sweep notices.
+    //
+    // The boundary is INCLUSIVE (due <= now) at every binding — matching Invoice.IsOverdue
+    // (now >= DueAtUtc) and the sweep's candidate query, so the instant the sweep may brand an
+    // invoice overdue is the same instant every read model starts saying it.
 
     private static Expression<Func<Invoice, bool>> OverdueAt(DateTimeOffset now) =>
-        invoice => invoice.Status == InvoiceStatus.Issued && invoice.DueAtUtc < now;
+        invoice => invoice.Status == InvoiceStatus.Overdue
+            || (invoice.Status == InvoiceStatus.Issued && invoice.DueAtUtc <= now);
 
     private static Expression<Func<Invoice, bool>> NotOverdueAt(DateTimeOffset now) =>
-        invoice => invoice.Status != InvoiceStatus.Issued || invoice.DueAtUtc >= now;
+        invoice => invoice.Status != InvoiceStatus.Overdue
+            && (invoice.Status != InvoiceStatus.Issued || invoice.DueAtUtc > now);
 
     private static bool IsOverdueAt(InvoiceStatus status, DateTimeOffset dueAtUtc, DateTimeOffset now) =>
-        status == InvoiceStatus.Issued && dueAtUtc < now;
+        status == InvoiceStatus.Overdue
+            || (status == InvoiceStatus.Issued && dueAtUtc <= now);
 
     /// <summary>Escapes LIKE metacharacters so a search matches its text literally.</summary>
     private static string EscapeLike(string value) =>

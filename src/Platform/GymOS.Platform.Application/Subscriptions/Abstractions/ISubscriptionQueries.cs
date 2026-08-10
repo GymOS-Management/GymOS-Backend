@@ -83,4 +83,14 @@ public interface ISubscriptionQueries
     Task<IReadOnlyList<SubscriptionDetail>> ListHistoryForGymAsync(
         Guid gymId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Live subscriptions the renewal sweep should look at: an ended period, or an ended trial.
+    ///
+    /// <para>A deliberate over-approximation — cheap to evaluate on the existing
+    /// <c>(status, current_period_end_utc)</c> index, while <c>SubscriptionRenewalService</c>
+    /// re-derives the precise question per row inside its own transaction. Oldest period end
+    /// first, so a backlog clears in the order it became due.</para>
+    /// </summary>
+    Task<IReadOnlyList<Guid>> ListDueForRenewalAsync(DateTimeOffset now, CancellationToken cancellationToken);
 }

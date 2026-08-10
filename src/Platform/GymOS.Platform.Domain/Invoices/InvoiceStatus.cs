@@ -23,10 +23,10 @@ public enum InvoiceStatus
     Paid = 3,
 
     /// <summary>
-    /// Issued and past its due date. <b>Nothing sets this today</b>: it is the M3.4 overdue job's to
-    /// write. Until that job exists "overdue" is derived from the due date wherever it is shown
-    /// (<see cref="Invoice.IsOverdue"/>) — legible rather than wrong, the same choice M3.2 made for an
-    /// expired trial.
+    /// Issued and past its due date, written by the M3.4 overdue job. Still open — an overdue
+    /// invoice is paid and voided exactly like an issued one; the status exists so dunning and
+    /// reporting have something durable to hang on, while displays keep deriving "overdue right
+    /// now" from the due date (<see cref="Invoice.IsOverdue"/>).
     /// </summary>
     Overdue = 4,
 
@@ -39,20 +39,21 @@ public enum InvoiceStatus
 /// <c>SubscriptionStatusTransitions</c> established.
 ///
 /// <code>
-///   ┌────────┐    payment recorded    ┌──────┐
-///   │ Issued ├───────────────────────►│ Paid │ terminal
-///   └───┬────┘                        └──────┘
-///       │ voided
-///       ▼
-///   ┌──────┐
-///   │ Void │ terminal
-///   └──────┘
+///   ┌────────┐    due date passed    ┌─────────┐
+///   │ Issued ├──────────────────────►│ Overdue │
+///   └─┬────┬─┘                       └──┬────┬─┘
+///     │    │ payment recorded / voided  │    │
+///     │    └────────────┬───────────────┘    │
+///     │                 ▼                    │
+///     │             ┌──────┐             ┌──────┐
+///     └────────────►│ Paid │ terminal    │ Void │ terminal
+///                   └──────┘             └──────┘
 /// </code>
 ///
-/// <para><b>Two entries, deliberately.</b> <see cref="InvoiceStatus.Draft"/> and
-/// <see cref="InvoiceStatus.Overdue"/> are declared but unreachable — nothing produces them yet, so
-/// nothing may leave them either. The day each gains a producer (manual invoicing; the M3.4 job), its
-/// moves are added here as a decision, rather than discovered to have been open all along.</para>
+/// <para><b><see cref="InvoiceStatus.Draft"/> remains deliberately unreachable</b> — nothing produces
+/// it until manual invoicing exists, so nothing may leave it either. <see cref="InvoiceStatus.Overdue"/>
+/// gained its producer in M3.4 (the overdue job), and with it exactly the moves an open invoice has:
+/// payment and voiding.</para>
 ///
 /// <para><b>Both end states are terminal and both exist.</b> Paid means money arrived; Void means the
 /// invoice should never have been sent. Correcting a *paid* invoice is a credit note — a separate
@@ -65,6 +66,9 @@ public static class InvoiceStatusTransitions
     [
         (InvoiceStatus.Issued, InvoiceStatus.Paid),
         (InvoiceStatus.Issued, InvoiceStatus.Void),
+        (InvoiceStatus.Issued, InvoiceStatus.Overdue),
+        (InvoiceStatus.Overdue, InvoiceStatus.Paid),
+        (InvoiceStatus.Overdue, InvoiceStatus.Void),
     ];
 
     /// <summary>Statuses in which an invoice is still awaiting settlement.</summary>

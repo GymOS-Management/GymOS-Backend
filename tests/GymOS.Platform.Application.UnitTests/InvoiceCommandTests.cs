@@ -332,6 +332,38 @@ public sealed class InvoiceCommandTests
     }
 
     [Fact]
+    public async Task VoidingTheLastOpenInvoiceOfThePeriod_RecoversAPastDueSubscription()
+    {
+        // The invoice that flipped the subscription PastDue turns out to be wrong and is voided:
+        // nothing in the period remains open, so the gym must not stay flagged delinquent — the
+        // settled-period rule runs on the void path exactly as it does on payment.
+        var context = new Context(Manage);
+        Gym gym = context.GivenGym();
+        GymSubscription subscription = context.GivenSubscription(gym, pastDue: true);
+        Invoice invoice = context.GivenInvoice(gym, subscription);
+
+        Result<InvoiceDetail> result = await context.VoidAsync(invoice.Id, invoice.InvoiceNumber);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(SubscriptionStatus.Active, subscription.Status);
+    }
+
+    [Fact]
+    public async Task VoidingASideInvoice_LeavesPastDueWhileTheMainInvoiceIsOpen()
+    {
+        var context = new Context(Manage);
+        Gym gym = context.GivenGym();
+        GymSubscription subscription = context.GivenSubscription(gym, pastDue: true);
+        context.GivenInvoice(gym, subscription, "2026-000001"); // the main debt stays open
+        Invoice side = context.GivenInvoice(gym, subscription, "2026-000002");
+
+        Result<InvoiceDetail> result = await context.VoidAsync(side.Id, side.InvoiceNumber);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(SubscriptionStatus.PastDue, subscription.Status);
+    }
+
+    [Fact]
     public async Task VoidingTwice_IsRefusedAsAlreadyVoid()
     {
         var context = new Context(Manage);

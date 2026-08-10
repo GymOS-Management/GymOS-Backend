@@ -15,4 +15,19 @@ public interface IUnitOfWork
     /// know what the persistence layer throws.
     /// </exception>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Opens an explicit transaction so reads taken with locks (a repository's for-update
+    /// lookup) hold them until <see cref="IUnitOfWorkTransaction.CommitAsync"/>. Request handlers
+    /// do not need this — one save is already one transaction; it exists for the background
+    /// sweeps, where losing a race means burning an invoice number rather than returning a 409.
+    /// Disposing without committing rolls back.
+    /// </summary>
+    Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>An explicit transaction from <see cref="IUnitOfWork.BeginTransactionAsync"/>.</summary>
+public interface IUnitOfWorkTransaction : IAsyncDisposable
+{
+    Task CommitAsync(CancellationToken cancellationToken);
 }

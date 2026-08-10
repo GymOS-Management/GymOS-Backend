@@ -161,6 +161,9 @@ internal sealed class FakeSubscriptionRepository : ISubscriptionRepository
     public Task<GymSubscription?> FindByIdAsync(Guid subscriptionId, CancellationToken cancellationToken) =>
         Task.FromResult(_subscriptions.SingleOrDefault(subscription => subscription.Id == subscriptionId));
 
+    public Task<GymSubscription?> FindByIdForUpdateAsync(Guid subscriptionId, CancellationToken cancellationToken) =>
+        FindByIdAsync(subscriptionId, cancellationToken); // in-memory: no rows, no locks
+
     public void Add(GymSubscription subscription) => _subscriptions.Add(subscription);
 
     public void ExpectVersion(GymSubscription subscription, uint expectedVersion)
@@ -207,6 +210,19 @@ internal sealed class FakeSubscriptionQueries : ISubscriptionQueries
                 .Where(subscription => subscription.GymId == gymId)
                 .Select(Project)
                 .Select(detail => detail!)
+                .ToList());
+
+    public Task<IReadOnlyList<Guid>> ListDueForRenewalAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>(
+            _subscriptions.Subscriptions
+                .Where(subscription => subscription.IsLive
+                    && (subscription.CurrentPeriodEndUtc <= now
+                        || (subscription.Status == SubscriptionStatus.Trialing
+                            && subscription.TrialEndsAtUtc <= now)))
+                .OrderBy(subscription => subscription.CurrentPeriodEndUtc)
+                .Select(subscription => subscription.Id)
                 .ToList());
 
     private SubscriptionDetail? Project(GymSubscription subscription)

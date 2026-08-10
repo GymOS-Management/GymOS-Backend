@@ -332,6 +332,62 @@ public sealed class InvoiceTests
         Assert.False(voided.IsOverdue(voided.DueAtUtc.AddDays(30)));
     }
 
+    // ── Overdue as a durable state (M3.4: the job's write) ───────────────────────
+
+    [Fact]
+    public void MarkOverdue_RecordsTheStateAndRaisesTheEvent()
+    {
+        Invoice invoice = Issued(49.99m);
+        DateTimeOffset pastDue = invoice.DueAtUtc.AddHours(1);
+
+        invoice.MarkOverdue(pastDue);
+
+        Assert.Equal(InvoiceStatus.Overdue, invoice.Status);
+        Assert.True(invoice.IsOverdue(pastDue)); // the stored state and the derived answer agree
+
+        var became = Assert.IsType<InvoiceBecameOverdue>(Assert.Single(invoice.DomainEvents));
+        Assert.Equal(invoice.Id, became.InvoiceId);
+        Assert.Equal(GymId, became.GymId);
+        Assert.Equal(SubscriptionId, became.SubscriptionId);
+        Assert.Equal(49.99m, became.Total);
+        Assert.Equal("EUR", became.Currency);
+        Assert.Equal(invoice.DueAtUtc, became.DueAtUtc);
+    }
+
+    [Fact]
+    public void MarkOverdue_RefusesAnInvoiceThatIsNotActuallyPastDue()
+    {
+        // The guard against a job run with a wrong clock quietly branding punctual customers late.
+        Invoice invoice = Issued();
+
+        Assert.Throws<DomainException>(() => invoice.MarkOverdue(invoice.DueAtUtc.AddSeconds(-1)));
+        Assert.Equal(InvoiceStatus.Issued, invoice.Status);
+    }
+
+    [Fact]
+    public void AnOverdueInvoiceCanStillBePaidAndStillBeVoided()
+    {
+        Invoice paidLate = Issued();
+        paidLate.MarkOverdue(paidLate.DueAtUtc.AddDays(1));
+        paidLate.MarkPaid("late but honest", paidLate.DueAtUtc.AddDays(2));
+        Assert.Equal(InvoiceStatus.Paid, paidLate.Status);
+
+        Invoice voidedLate = Issued();
+        voidedLate.MarkOverdue(voidedLate.DueAtUtc.AddDays(1));
+        voidedLate.MarkVoid();
+        Assert.Equal(InvoiceStatus.Void, voidedLate.Status);
+    }
+
+    [Fact]
+    public void MarkOverdue_Twice_IsRefused()
+    {
+        // The job's sweep filters on Issued, so a second write is a defect, not a business case.
+        Invoice invoice = Issued();
+        invoice.MarkOverdue(invoice.DueAtUtc.AddDays(1));
+
+        Assert.Throws<DomainException>(() => invoice.MarkOverdue(invoice.DueAtUtc.AddDays(2)));
+    }
+
     // ── The rule on its own ──────────────────────────────────────────────────────
 
     [Theory]

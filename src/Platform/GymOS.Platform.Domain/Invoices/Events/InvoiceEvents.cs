@@ -39,6 +39,23 @@ public sealed record InvoicePaid(
 }
 
 /// <summary>
+/// The due date passed with the invoice unpaid (the M3.4 overdue job's finding). The hook a dunning
+/// email hangs on when the notification surface exists; until then it is the audit trail's entry for
+/// "the platform noticed".
+/// </summary>
+public sealed record InvoiceBecameOverdue(
+    Guid InvoiceId,
+    Guid GymId,
+    Guid SubscriptionId,
+    string InvoiceNumber,
+    decimal Total,
+    string Currency,
+    DateTimeOffset DueAtUtc) : DomainEvent
+{
+    public override string EventName => "gymos.platform.invoice.became_overdue";
+}
+
+/// <summary>
 /// An invoice was cancelled before payment. Distinct from a credit note, which reverses one already
 /// paid and is a document in its own right (deferred — see <c>docs/BusinessRules/Invoices.md</c>).
 /// </summary>

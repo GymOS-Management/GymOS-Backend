@@ -1,9 +1,12 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Idempotency;
+using GymOS.BuildingBlocks.Application.Jobs;
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
+using GymOS.BuildingBlocks.Infrastructure.Jobs;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Idempotency;
+using GymOS.Platform.Infrastructure.Jobs;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
@@ -57,6 +60,16 @@ public static class PlatformInfrastructureServiceCollectionExtensions
             .ValidateOnStart();
 
         services.TryAddScoped<IdempotencyRecordMaintainer>();
+
+        // Cross-instance job coordination rides the same database as everything else (M3.4) —
+        // and so does the clock the sweeps decide with: durable verdicts (Overdue, Expired, a
+        // billed renewal) must not depend on any one host's idea of the time.
+        services.TryAddScoped<IJobLock, PostgresJobLock>();
+        services.TryAddScoped<IDatabaseClock, PostgresDatabaseClock>();
+
+        // The recurring half of retention (AD-23) — the startup maintainers above cover first
+        // boot; this covers every night after.
+        services.AddScheduledJob<RetentionJob>();
 
         services.TryAddScoped<IAuditTrail>(provider => new AuditTrail(
             provider.GetRequiredService<AppDbContext>(),

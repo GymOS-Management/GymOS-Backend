@@ -4,6 +4,7 @@ using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.BuildingBlocks.Application.Idempotency;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Infrastructure.DependencyInjection;
+using GymOS.BuildingBlocks.Infrastructure.Jobs;
 using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Infrastructure.DependencyInjection;
 using GymOS.Platform.Infrastructure.Idempotency;
@@ -76,6 +77,10 @@ try
     builder.Services.AddPlatformIdentity(builder.Configuration);
     builder.Services.AddPlatformGyms();
     builder.Services.AddPlatformSubscriptions();
+
+    // The job runner (M3.4). Jobs register below it; Jobs:Enabled=false turns the host off for
+    // tests that drive the sweeps by hand.
+    builder.Services.AddJobHost();
 
     builder.Services.AddGymOSAuthentication();
     builder.Services.AddGymOSRateLimiting(builder.Configuration);

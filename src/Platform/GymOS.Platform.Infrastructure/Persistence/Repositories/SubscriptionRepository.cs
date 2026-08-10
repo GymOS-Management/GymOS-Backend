@@ -25,6 +25,23 @@ internal sealed class SubscriptionRepository : ISubscriptionRepository
         _dbContext.Set<GymSubscription>()
             .SingleOrDefaultAsync(subscription => subscription.Id == subscriptionId, cancellationToken);
 
+    public async Task<GymSubscription?> FindByIdForUpdateAsync(
+        Guid subscriptionId,
+        CancellationToken cancellationToken)
+    {
+        // Two statements on purpose. EF has no FOR UPDATE operator, and FromSql cannot carry
+        // this entity: EF composes over raw SQL whenever complex properties (Money) are mapped,
+        // and the composed projection loses their column names. So the lock is taken as a plain
+        // scalar statement — a row lock needs no entity — and the aggregate then loads through
+        // the normal pipeline on the same connection and transaction, where the lock is already
+        // held. Callers hold an IUnitOfWork transaction, or the lock would die with statement one.
+        await _dbContext.Database.ExecuteSqlAsync(
+            $"SELECT 1 FROM platform.gym_subscriptions WHERE id = {subscriptionId} FOR UPDATE",
+            cancellationToken);
+
+        return await FindByIdAsync(subscriptionId, cancellationToken);
+    }
+
     public void Add(GymSubscription subscription) =>
         _dbContext.Set<GymSubscription>().Add(subscription);
 

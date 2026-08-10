@@ -34,6 +34,19 @@ internal sealed class SubscriptionQueries : ISubscriptionQueries
                 .OrderByDescending(subscription => subscription.CreatedAtUtc),
             cancellationToken);
 
+    public async Task<IReadOnlyList<Guid>> ListDueForRenewalAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        await _dbContext.Set<GymSubscription>()
+            .AsNoTracking()
+            .Where(subscription => LiveStatuses.Contains(subscription.Status)
+                && (subscription.CurrentPeriodEndUtc <= now
+                    || (subscription.Status == SubscriptionStatus.Trialing
+                        && subscription.TrialEndsAtUtc <= now)))
+            .OrderBy(subscription => subscription.CurrentPeriodEndUtc)
+            .Select(subscription => subscription.Id)
+            .ToListAsync(cancellationToken);
+
     /// <summary>
     /// One projection for both reads. The plan is joined for its code and name, because the question a
     /// reader asks is "which plan", and an id is not an answer a human can use.
