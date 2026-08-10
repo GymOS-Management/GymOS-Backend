@@ -2,6 +2,7 @@ using GymOS.BuildingBlocks.Application.Behaviors;
 using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.BuildingBlocks.Application.Idempotency;
 using GymOS.BuildingBlocks.Application.Messaging;
+using GymOS.BuildingBlocks.Infrastructure.Time;
 using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.SharedKernel.Results;
@@ -43,7 +44,14 @@ public sealed class IdempotencyPipelineTests : IAsyncLifetime
     private readonly PostgresFixture _postgres;
     private string _connectionString = null!;
     private readonly ExecutionCounter _counter = new();
-    private readonly FakeClock _clock = new(new DateTimeOffset(2026, 8, 7, 12, 0, 0, TimeSpan.Zero));
+
+    // Real wall-clock, NOT a FakeClock — the same reasoning as IdempotencyStoreTests: the store
+    // compares expiry and lease columns against PostgreSQL's own now(), so a clock pinned in the
+    // past writes records that the database judges by real time. A fixed clock here was a time
+    // bomb: RetentionPeriod is 72h, and the moment real time passed fixed-time + 72h, every
+    // stored outcome was already expired at birth ("expired behaves as absent") and nothing
+    // replayed — these tests failed on every checkout, three days after the pinned date.
+    private readonly SystemClock _clock = new();
 
     public IdempotencyPipelineTests(PostgresFixture postgres) => _postgres = postgres;
 
