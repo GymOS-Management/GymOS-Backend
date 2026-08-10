@@ -51,9 +51,11 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
 
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gymos_dev_password}
+      # Set GYMOS_DB_CONNECTION in .env to point the API at an external shared database (e.g. a
+      # team dev instance) instead of the local sidecar. Unset, it falls back to the container.
       ConnectionStrings__Database: >-
-        Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=${POSTGRES_USER:-gymos};Password=${POSTGRES_PASSWORD:-gymos_dev_password};Include
-        Error Detail=true
+        ${GYMOS_DB_CONNECTION:-Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=${POSTGRES_USER:-gymos};Password=${POSTGRES_PASSWORD:-gymos_dev_password};Include
+        Error Detail=true}
 
       # On in development: a fresh clone has an empty database, and requiring a manual migration
       # step would make "one command" untrue. Production applies migrations from the deployment
