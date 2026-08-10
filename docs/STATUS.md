@@ -22,8 +22,8 @@ before resuming work on any machine.
 | **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — **734 tests green**, verified live · ⬅ **awaiting review** |
 | **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
 | **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
-| **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ complete on branch `m3.3-invoices` — **1049 tests green**, verified live incl. idempotent replay, **post-review fixes applied (10/10 findings)** · ⬅ **ready to merge on approval** |
-| M3.4 — renewal/overdue jobs | **blocked**: a job runner (see below); nothing yet runs work on a schedule |
+| **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ **merged to `main`** (`e39eb73`) — reviewed at high effort (10 findings, all fixed), **1049 tests green**, verified live incl. idempotent replay |
+| **M3.4 — job runner + renewal/overdue jobs** | 🚧 **in progress on branch `m3.4-jobs`** — design approved 2026-08-10 (`docs/superpowers/specs/2026-08-10-job-runner-design.md`): hand-rolled schedules, auto-PastDue on overdue period invoices, trials auto-convert-and-bill |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
 | M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
