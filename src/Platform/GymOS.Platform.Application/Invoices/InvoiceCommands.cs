@@ -106,12 +106,13 @@ internal sealed class MarkInvoicePaidCommandHandler
 
         // Guarded before the domain call so the caller gets the precise code — the transition table
         // would refuse both, but "already paid" and "not payable" are different conversations.
+        // Open means Issued or Overdue (M3.4): a late payment is still a payment.
         if (invoice.Status == InvoiceStatus.Paid)
         {
             return Result.Failure<InvoiceDetail>(InvoiceErrors.AlreadyPaid);
         }
 
-        if (invoice.Status != InvoiceStatus.Issued)
+        if (!InvoiceStatusTransitions.IsOpen(invoice.Status))
         {
             return Result.Failure<InvoiceDetail>(InvoiceErrors.NotPayable);
         }
