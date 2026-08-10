@@ -16,40 +16,6 @@ namespace GymOS.ArchitectureTests;
 /// </summary>
 public sealed class IdempotentCommandConventionTests
 {
-    /// <summary>
-    /// Exemplar only, not production code: keeps <see cref="Every_idempotent_command_is_a_Result_returning_command"/>
-    /// exercised while no production <see cref="IIdempotentCommand"/> exists yet (AD-39, first consumer:
-    /// invoices mark-paid). This runner errors on a <c>[Theory]</c> with empty <c>MemberData</c> rather than
-    /// skipping it, so the theory needs at least one row until production code lands.
-    /// </summary>
-    private sealed record RecordPayment(Guid CommandId) : ICommand<Result>, IIdempotentCommand
-    {
-        public string OperationKey => "test.record-payment";
-
-        public TimeSpan RetentionPeriod => TimeSpan.FromHours(72);
-
-        public bool KeyRequired => true;
-    }
-
-    /// <summary>
-    /// Exemplar payload demonstrating the documented Money wire convention: amount and
-    /// currency-code primitives, never a <see cref="Money"/> or <see cref="Currency"/> member.
-    /// Keeps <see cref="Idempotent_command_payloads_never_carry_Money_or_Currency"/>'s property
-    /// walker exercised on a realistic DTO until a production command with a payload lands.
-    /// </summary>
-    private sealed record PaymentReceiptDto(Guid PaymentId, decimal Amount, string CurrencyCode, IReadOnlyList<string> Notes);
-
-    /// <summary>Second seeded exemplar (same reasoning as <see cref="RecordPayment"/>), this one
-    /// with a <c>Result&lt;T&gt;</c> payload so the payload rules are exercised end to end.</summary>
-    private sealed record RecordPaymentWithReceipt(Guid CommandId) : ICommand<Result<PaymentReceiptDto>>, IIdempotentCommand
-    {
-        public string OperationKey => "test.record-payment-with-receipt";
-
-        public TimeSpan RetentionPeriod => TimeSpan.FromHours(72);
-
-        public bool KeyRequired => true;
-    }
-
     public static TheoryData<Type> AllIdempotentCommands()
     {
         var data = new TheoryData<Type>();
@@ -61,24 +27,20 @@ public sealed class IdempotentCommandConventionTests
             data.Add(type);
         }
 
-        // Seeded exemplars (see RecordPayment / RecordPaymentWithReceipt above) rather than left
-        // empty: an empty MemberData errors on this runner instead of skipping, and the seeds keep
-        // the theories' assertions live and exercised in the meantime.
-        data.Add(typeof(RecordPayment));
-        data.Add(typeof(RecordPaymentWithReceipt));
-
         return data;
     }
 
     [Fact]
-    public void The_theory_below_is_not_vacuous_or_this_fact_documents_why()
+    public void The_theories_below_are_not_vacuous()
     {
-        // No production IIdempotentCommand exists yet (first consumer: invoices mark-paid).
-        // When one lands, this fact simply keeps passing; the theory does the real work.
-        Assert.True(AllIdempotentCommands().Count >= 0,
-            "This assertion cannot fail — it exists as documentation: the theories below run on " +
-            "seeded exemplars until the first production IIdempotentCommand lands, at which point " +
-            "discovery over ProductionAssemblies.All picks it up automatically.");
+        // MarkInvoicePaidCommand (M3.3) is the first production IIdempotentCommand, so discovery
+        // is expected to find at least one. The seeded exemplars that kept the theories alive
+        // before it landed are gone — going back to zero would mean the theories silently stopped
+        // checking anything, which is exactly the failure mode this fact exists to catch.
+        Assert.True(AllIdempotentCommands().Count > 0,
+            "No IIdempotentCommand found in production assemblies. If the last one was removed " +
+            "deliberately, reinstate seeded exemplars here (see git history) so the theories stay " +
+            "exercised; an empty MemberData errors on this runner rather than skipping.");
     }
 
     [Theory]

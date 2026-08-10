@@ -35,6 +35,29 @@ public sealed record SubscriptionPlanChanged(
     public override string EventName => "gymos.platform.subscription.plan_changed";
 }
 
+/// <summary>
+/// A plan change was agreed but does not take effect until the end of the paid period — what a
+/// downgrade becomes.
+///
+/// <para>Deliberately not <see cref="SubscriptionPlanChanged"/>, for the reason
+/// <see cref="SubscriptionCancellationScheduled"/> is not <see cref="SubscriptionCanceled"/>: a
+/// consumer that provisioned the new plan's entitlements on this event would cut a paying gym down to
+/// the cheaper plan's limits weeks before it agreed to be. The plan actually changes when the M3.4
+/// renewal job applies this, and that raises <see cref="SubscriptionPlanChanged"/>.</para>
+/// </summary>
+public sealed record PlanChangeScheduled(
+    Guid SubscriptionId,
+    Guid GymId,
+    Guid FromPlanId,
+    Guid ToPlanId,
+    string BillingCycle,
+    decimal Amount,
+    string Currency,
+    DateTimeOffset ChangeAtUtc) : DomainEvent
+{
+    public override string EventName => "gymos.platform.subscription.plan_change_scheduled";
+}
+
 public sealed record SubscriptionTrialConverted(Guid SubscriptionId, Guid GymId) : DomainEvent
 {
     public override string EventName => "gymos.platform.subscription.trial_converted";

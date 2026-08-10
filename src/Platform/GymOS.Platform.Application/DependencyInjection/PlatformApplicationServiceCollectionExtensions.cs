@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.Platform.Application.Identity;
 using GymOS.Platform.Application.Identity.Users;
+using GymOS.Platform.Application.Invoices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -19,6 +20,7 @@ public static class PlatformApplicationServiceCollectionExtensions
         services.AddHandlersFromAssembly(typeof(AssemblyMarker).Assembly);
         services.TryAddScoped<SessionFactory>();
         services.TryAddScoped<SuperAdminGuard>();
+        services.TryAddScoped<InvoiceIssuer>();
 
         return services;
     }

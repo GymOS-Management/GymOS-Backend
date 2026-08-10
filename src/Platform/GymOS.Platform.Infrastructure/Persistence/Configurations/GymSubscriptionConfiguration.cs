@@ -23,6 +23,29 @@ public sealed class GymSubscriptionConfiguration : IEntityTypeConfiguration<GymS
         // GymSubscription.PlanPriceId for why an FK could not be the snapshot §2.3 asks for.
         builder.HasMoney(subscription => subscription.Price, "price");
 
+        // A scheduled plan change, in the subscription's own row. An owned type rather than the
+        // complex property Price uses, because the whole value is optional and EF has no nullable
+        // complex-type mapping — the price columns are never null, these five always are together.
+        //
+        // The amount is a plain decimal beside its currency code rather than a Money for the same
+        // reason (rule R4's serialisation-boundary case); MoneyConventions' column type is reused so
+        // a pending price and a live one cannot disagree about precision.
+        builder.OwnsOne(subscription => subscription.PendingChange, pending =>
+        {
+            pending.Property(change => change.PlanId).HasColumnName("pending_plan_id");
+            pending.Property(change => change.PlanPriceId).HasColumnName("pending_plan_price_id");
+            pending.Property(change => change.BillingCycle)
+                .HasColumnName("pending_billing_cycle")
+                .HasConversion<short>();
+            pending.Property(change => change.Amount)
+                .HasColumnName("pending_price_amount")
+                .HasColumnType(MoneyConventions.AmountColumnType);
+            pending.Property(change => change.CurrencyCode)
+                .HasColumnName("pending_price_currency")
+                .HasMaxLength(MoneyConventions.CurrencyCodeLength);
+            pending.Property(change => change.ChangeAtUtc).HasColumnName("pending_change_at_utc");
+        });
+
         builder.HasOne<Gym>()
             .WithMany()
             .HasForeignKey(subscription => subscription.GymId)

@@ -1,6 +1,6 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-07 · after the AD-39 idempotency framework
+**Last updated:** 2026-08-10 · M3.3 complete, all 7 tasks (branch `m3.3-invoices`, not merged)
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -22,7 +22,7 @@ before resuming work on any machine.
 | **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — **734 tests green**, verified live · ⬅ **awaiting review** |
 | **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
 | **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
-| M3.3 — invoices | unblocked by AD-39 above — next increment |
+| **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ complete on branch `m3.3-invoices` — **1049 tests green**, verified live incl. idempotent replay, **post-review fixes applied (10/10 findings)** · ⬅ **ready to merge on approval** |
 | M3.4 — renewal/overdue jobs | **blocked**: a job runner (see below); nothing yet runs work on a schedule |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
@@ -492,6 +492,136 @@ theory that enforces this live against an in-test-assembly exemplar until then.
 5. **`IdempotencyRecordMaintainer`** purges expired records at startup — an interim owner of
    retention, same shape as `AuditLogPartitionMaintainer` (M1.3). Both fold into the M3.4 retention
    job once it exists (see Known open items).
+
+## M3.3 as built
+
+**Branch `m3.3-invoices`** (not merged; `main` is untouched). All seven tasks done, each its own
+commit. Design: `docs/superpowers/specs/2026-08-08-invoices-design.md`. Plan:
+`docs/superpowers/plans/2026-08-08-invoices.md`. Business rules as built:
+**`docs/BusinessRules/Invoices.md`**. Per the increment protocol this whole branch is
+**awaiting review before merge**.
+
+| Task | State |
+|---|---|
+| 1 — Invoice domain (aggregate, transition table, rules, events) | ✅ `dbae5dc` |
+| 2 — proration calculator + scheduled plan change | ✅ `3936aba` |
+| 3 — persistence (EF config, `AddInvoices` migration, repository, number generator) | ✅ `615fdd1` |
+| 4 — issuing on assignment / trial conversion / plan change, net-sign policy | ✅ `1f46070` |
+| 5 — mark-paid (first production `IIdempotentCommand`), void, queries | ✅ `9ab1436` |
+| 6 — infrastructure queries + endpoints + OpenAPI snapshot (5 new operations only) | ✅ `f7ae208` |
+| 7 — docs, exemplar cleanup, full verification, live idempotent-replay proof | ✅ (this commit) |
+
+**Test counts after the review fixes** — every project run complete, no `Aborted`, 0 build warnings:
+SharedKernel 126 · BuildingBlocks 42 · Architecture **133** · Domain **326** · Application **181** ·
+Infrastructure **67** · Integration **174** = **1049** (was 997 after task 2). Architecture went down
+by two versus task 2: removing the two seeded idempotency exemplars deletes four theory rows while
+the real `MarkInvoicePaidCommand` adds two.
+
+**Unrelated latent failure fixed in passing:** `IdempotencyPipelineTests` pinned a `FakeClock` at
+2026-08-07 while the store compares expiry against PostgreSQL's real `now()`; with 72h retention,
+every stored outcome was born expired once real time passed 2026-08-10 12:00 UTC and all four tests
+failed on any checkout. They now use `SystemClock`, like `IdempotencyStoreTests` always did.
+
+### Decisions taken in tasks 3–7
+
+- **The number function guards its own creation race.** Two first-of-the-year issuers can both pass
+  the `pg_sequences` existence check and race `CREATE SEQUENCE`; `IF NOT EXISTS` does not close that
+  window (PostgreSQL can surface it as a catalog unique violation). The function catches
+  `duplicate_object`/`unique_violation` and proceeds — the loser uses the winner's sequence. The
+  persistence test runs its 8 parallel callers **cold** so the guard itself is exercised.
+- **"Same plan" is keyed on plan *and terms*, not plan id alone** — plan-id-only keying would forbid
+  a same-plan cycle change (monthly → yearly), the adjustment
+  `AGymAlreadyOnAWithdrawnPlan_CanChangeItsTerms` protects. **Post-review:** re-sending the current
+  terms is an idempotent **no-op success** (the route is a PUT; retry-after-timeout must succeed),
+  not the `change_to_same_plan` refusal originally built — that error is gone. With a pending change
+  it is still the cancellation gesture.
+- **`InvoiceIssuer` only Adds; the calling handler saves** — invoice and subscription change commit in
+  one transaction (`SuperAdminGuard` precedent). `SubscriptionStateCommandHandlers.MutateAsync` gained
+  an async-mutate overload so trial conversion can load the plan and issue inside the same flow.
+- **Invoice line display order is a projection decision**: `invoice_lines` deliberately has no
+  insertion-order column (lines are write-once), so the detail orders charges before credits
+  (amount descending). The plan's "ordered by creation" was unimplementable without a schema addition
+  nobody needs.
+- **`InvoiceLine` is exempt from the concurrency-token rule**: write-once at issue, and the only
+  mutations that exist (mark-paid, void) touch the invoice row, whose `xmin` guards them.
+- **PastDue interplay is scoped to the current period**: paying an invoice issued on or after
+  `CurrentPeriodStartUtc` flips a PastDue subscription back to Active in the same save; paying an
+  older invoice does not.
+- **The gym invoice tab returns an empty list for an unknown gym**, not 404 — "no invoices" is the
+  truthful answer either way, and gym existence is the gym endpoints' question.
+- **OpenAPI snapshot diff verified semantically**: exactly five operations added (`ListInvoices`,
+  `GetInvoice`, `MarkInvoicePaid`, `VoidInvoice`, `ListGymInvoices`), none removed — the raw diff is
+  large only because path insertion re-orders the document.
+- The AD-39 HTTP tests deferred from that increment landed in `InvoiceApiTests.MarkPaidIsIdempotentEndToEnd`:
+  missing key → 400 `idempotency.key_required`; replay → byte-identical body + `Idempotency-Replayed: true`;
+  reused key with different body → 422 `idempotency.key_reuse_mismatch`; deterministic failure
+  (`invoices.already_paid`) stored and replayed under its own key.
+
+### Post-plan review fixes (workflow review, 10 confirmed findings, all fixed)
+
+A high-effort adversarial review before merge confirmed ten findings — six of them real money bugs
+concentrated in the plan-change path. All are fixed with a pinning test each:
+
+- **Plan changes are gated by state before proration runs** (the decision tree in
+  `docs/BusinessRules/Invoices.md`): Trialing → change now, bill nothing (was: prorated a period the
+  gym never paid for, then double-billed at conversion); period already ended → change now, bill
+  nothing (was: parked on a pending change dated in the past that no job applies); PastDue →
+  scheduled at period end (was: credited unpaid time); cross-cycle → scheduled at period end (was:
+  allocated e.g. an annual price over a monthly period, a ~12× overcharge).
+- **`GymSubscription.ChangePlan` clears `PendingChange`** — an applied change supersedes a scheduled
+  one, or the renewal job would revert a paid upgrade.
+- **Same-terms re-assign is an idempotent no-op success**; `subscriptions.change_to_same_plan`
+  removed (PUT retry safety, restoring main's behavior).
+- **PastDue recovery requires the period to be *settled***: mark-paid flips the subscription only
+  when no other open invoice of the current period remains
+  (`IInvoiceRepository.AnyOtherOpenForSubscriptionAsync` — `InvoiceStatusTransitions.IsOpen`'s first
+  consumer).
+- **`ListForGymAsync` pages until complete** (was: silently truncated at 200), **invoice search
+  escapes LIKE metacharacters**, **the status filter validates against enum names** (Enum.TryParse
+  accepts any integer string), and the **overdue predicate has one definition** in `InvoiceQueries`.
+
+### Decisions taken in tasks 1–2
+
+- **Tax rounds to the currency's minor units**, via `Subtotal.Multiply(rate, RoundingPolicy.HalfEven)` —
+  not the plan's `Math.Round(…, 2, …)`, which truncates KWD (3 minor units) and inflates JPY (0). Same
+  answer at today's 0% rate; both currencies are pinned by tests. **Task 3's `tax_rate numeric(5,4)` column
+  is unaffected**, but the amount columns must keep `MoneyConventions`' `numeric(14,4)`.
+- **`Draft` and `Overdue` are declared but unreachable in both directions**, asserted by the 5×5 matrix.
+  Draft waits on manual invoicing, Overdue on the M3.4 job; until then overdue is derived
+  (`Invoice.IsOverdue`), the M3.2 trial-expiry precedent. Whoever gives either a producer adds its
+  transitions deliberately.
+- **A negative invoice total throws.** The design routes a net credit to a scheduled plan change, so a
+  negative total is always a caller defect — there is no credit-note document to carry one.
+- **Line quantity must be 1**, refused with a message naming the constraint. Forces the first producer of
+  quantity > 1 to add the multiply-with-a-rounding-policy path rather than inherit `Amount = UnitPrice`.
+- **`Proration.Compute` takes both day counts from one calculation**, which is what makes the net's sign
+  stable — and the sign is the entire upgrade/downgrade policy. Returns null when no days remain; clamps
+  `daysUsed` so a backdated request cannot produce a negative ratio (which `Allocate` refuses).
+- **The event-name worry written into task 2 was unfounded.** `EventNamesUseThePastTense` requires *any*
+  underscore-separated word to be past tense, not every one, and `cancellation_scheduled` was already the
+  precedent — so `gymos.platform.subscription.plan_change_scheduled` passes unchanged.
+- **`CancelPendingPlanChange` raises no event**, unlike `WithdrawCancellation`: nothing acts on a scheduled
+  change before the renewal job applies it, so there is no consumer to inform.
+- **`PendingPlanChange` is exempt from the concurrency-token rule** — EF reports owned types from
+  `GetEntityTypes()`, and it lives in the subscription's row, which its `xmin` already guards.
+- **No FK on `pending_plan_id` / `pending_plan_price_id`** — EF cannot express one from inside an owned
+  type without raw SQL. Low risk while plans are undeletable (M3.1 makes `DELETE` a 405); revisit if that
+  ever changes.
+- Extra domain guards added beyond the plan, each with a test: empty gym/subscription id, blank invoice
+  number, due-before-issued, negative tax rate, blank or over-long line description
+  (`InvoiceLine.MaximumDescriptionLength = 500` — **task 3's EF config should reuse that constant**).
+- Test files are **flat** in `tests/GymOS.Platform.Domain.UnitTests/`, matching that project; the plan's
+  `Invoices/` and `Subscriptions/` subfolders do not exist and should not be created.
+
+### Environment notes from this session
+
+- `dotnet ef migrations add` worked with the dev stack already up (`gymos-postgres` + `gymos-api`
+  containers healthy); no host `dotnet run` was needed and nothing locked the build output.
+- **The test host did not crash once** across ~10 full-project runs, including the 155-test integration
+  suite. The `0x80131506` warning below still stands, but it did not reproduce today.
+- **PowerShell here-strings (`@'…'@`) break `git commit -m` when the message contains double quotes** —
+  the argument terminates early and git reads the rest as pathspecs. Write the message to a file and use
+  `git commit -F` for anything with quotes in it.
 
 ## Standing rules (non-negotiable, enforced)
 

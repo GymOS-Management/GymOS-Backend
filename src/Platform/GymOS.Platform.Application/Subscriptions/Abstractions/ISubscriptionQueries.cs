@@ -35,7 +35,23 @@ public sealed record SubscriptionDetail(
     bool AutoRenew,
     string? CancellationReason,
     DateTimeOffset CreatedAtUtc,
-    string RowVersion);
+    string RowVersion,
+    PendingPlanChangeDetail? PendingChange = null);
+
+/// <summary>
+/// A scheduled plan change, as the API reports it — what the subscription becomes at
+/// <paramref name="ChangeAtUtc"/>, visible so an operator can see (and cancel) what is queued.
+///
+/// <para>Defaulted to null on <see cref="SubscriptionDetail"/> rather than added to every construction
+/// site at once: the real projection lands with the M3.3 endpoints increment, and a fake that predates
+/// it still compiles honestly — it genuinely has nothing pending to report.</para>
+/// </summary>
+public sealed record PendingPlanChangeDetail(
+    Guid PlanId,
+    string BillingCycle,
+    decimal Amount,
+    string Currency,
+    DateTimeOffset ChangeAtUtc);
 
 /// <summary>
 /// A gym's subscription as it appears *inside* the gym detail response — the same facts without the

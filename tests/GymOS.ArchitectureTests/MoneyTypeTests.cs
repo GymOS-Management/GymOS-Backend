@@ -44,6 +44,13 @@ public sealed class MoneyTypeTests
         "GymOS.SharedKernel.Currencies.Money.Of",
         "GymOS.SharedKernel.Currencies.Money.FromMinorUnits",
         "GymOS.SharedKernel.Currencies.Money.ToMinorUnits",
+
+        // A tax *rate* is a scalar multiplier, not an amount — 0.19 is not money in any currency, and
+        // every figure it produces (TaxAmount, Total) is Money. It matches only because "tax" is on the
+        // money-word list, which cannot tell a rate from the amount it yields. `Issue` is listed for the
+        // same reason: it takes that rate as a parameter.
+        "GymOS.Platform.Domain.Invoices.Invoice.TaxRate",
+        "GymOS.Platform.Domain.Invoices.Invoice.Issue",
     };
 
     /// <summary>

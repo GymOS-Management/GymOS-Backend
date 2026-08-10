@@ -81,6 +81,15 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
 
     public string? CancellationReason { get; private set; }
 
+    /// <summary>
+    /// A plan change agreed but not yet applied — <see langword="null"/> when there is none.
+    ///
+    /// <para>At most one. A queue of scheduled changes would leave the renewal job deciding which one
+    /// the gym meant, so a second request replaces the first: latest wins, and the audit trail keeps
+    /// the ones it replaced.</para>
+    /// </summary>
+    public PendingPlanChange? PendingChange { get; private set; }
+
     public DateTimeOffset CreatedAtUtc { get; set; }
 
     public DateTimeOffset UpdatedAtUtc { get; set; }
@@ -159,6 +168,11 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
 
         Guid fromPlanId = PlanId;
 
+        // A change applied NOW supersedes any change scheduled for LATER. Leaving the schedule in
+        // place would let the renewal job silently revert this change at the period end — a gym
+        // that paid a prorated upgrade would find itself moved back to the plan it left.
+        PendingChange = null;
+
         PlanId = plan.Id;
         PlanPriceId = terms.PlanPriceId;
         BillingCycle = terms.BillingCycle;
@@ -173,6 +187,51 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
             terms.Price.Currency.Code,
             terms.Price.Amount));
     }
+
+    /// <summary>
+    /// Agrees a plan change that takes effect at <paramref name="changeAtUtc"/> — the end of the paid
+    /// period — instead of now. What a downgrade becomes; see <see cref="PendingPlanChange"/> for why.
+    ///
+    /// <para>Nothing about the subscription as it stands today changes: the gym keeps the plan, the
+    /// price, and the period it paid for. Replaces any change already pending.</para>
+    /// </summary>
+    public void SchedulePlanChange(
+        SubscriptionPlan plan,
+        SubscriptionTerms terms,
+        DateTimeOffset changeAtUtc)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(terms);
+        EnsureLive();
+
+        PendingChange = new PendingPlanChange(
+            plan.Id,
+            terms.PlanPriceId,
+            terms.BillingCycle,
+            terms.Price.Amount,
+            terms.Price.Currency.Code,
+            changeAtUtc);
+
+        Raise(new PlanChangeScheduled(
+            Id,
+            GymId,
+            PlanId,
+            plan.Id,
+            terms.BillingCycle.ToString(),
+            terms.Price.Amount,
+            terms.Price.Currency.Code,
+            changeAtUtc));
+    }
+
+    /// <summary>
+    /// Drops a scheduled plan change, leaving the subscription on the plan it already has.
+    ///
+    /// <para>A no-op when there is nothing pending, and no event either way. The caller's intent is
+    /// "this subscription should have no pending change", and nothing downstream acted on the schedule
+    /// in the first place — unlike a withdrawn cancellation, which consumers may already have reacted
+    /// to. Whether the *request* made sense is the handler's question, not this one's.</para>
+    /// </summary>
+    public void CancelPendingPlanChange() => PendingChange = null;
 
     /// <summary>The trial ended and the gym is now paying.</summary>
     public void ConvertTrial()

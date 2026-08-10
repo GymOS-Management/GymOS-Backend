@@ -764,6 +764,188 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("user_roles", "platform");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Invoices.Invoice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<DateTimeOffset>("DueAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("due_at_utc");
+
+                    b.Property<Guid>("GymId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("gym_id");
+
+                    b.Property<string>("InvoiceNumber")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("invoice_number");
+
+                    b.Property<DateTimeOffset>("IssuedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("issued_at_utc");
+
+                    b.Property<DateTimeOffset?>("PaidAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_at_utc");
+
+                    b.Property<string>("PaymentReference")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("payment_reference");
+
+                    b.Property<short>("Status")
+                        .HasColumnType("smallint")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("SubscriptionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<decimal>("TaxRate")
+                        .HasColumnType("numeric(5,4)")
+                        .HasColumnName("tax_rate");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "Subtotal", "GymOS.Platform.Domain.Invoices.Invoice.Subtotal#Money", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.Property<decimal>("Amount")
+                                .HasColumnType("numeric(14,4)")
+                                .HasColumnName("subtotal_amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("subtotal_currency");
+                        });
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "TaxAmount", "GymOS.Platform.Domain.Invoices.Invoice.TaxAmount#Money", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.Property<decimal>("Amount")
+                                .HasColumnType("numeric(14,4)")
+                                .HasColumnName("tax_amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("tax_currency");
+                        });
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "Total", "GymOS.Platform.Domain.Invoices.Invoice.Total#Money", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.Property<decimal>("Amount")
+                                .HasColumnType("numeric(14,4)")
+                                .HasColumnName("total_amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("total_currency");
+                        });
+
+                    b.HasKey("Id")
+                        .HasName("pk_invoices");
+
+                    b.HasIndex("InvoiceNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ux_invoices_invoice_number");
+
+                    b.HasIndex("SubscriptionId")
+                        .HasDatabaseName("ix_invoices_subscription_id");
+
+                    b.HasIndex("GymId", "CreatedAtUtc")
+                        .HasDatabaseName("ix_invoices_gym_id_created_at_utc");
+
+                    b.HasIndex("Status", "DueAtUtc")
+                        .HasDatabaseName("ix_invoices_status_due_at_utc");
+
+                    b.ToTable("invoices", "platform");
+                });
+
+            modelBuilder.Entity("GymOS.Platform.Domain.Invoices.InvoiceLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("description");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invoice_id");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer")
+                        .HasColumnName("quantity");
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "GymOS.Platform.Domain.Invoices.InvoiceLine.Amount#Money", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.Property<decimal>("Amount")
+                                .HasColumnType("numeric(14,4)")
+                                .HasColumnName("amount_amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("amount_currency");
+                        });
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "UnitPrice", "GymOS.Platform.Domain.Invoices.InvoiceLine.UnitPrice#Money", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.Property<decimal>("Amount")
+                                .HasColumnType("numeric(14,4)")
+                                .HasColumnName("unit_price_amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("unit_price_currency");
+                        });
+
+                    b.HasKey("Id")
+                        .HasName("pk_invoice_lines");
+
+                    b.HasIndex("InvoiceId")
+                        .HasDatabaseName("ix_invoice_lines_invoice_id");
+
+                    b.ToTable("invoice_lines", "platform");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.GymSubscription", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1059,6 +1241,33 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_user_roles_users_user_id");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Invoices.Invoice", b =>
+                {
+                    b.HasOne("GymOS.Platform.Domain.Gyms.Gym", null)
+                        .WithMany()
+                        .HasForeignKey("GymId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_invoices_gyms_gym_id");
+
+                    b.HasOne("GymOS.Platform.Domain.Subscriptions.GymSubscription", null)
+                        .WithMany()
+                        .HasForeignKey("SubscriptionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_invoices_gym_subscriptions_subscription_id");
+                });
+
+            modelBuilder.Entity("GymOS.Platform.Domain.Invoices.InvoiceLine", b =>
+                {
+                    b.HasOne("GymOS.Platform.Domain.Invoices.Invoice", null)
+                        .WithMany("Lines")
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_invoice_lines_invoices_invoice_id");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.GymSubscription", b =>
                 {
                     b.HasOne("GymOS.Platform.Domain.Gyms.Gym", null)
@@ -1080,6 +1289,49 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasForeignKey("PlanPriceId")
                         .OnDelete(DeleteBehavior.SetNull)
                         .HasConstraintName("fk_gym_subscriptions_plan_price_plan_price_id");
+
+                    b.OwnsOne("GymOS.Platform.Domain.Subscriptions.PendingPlanChange", "PendingChange", b1 =>
+                        {
+                            b1.Property<Guid>("GymSubscriptionId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("id");
+
+                            b1.Property<decimal>("Amount")
+                                .HasColumnType("numeric(14,4)")
+                                .HasColumnName("pending_price_amount");
+
+                            b1.Property<short>("BillingCycle")
+                                .HasColumnType("smallint")
+                                .HasColumnName("pending_billing_cycle");
+
+                            b1.Property<DateTimeOffset>("ChangeAtUtc")
+                                .HasColumnType("timestamp with time zone")
+                                .HasColumnName("pending_change_at_utc");
+
+                            b1.Property<string>("CurrencyCode")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("pending_price_currency");
+
+                            b1.Property<Guid>("PlanId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("pending_plan_id");
+
+                            b1.Property<Guid?>("PlanPriceId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("pending_plan_price_id");
+
+                            b1.HasKey("GymSubscriptionId");
+
+                            b1.ToTable("gym_subscriptions", "platform");
+
+                            b1.WithOwner()
+                                .HasForeignKey("GymSubscriptionId")
+                                .HasConstraintName("fk_gym_subscriptions_gym_subscriptions_id");
+                        });
+
+                    b.Navigation("PendingChange");
                 });
 
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanPrice", b =>
@@ -1100,6 +1352,11 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.User", b =>
                 {
                     b.Navigation("Roles");
+                });
+
+            modelBuilder.Entity("GymOS.Platform.Domain.Invoices.Invoice", b =>
+                {
+                    b.Navigation("Lines");
                 });
 
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.SubscriptionPlan", b =>

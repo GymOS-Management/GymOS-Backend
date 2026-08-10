@@ -4,6 +4,7 @@ using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
 using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Application.Gyms.Abstractions;
+using GymOS.Platform.Application.Invoices.Abstractions;
 using GymOS.Platform.Application.Subscriptions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Application.UnitTests.Fakes;
@@ -50,6 +51,12 @@ public sealed class SubscriptionAssignmentTests
             services.AddSingleton<IPlanQueries>(PlanQueries);
             services.AddSingleton<ISubscriptionRepository>(Subscriptions);
             services.AddSingleton<ISubscriptionQueries>(SubscriptionQueries);
+
+            // Assignment and conversion issue invoices since M3.3, so the handlers under test
+            // resolve the issuer's seams even where a test never looks at an invoice.
+            services.AddSingleton<IInvoiceRepository>(new FakeInvoiceRepository());
+            services.AddSingleton<IInvoiceNumberGenerator>(new FakeInvoiceNumberGenerator());
+
             services.AddSingleton<IUnitOfWork>(UnitOfWork);
             services.AddSingleton<ICurrentUser>(CurrentUser);
             services.AddSingleton<IPermissionEvaluator>(Permissions);
@@ -239,6 +246,7 @@ public sealed class SubscriptionAssignmentTests
         var context = new Context(Manage);
         Gym gym = context.GivenGym();
         SubscriptionPlan plan = context.GivenPlan();
+        plan.SetPrice(BillingCycle.Yearly, Money.Of(499m, Currency.Euro));
 
         await context.Dispatcher.SendAsync(
             new AssignSubscriptionCommand(gym.Id, plan.Id, "Monthly", "EUR", null),
@@ -247,9 +255,10 @@ public sealed class SubscriptionAssignmentTests
         plan.Deactivate();
 
         // §2.3: inactive plans stay attached to existing gyms. Withdrawing from sale must not strand a
-        // customer who cannot then be adjusted.
+        // customer who cannot then be adjusted. The adjustment is a real one (monthly → yearly) since
+        // M3.3: re-sending the terms a gym already has is the change_to_same_plan refusal instead.
         Result<SubscriptionDetail> result = await context.Dispatcher.SendAsync(
-            new AssignSubscriptionCommand(gym.Id, plan.Id, "Monthly", "EUR", null),
+            new AssignSubscriptionCommand(gym.Id, plan.Id, "Yearly", "EUR", null),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);

@@ -1,4 +1,6 @@
+using GymOS.Platform.Application.Invoices.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
+using GymOS.Platform.Infrastructure.Invoices;
 using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.Platform.Infrastructure.Persistence.Repositories;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +23,9 @@ public static class PlatformSubscriptionsServiceCollectionExtensions
         services.TryAddScoped<IPlanQueries, PlanQueries>();
         services.TryAddScoped<ISubscriptionRepository, SubscriptionRepository>();
         services.TryAddScoped<ISubscriptionQueries, SubscriptionQueries>();
+        services.TryAddScoped<IInvoiceRepository, InvoiceRepository>();
+        services.TryAddScoped<IInvoiceNumberGenerator, InvoiceNumberGenerator>();
+        services.TryAddScoped<IInvoiceQueries, InvoiceQueries>();
 
         return services;
     }
