@@ -56,11 +56,16 @@ public static partial class OpenApiExtensions
             {
                 if (RequiresAuthorization(context.Description.ActionDescriptor.EndpointMetadata))
                 {
+                    // The host document is required, not optional: a reference constructed without
+                    // one cannot resolve its scheme and serialises as `security: [{}]` — an *empty*
+                    // requirement object, which OpenAPI reads as "authentication optional". That is
+                    // the opposite of the intent and it fails silently, which is why
+                    // OpenApiContractTests asserts the scheme name rather than the array's length.
                     operation.Security =
                     [
                         new OpenApiSecurityRequirement
                         {
-                            [new OpenApiSecuritySchemeReference(BearerSchemeName)] = [],
+                            [new OpenApiSecuritySchemeReference(BearerSchemeName, context.Document)] = [],
                         },
                     ];
                 }

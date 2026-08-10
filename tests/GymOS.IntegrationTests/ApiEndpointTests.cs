@@ -133,8 +133,11 @@ public sealed class ApiEndpointTests : IAsyncLifetime
 
                 string id = $"{operation.Name.ToUpperInvariant()} {path.Name}";
 
-                if (operation.Value.TryGetProperty("security", out JsonElement security) &&
-                    security.GetArrayLength() > 0)
+                // Naming the scheme is the whole assertion. `security: [{}]` — an empty
+                // requirement object — is how OpenAPI spells "authentication optional", so a
+                // check for a non-empty array passes on a document that secures nothing. It
+                // did: the first version of this transformer shipped every operation as [{}].
+                if (DeclaresBearerAuth(operation.Value))
                 {
                     secured.Add(id);
                 }
@@ -149,12 +152,14 @@ public sealed class ApiEndpointTests : IAsyncLifetime
             ["POST /api/v1/auth/login", "POST /api/v1/auth/refresh"],
             anonymous.Order(StringComparer.Ordinal));
 
-        Assert.NotEmpty(secured);
-        Assert.All(
-            secured,
-            _ => Assert.Contains("bearerAuth", document.GetProperty("components")
-                .GetProperty("securitySchemes").EnumerateObject().Select(scheme => scheme.Name)));
+        Assert.Equal(43, secured.Count);
     }
+
+    private static bool DeclaresBearerAuth(JsonElement operation) =>
+        operation.TryGetProperty("security", out JsonElement security) &&
+        security.EnumerateArray().Any(requirement =>
+            requirement.EnumerateObject().Any(scheme =>
+                scheme.Name == "bearerAuth"));
 
     private static readonly string[] HttpMethods = ["get", "post", "put", "patch", "delete"];
 
