@@ -94,6 +94,7 @@ public sealed partial class DomainEventConventionTests
     {
         "set", "sent", "built", "split", "read", "left", "lost", "paid", "put", "spent",
         "withdrawn", "drawn", "shown", "known", "grown", "thrown",
+        "became", // invoice.became_overdue (M3.4) — the fact is the becoming, not a "marking"
     };
 
     [Fact]
