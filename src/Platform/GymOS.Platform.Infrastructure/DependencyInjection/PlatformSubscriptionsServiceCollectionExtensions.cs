@@ -25,6 +25,7 @@ public static class PlatformSubscriptionsServiceCollectionExtensions
         services.TryAddScoped<ISubscriptionQueries, SubscriptionQueries>();
         services.TryAddScoped<IInvoiceRepository, InvoiceRepository>();
         services.TryAddScoped<IInvoiceNumberGenerator, InvoiceNumberGenerator>();
+        services.TryAddScoped<IInvoiceQueries, InvoiceQueries>();
 
         return services;
     }

@@ -62,6 +62,7 @@ internal sealed class SubscriptionQueries : ISubscriptionQueries
                 subscription.AutoRenew,
                 subscription.CancellationReason,
                 subscription.CreatedAtUtc,
+                subscription.PendingChange,
                 RowVersion = EF.Property<uint>(subscription, "xmin"),
                 PlanCode = _dbContext.Set<SubscriptionPlan>()
                     .Where(plan => plan.Id == subscription.PlanId)
@@ -94,7 +95,15 @@ internal sealed class SubscriptionQueries : ISubscriptionQueries
                 row.AutoRenew,
                 row.CancellationReason,
                 row.CreatedAtUtc,
-                RowVersion.ToToken(row.RowVersion)))
+                RowVersion.ToToken(row.RowVersion),
+                row.PendingChange is not { } pending
+                    ? null
+                    : new PendingPlanChangeDetail(
+                        pending.PlanId,
+                        pending.BillingCycle.ToString(),
+                        pending.Amount,
+                        pending.CurrencyCode,
+                        pending.ChangeAtUtc)))
             .ToList();
     }
 }
