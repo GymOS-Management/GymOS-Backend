@@ -25,4 +25,8 @@ public static class InvoiceErrors
     public static Error ConfirmationMismatch => Error.Conflict(
         "invoices.confirmation_mismatch",
         "Voiding an invoice requires the X-Confirm-Action header carrying its invoice number.");
+
+    public static Error StatusInvalid(string status) => Error.Validation(
+        "invoices.status_invalid",
+        $"'{status}' is not an invoice status. Use Draft, Issued, Paid, Overdue, or Void.");
 }
