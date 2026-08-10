@@ -1,4 +1,13 @@
 <Solution>
+  <Folder Name="/docker/">
+    <File Path=".dockerignore" />
+    <File Path="docker-compose.override.yml" />
+    <File Path="docker-compose.prod.yml" />
+    <File Path="docker-compose.yml" />
+    <File Path="docker/postgres/initdb/00-extensions.sql" />
+    <File Path="docs/Infrastructure/DOCKER.md" />
+    <File Path="src/Host/GymOS.WebApi/Dockerfile" />
+  </Folder>
   <Folder Name="/src/" />
   <Folder Name="/src/BuildingBlocks/">
     <Project Path="src/BuildingBlocks/GymOS.BuildingBlocks.Application/GymOS.BuildingBlocks.Application.csproj" />
