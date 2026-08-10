@@ -127,24 +127,7 @@ internal sealed class MarkInvoicePaidCommandHandler
                 Error.Conflict("invoices.invalid_state", exception.Message));
         }
 
-        // A past-due subscription recovers when this payment SETTLES the current period: the
-        // invoice belongs to the period, and no other open invoice of the period remains. Paying
-        // an old invoice changes nothing (past due is about the current period, not the archive),
-        // and paying a small proration invoice while the period's main invoice is still open must
-        // not open the gate either.
-        GymSubscription? subscription = await _subscriptions.FindByIdAsync(
-            invoice.SubscriptionId, cancellationToken);
-        if (subscription is not null
-            && subscription.Status == SubscriptionStatus.PastDue
-            && invoice.IssuedAtUtc >= subscription.CurrentPeriodStartUtc
-            && !await _invoices.AnyOtherOpenForSubscriptionAsync(
-                subscription.Id,
-                subscription.CurrentPeriodStartUtc,
-                invoice.Id,
-                cancellationToken))
-        {
-            subscription.ResumePayment();
-        }
+        await PastDueRecovery.ApplyAsync(_subscriptions, _invoices, invoice, cancellationToken);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -157,15 +140,18 @@ internal sealed class VoidInvoiceCommandHandler
 {
     private readonly IInvoiceRepository _invoices;
     private readonly IInvoiceQueries _invoiceQueries;
+    private readonly ISubscriptionRepository _subscriptions;
     private readonly IUnitOfWork _unitOfWork;
 
     public VoidInvoiceCommandHandler(
         IInvoiceRepository invoices,
         IInvoiceQueries invoiceQueries,
+        ISubscriptionRepository subscriptions,
         IUnitOfWork unitOfWork)
     {
         _invoices = invoices;
         _invoiceQueries = invoiceQueries;
+        _subscriptions = subscriptions;
         _unitOfWork = unitOfWork;
     }
 
@@ -215,9 +201,46 @@ internal sealed class VoidInvoiceCommandHandler
                 Error.Conflict("invoices.invalid_state", exception.Message));
         }
 
+        // Voiding closes an invoice just as surely as paying it, so the settled-period question
+        // gets re-asked here too — otherwise voiding the overdue invoice that flipped the
+        // subscription would leave a gym flagged delinquent with nothing left open.
+        await PastDueRecovery.ApplyAsync(_subscriptions, _invoices, invoice, cancellationToken);
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await InvoiceWrites.ReadBackAsync(_invoiceQueries, invoice.Id, cancellationToken);
+    }
+}
+
+/// <summary>
+/// The settled-period rule, in one place for the two ways an invoice stops being open.
+///
+/// <para>A past-due subscription recovers when the current period is SETTLED: the closing invoice
+/// belongs to the period, and no other open invoice of the period remains. An old invoice closing
+/// changes nothing (past due is about the current period, not the archive), and closing a small
+/// proration invoice while the period's main invoice is still open must not open the gate.</para>
+/// </summary>
+internal static class PastDueRecovery
+{
+    public static async Task ApplyAsync(
+        ISubscriptionRepository subscriptions,
+        IInvoiceRepository invoices,
+        Invoice invoice,
+        CancellationToken cancellationToken)
+    {
+        GymSubscription? subscription = await subscriptions.FindByIdAsync(
+            invoice.SubscriptionId, cancellationToken);
+        if (subscription is not null
+            && subscription.Status == SubscriptionStatus.PastDue
+            && invoice.IssuedAtUtc >= subscription.CurrentPeriodStartUtc
+            && !await invoices.AnyOtherOpenForSubscriptionAsync(
+                subscription.Id,
+                subscription.CurrentPeriodStartUtc,
+                invoice.Id,
+                cancellationToken))
+        {
+            subscription.ResumePayment();
+        }
     }
 }
 

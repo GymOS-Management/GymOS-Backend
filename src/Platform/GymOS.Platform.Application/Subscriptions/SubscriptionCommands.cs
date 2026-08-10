@@ -399,6 +399,10 @@ internal sealed class SubscriptionStateCommandHandlers :
 
                 subscription.ConvertTrial();
 
+                // A trial longer than one billing cycle left lapsed periods behind it; the first
+                // real invoice must cover the period the gym is IN, not one that expired mid-trial.
+                subscription.CatchUpPeriods(_clock.UtcNow);
+
                 // Conversion is the moment the gym starts paying, so it bills the first period —
                 // the invoice an untrialed assignment would have issued up front. The plan is
                 // loaded for its name on the line; a subscription always points at one.

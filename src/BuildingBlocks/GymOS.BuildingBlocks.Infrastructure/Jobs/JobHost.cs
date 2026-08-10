@@ -49,6 +49,12 @@ public sealed partial class JobHost : BackgroundService
         "still due — the sweeps derive work from state, so nothing is lost with the tick.")]
     private static partial void LogFailed(ILogger logger, string jobName, Exception exception);
 
+    [LoggerMessage(Level = LogLevel.Error, Message =
+        "Job {JobType} could not be initialized and will NOT run in this process. This is a " +
+        "composition defect (a missing registration, a throwing constructor) — fix it and " +
+        "redeploy; until then this job's work simply does not happen.")]
+    private static partial void LogLoopDead(ILogger logger, string jobType, Exception exception);
+
     public JobHost(
         IEnumerable<ScheduledJobRegistration> registrations,
         IServiceScopeFactory scopeFactory,
@@ -81,19 +87,33 @@ public sealed partial class JobHost : BackgroundService
     private async Task RunLoopAsync(ScheduledJobRegistration registration, CancellationToken stoppingToken)
     {
         // Name and schedule are immutable configuration on the job type; read them once from a
-        // throwaway instance so the loop does not need a live scope between ticks.
+        // throwaway instance so the loop does not need a live scope between ticks. Guarded: a
+        // throwing constructor here would otherwise fault this loop's task, and Task.WhenAll only
+        // observes that at shutdown — a job that silently never runs, with the host reading green.
         string name;
         JobSchedule schedule;
-        using (IServiceScope startupScope = _scopeFactory.CreateScope())
+        try
         {
+            using IServiceScope startupScope = _scopeFactory.CreateScope();
             var prototype = (IScheduledJob)startupScope.ServiceProvider.GetRequiredService(registration.JobType);
             name = prototype.Name;
             schedule = prototype.Schedule;
         }
+        catch (Exception exception)
+        {
+            LogLoopDead(_logger, registration.JobType.Name, exception);
+            return;
+        }
+
+        // The cadence anchors to the SCHEDULE, not to when runs finish: each next tick is
+        // computed from the previous tick's due time, so a slow run does not push every later
+        // run out by its own duration. When the loop falls behind by more than a whole period
+        // (host asleep, very long run), it re-baselines from the clock instead of firing a
+        // catch-up storm — the sweeps derive work from state, so missed ticks carry nothing.
+        DateTimeOffset next = schedule.NextAfter(_clock.UtcNow);
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            DateTimeOffset next = schedule.NextAfter(_clock.UtcNow);
             TimeSpan delay = next - _clock.UtcNow;
 
             try
@@ -112,6 +132,12 @@ public sealed partial class JobHost : BackgroundService
             catch (Exception exception)
             {
                 LogFailed(_logger, name, exception);
+            }
+
+            next = schedule.NextAfter(next);
+            if (next <= _clock.UtcNow)
+            {
+                next = schedule.NextAfter(_clock.UtcNow);
             }
         }
     }

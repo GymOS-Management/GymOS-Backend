@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Jobs;
 using GymOS.Platform.Application.Subscriptions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
@@ -15,6 +16,7 @@ namespace GymOS.Platform.Infrastructure.Jobs;
 internal sealed partial class RenewalJob : IScheduledJob
 {
     private readonly ISubscriptionQueries _subscriptionQueries;
+    private readonly IDatabaseClock _databaseClock;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<RenewalJob> _logger;
 
@@ -32,10 +34,12 @@ internal sealed partial class RenewalJob : IScheduledJob
 
     public RenewalJob(
         ISubscriptionQueries subscriptionQueries,
+        IDatabaseClock databaseClock,
         IServiceScopeFactory scopeFactory,
         ILogger<RenewalJob> logger)
     {
         _subscriptionQueries = subscriptionQueries;
+        _databaseClock = databaseClock;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -50,7 +54,12 @@ internal sealed partial class RenewalJob : IScheduledJob
 
     public async Task ExecuteAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        IReadOnlyList<Guid> due = await _subscriptionQueries.ListDueForRenewalAsync(now, cancellationToken);
+        // The tick's `now` came from THIS host's clock; the verdicts below are durable and some
+        // are terminal, so they are measured with the database's clock instead — a fast host
+        // must never expire a subscription or bill a renewal early (see IDatabaseClock).
+        DateTimeOffset databaseNow = await _databaseClock.UtcNowAsync(cancellationToken);
+
+        IReadOnlyList<Guid> due = await _subscriptionQueries.ListDueForRenewalAsync(databaseNow, cancellationToken);
         if (due.Count == 0)
         {
             return;
@@ -67,7 +76,7 @@ internal sealed partial class RenewalJob : IScheduledJob
                 using IServiceScope scope = _scopeFactory.CreateScope();
                 RenewalAction action = await scope.ServiceProvider
                     .GetRequiredService<SubscriptionRenewalService>()
-                    .ProcessAsync(subscriptionId, now, cancellationToken);
+                    .ProcessAsync(subscriptionId, databaseNow, cancellationToken);
 
                 switch (action)
                 {

@@ -27,7 +27,18 @@ public static class JobsServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddScoped<TJob>();
-        services.AddSingleton(new ScheduledJobRegistration(typeof(TJob)));
+
+        // Idempotent like every other registration in the composition: the module extensions are
+        // all safe to call twice, and this must not be the one that quietly doubles a job's loop.
+        bool alreadyRegistered = services.Any(descriptor =>
+            descriptor.ServiceType == typeof(ScheduledJobRegistration)
+            && descriptor.ImplementationInstance is ScheduledJobRegistration registration
+            && registration.JobType == typeof(TJob));
+
+        if (!alreadyRegistered)
+        {
+            services.AddSingleton(new ScheduledJobRegistration(typeof(TJob)));
+        }
 
         return services;
     }

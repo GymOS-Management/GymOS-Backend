@@ -62,23 +62,42 @@ public sealed class SubscriptionRenewalService
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        GymSubscription? subscription = await _subscriptions.FindByIdAsync(subscriptionId, cancellationToken);
+        // The whole step is one explicit transaction over a FOR UPDATE read: a console edit
+        // racing the sweep waits its turn instead of winning at save time — by which point the
+        // step has drawn a non-refundable invoice number, and every lost race burned one.
+        await using IUnitOfWorkTransaction transaction =
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        GymSubscription? subscription = await _subscriptions.FindByIdForUpdateAsync(
+            subscriptionId, cancellationToken);
         if (subscription is null || !subscription.IsLive)
         {
             return RenewalAction.None; // ended between the candidate query and this step
         }
 
+        // A RUNNING trial is never renewed and never billed, however far it outlasts its first
+        // period — nothing has been paid, so there is nothing a period boundary can charge for.
+        // The period catches up at conversion, below.
+        if (subscription.Status == SubscriptionStatus.Trialing
+            && !subscription.TrialHasEnded(now))
+        {
+            return RenewalAction.None;
+        }
+
         // 1. An expired trial converts and bills — unless the gym already asked to cancel, in
         //    which case converting would bill a customer on their way out; the cancellation
-        //    finalizes at the period end below instead.
+        //    finalizes at the period end below instead. CatchUpPeriods first: a trial longer
+        //    than one cycle left lapsed periods behind it, and the first real invoice must cover
+        //    the period the gym is IN, not one that expired unbilled mid-trial.
         if (subscription.Status == SubscriptionStatus.Trialing
-            && subscription.TrialHasEnded(now)
             && !subscription.CancelAtPeriodEnd)
         {
             SubscriptionPlan plan = await RequirePlanAsync(subscription.PlanId, cancellationToken);
             subscription.ConvertTrial();
+            subscription.CatchUpPeriods(now);
             await _issuer.IssueForPeriodAsync(subscription, plan, cancellationToken);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return RenewalAction.ConvertedTrial;
         }
 
@@ -92,6 +111,7 @@ public sealed class SubscriptionRenewalService
         {
             subscription.CancelNow(reason: null, now); // keeps the reason recorded at scheduling
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return RenewalAction.FinalizedCancellation;
         }
 
@@ -101,6 +121,7 @@ public sealed class SubscriptionRenewalService
         {
             subscription.Expire();
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return RenewalAction.Expired;
         }
 
@@ -138,6 +159,7 @@ public sealed class SubscriptionRenewalService
         subscription.Renew();
         await _issuer.IssueForPeriodAsync(subscription, renewalPlan, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return changedPlan ? RenewalAction.AppliedPendingChangeAndRenewed : RenewalAction.Renewed;
     }

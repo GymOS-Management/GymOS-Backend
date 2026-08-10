@@ -989,6 +989,10 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("gym_id");
 
+                    b.Property<DateTimeOffset>("PeriodAnchorUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("period_anchor_utc");
+
                     b.Property<Guid>("PlanId")
                         .HasColumnType("uuid")
                         .HasColumnName("plan_id");

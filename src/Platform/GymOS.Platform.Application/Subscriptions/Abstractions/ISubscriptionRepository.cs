@@ -15,6 +15,16 @@ public interface ISubscriptionRepository
 
     Task<GymSubscription?> FindByIdAsync(Guid subscriptionId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Loads the subscription holding its row lock until the ambient transaction ends
+    /// (<c>SELECT … FOR UPDATE</c>). The renewal sweep's read: a console edit racing the sweep
+    /// then waits its turn instead of losing at save time — which matters because the sweep has
+    /// already drawn a non-refundable invoice number by then, and every lost race burned one.
+    /// Callers must hold an <see cref="GymOS.BuildingBlocks.Application.Abstractions.IUnitOfWork"/>
+    /// transaction, or the lock releases at the end of the statement.
+    /// </summary>
+    Task<GymSubscription?> FindByIdForUpdateAsync(Guid subscriptionId, CancellationToken cancellationToken);
+
     void Add(GymSubscription subscription);
 
     /// <summary>Declares the version the caller believes they are updating (ARCHITECTURE.md §3).</summary>

@@ -137,6 +137,62 @@ public sealed class JobHostTests
         Assert.True(job.Runs >= 3); // runs 2 and 3 happened after run 1 threw
     }
 
+    private sealed class UnconstructibleJob : IScheduledJob
+    {
+        public UnconstructibleJob() =>
+            throw new InvalidOperationException("Simulated missing dependency.");
+
+        public string Name => "test.unconstructible";
+
+        public JobSchedule Schedule => JobSchedule.Every(TimeSpan.FromMilliseconds(20));
+
+        public Task ExecuteAsync(DateTimeOffset now, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task AJobThatCannotBeConstructed_DiesLoudlyWithoutTakingTheOthersDown()
+    {
+        // The composition defect is logged and that loop ends; every OTHER job keeps running —
+        // previously the fault sat unobserved in Task.WhenAll until shutdown, silently.
+        var healthy = new CountingJob { RunsBeforeSignal = 2 };
+
+        var services = new ServiceCollection();
+        services.AddSingleton(healthy);
+        services.AddSingleton<IJobLock>(new GrantingLock());
+        services.AddScheduledJob<CountingJob>();
+        services.AddScheduledJob<UnconstructibleJob>();
+        services.AddSingleton<IClock>(new FakeClock(new DateTimeOffset(2026, 8, 10, 12, 0, 0, TimeSpan.Zero)));
+        ServiceProvider provider = services.BuildServiceProvider();
+
+        var host = new JobHost(
+            provider.GetServices<ScheduledJobRegistration>(),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IClock>(),
+            Options.Create(new JobHostOptions()),
+            NullLogger<JobHost>.Instance);
+
+        await host.StartAsync(CancellationToken.None);
+        await healthy.Reached.WaitAsync(Timeout);
+        await host.StopAsync(CancellationToken.None);
+
+        Assert.True(healthy.Runs >= 2);
+    }
+
+    [Fact]
+    public void RegisteringTheSameJobTwice_YieldsOneLoop()
+    {
+        // Module extensions are idempotent by convention (TryAdd everywhere); a double call must
+        // not be the thing that quietly doubles a sweep's frequency.
+        var services = new ServiceCollection();
+        services.AddScheduledJob<CountingJob>();
+        services.AddScheduledJob<CountingJob>();
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        Assert.Single(provider.GetServices<ScheduledJobRegistration>());
+    }
+
     [Fact]
     public async Task ADisabledHostRunsNothing()
     {

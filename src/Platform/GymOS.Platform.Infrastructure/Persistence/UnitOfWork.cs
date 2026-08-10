@@ -32,4 +32,21 @@ internal sealed class UnitOfWork : IUnitOfWork
             throw new ConcurrencyConflictException(exception);
         }
     }
+
+    public async Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        new Transaction(await _dbContext.Database.BeginTransactionAsync(cancellationToken));
+
+    private sealed class Transaction : IUnitOfWorkTransaction
+    {
+        private readonly Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction _transaction;
+
+        public Transaction(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction) =>
+            _transaction = transaction;
+
+        public Task CommitAsync(CancellationToken cancellationToken) =>
+            _transaction.CommitAsync(cancellationToken);
+
+        // Disposing an uncommitted EF transaction rolls it back — the contract the interface states.
+        public ValueTask DisposeAsync() => _transaction.DisposeAsync();
+    }
 }

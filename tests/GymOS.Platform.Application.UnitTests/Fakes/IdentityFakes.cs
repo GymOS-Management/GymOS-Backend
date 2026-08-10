@@ -152,10 +152,25 @@ internal sealed class FakeUnitOfWork : IUnitOfWork
 {
     public int SaveCount { get; private set; }
 
+    public int TransactionCount { get; private set; }
+
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         SaveCount++;
         return Task.FromResult(0);
+    }
+
+    public Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        TransactionCount++;
+        return Task.FromResult<IUnitOfWorkTransaction>(new NoOpTransaction());
+    }
+
+    private sealed class NoOpTransaction : IUnitOfWorkTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
 

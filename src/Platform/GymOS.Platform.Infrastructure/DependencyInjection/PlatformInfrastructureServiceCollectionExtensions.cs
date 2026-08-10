@@ -61,8 +61,11 @@ public static class PlatformInfrastructureServiceCollectionExtensions
 
         services.TryAddScoped<IdempotencyRecordMaintainer>();
 
-        // Cross-instance job coordination rides the same database as everything else (M3.4).
+        // Cross-instance job coordination rides the same database as everything else (M3.4) —
+        // and so does the clock the sweeps decide with: durable verdicts (Overdue, Expired, a
+        // billed renewal) must not depend on any one host's idea of the time.
         services.TryAddScoped<IJobLock, PostgresJobLock>();
+        services.TryAddScoped<IDatabaseClock, PostgresDatabaseClock>();
 
         // The recurring half of retention (AD-23) — the startup maintainers above cover first
         // boot; this covers every night after.

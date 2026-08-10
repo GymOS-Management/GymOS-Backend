@@ -230,19 +230,23 @@ internal sealed class InvoiceQueries : IInvoiceQueries
     // negate an expression tree for us), and a plain bool for materialized rows. They must agree,
     // which is why they live together. Since M3.4 the stored status is part of the answer: the
     // sweep writes Overdue durably, and an Issued invoice past its due date is overdue in the
-    // window before the next sweep notices. The domain's own answer is Invoice.IsOverdue.
+    // window before the next sweep notices.
+    //
+    // The boundary is INCLUSIVE (due <= now) at every binding — matching Invoice.IsOverdue
+    // (now >= DueAtUtc) and the sweep's candidate query, so the instant the sweep may brand an
+    // invoice overdue is the same instant every read model starts saying it.
 
     private static Expression<Func<Invoice, bool>> OverdueAt(DateTimeOffset now) =>
         invoice => invoice.Status == InvoiceStatus.Overdue
-            || (invoice.Status == InvoiceStatus.Issued && invoice.DueAtUtc < now);
+            || (invoice.Status == InvoiceStatus.Issued && invoice.DueAtUtc <= now);
 
     private static Expression<Func<Invoice, bool>> NotOverdueAt(DateTimeOffset now) =>
         invoice => invoice.Status != InvoiceStatus.Overdue
-            && (invoice.Status != InvoiceStatus.Issued || invoice.DueAtUtc >= now);
+            && (invoice.Status != InvoiceStatus.Issued || invoice.DueAtUtc > now);
 
     private static bool IsOverdueAt(InvoiceStatus status, DateTimeOffset dueAtUtc, DateTimeOffset now) =>
         status == InvoiceStatus.Overdue
-            || (status == InvoiceStatus.Issued && dueAtUtc < now);
+            || (status == InvoiceStatus.Issued && dueAtUtc <= now);
 
     /// <summary>Escapes LIKE metacharacters so a search matches its text literally.</summary>
     private static string EscapeLike(string value) =>

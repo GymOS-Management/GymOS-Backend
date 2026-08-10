@@ -534,6 +534,36 @@ dependency, auto-PastDue on an overdue current-period invoice, trials auto-conve
   invoice is honestly overdue in the window before the sweep's next pass.
 - The past-tense event checker learned `became` (`invoice.became_overdue`).
 
+### Post-plan review fixes (workflow review, 10 findings, all fixed)
+
+The same adversarial review gate M3.3 went through, before merge. All ten confirmed findings are
+fixed with a pinning test each:
+
+- **A running trial is never renewed or billed**, however far it outlasts its first billing
+  period; the period chain catches up at conversion (`CatchUpPeriods`) so the first real invoice
+  covers the period the gym is in — was: billed mid-free-trial, then billed again at conversion.
+- **`period_anchor_utc` (migration `AddPeriodAnchor`)**: renewals restore the anchor's
+  day-of-month whenever the target month has room, so a Jan-31 gym is a month-end gym forever —
+  was: `AddMonths` chaining clamped it to the 28th for life. A cycle change re-anchors at the
+  boundary it takes effect.
+- **The sweeps decide with the database's clock** (`IDatabaseClock` → `PostgresDatabaseClock`,
+  `SELECT now()`): durable and terminal verdicts — Overdue, Expired, a billed renewal — no longer
+  trust any single host's clock. The idempotency store's reasoning, generalized.
+- **The renewal step is one explicit transaction over a `FOR UPDATE` read**
+  (`IUnitOfWork.BeginTransactionAsync` + `FindByIdForUpdateAsync`): a console edit racing the
+  sweep waits its turn instead of winning at save time, which is what stopped every lost race
+  burning a non-refundable invoice number. (EF cannot `FromSql` an entity with complex
+  properties — the lock is a scalar statement, the load is the normal pipeline on the same
+  transaction.)
+- **Voiding re-runs the settled-period rule** (`PastDueRecovery`, shared with mark-paid): voiding
+  the invoice that flipped a subscription PastDue no longer strands it flagged delinquent.
+- **JobHost**: a job that cannot be constructed dies *loudly* (error log naming the type) without
+  taking other loops down — was: an unobserved task fault and a green host; the cadence anchors
+  to the schedule rather than to run completions (no per-run drift, no catch-up storms);
+  `AddScheduledJob` is idempotent like every other registration.
+- **One overdue boundary**: every binding — sweep candidates, read-model filter and projections,
+  and the domain's `Invoice.IsOverdue` — is now inclusive (`due <= now`).
+
 ## M3.3 as built
 
 **Branch `m3.3-invoices`** (not merged; `main` is untouched). All seven tasks done, each its own

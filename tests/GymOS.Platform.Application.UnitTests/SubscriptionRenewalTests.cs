@@ -125,6 +125,37 @@ public sealed class SubscriptionRenewalTests
     }
 
     [Fact]
+    public async Task ATrialOutlastingItsFirstPeriod_IsNeverBilledMidTrial()
+    {
+        var context = new Context();
+        SubscriptionPlan plan = context.GivenPlan(trialDays: 45, amount: 29.99m);
+        GymSubscription subscription = context.GivenSubscription(plan);
+
+        // Day 32: the first monthly period has ended, but the 45-day trial is still running.
+        // The old decision tree fell through to renewal here and billed a gym mid-free-trial —
+        // then billed the same period AGAIN at conversion.
+        context.Clock.Advance(TimeSpan.FromDays(32));
+        RenewalAction midTrial = await context.Service.ProcessAsync(
+            subscription.Id, context.Clock.UtcNow, CancellationToken.None);
+
+        Assert.Equal(RenewalAction.None, midTrial);
+        Assert.Equal(SubscriptionStatus.Trialing, subscription.Status);
+        Assert.Empty(context.Invoices.Invoices);
+
+        // Day 46: the trial ends. Conversion catches the period chain up and bills EXACTLY ONE
+        // invoice — for the period the gym is actually in.
+        context.Clock.Advance(TimeSpan.FromDays(14));
+        RenewalAction converted = await context.Service.ProcessAsync(
+            subscription.Id, context.Clock.UtcNow, CancellationToken.None);
+
+        Assert.Equal(RenewalAction.ConvertedTrial, converted);
+        Assert.Equal(SubscriptionStatus.Active, subscription.Status);
+        Assert.False(subscription.PeriodHasEnded(context.Clock.UtcNow));
+        Invoice invoice = Assert.Single(context.Invoices.Invoices);
+        Assert.Contains("2026-09-01", Assert.Single(invoice.Lines).Description); // caught-up period
+    }
+
+    [Fact]
     public async Task AnExpiredTrialWithACancellationScheduled_IsNotConvertedOrBilled()
     {
         var context = new Context();

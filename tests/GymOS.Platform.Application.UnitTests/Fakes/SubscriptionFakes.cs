@@ -161,6 +161,9 @@ internal sealed class FakeSubscriptionRepository : ISubscriptionRepository
     public Task<GymSubscription?> FindByIdAsync(Guid subscriptionId, CancellationToken cancellationToken) =>
         Task.FromResult(_subscriptions.SingleOrDefault(subscription => subscription.Id == subscriptionId));
 
+    public Task<GymSubscription?> FindByIdForUpdateAsync(Guid subscriptionId, CancellationToken cancellationToken) =>
+        FindByIdAsync(subscriptionId, cancellationToken); // in-memory: no rows, no locks
+
     public void Add(GymSubscription subscription) => _subscriptions.Add(subscription);
 
     public void ExpectVersion(GymSubscription subscription, uint expectedVersion)

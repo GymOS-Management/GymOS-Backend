@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Jobs;
 using GymOS.Platform.Application.Invoices;
 using GymOS.Platform.Application.Invoices.Abstractions;
@@ -15,6 +16,7 @@ namespace GymOS.Platform.Infrastructure.Jobs;
 internal sealed partial class InvoiceOverdueJob : IScheduledJob
 {
     private readonly IInvoiceQueries _invoiceQueries;
+    private readonly IDatabaseClock _databaseClock;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<InvoiceOverdueJob> _logger;
 
@@ -31,10 +33,12 @@ internal sealed partial class InvoiceOverdueJob : IScheduledJob
 
     public InvoiceOverdueJob(
         IInvoiceQueries invoiceQueries,
+        IDatabaseClock databaseClock,
         IServiceScopeFactory scopeFactory,
         ILogger<InvoiceOverdueJob> logger)
     {
         _invoiceQueries = invoiceQueries;
+        _databaseClock = databaseClock;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -49,7 +53,12 @@ internal sealed partial class InvoiceOverdueJob : IScheduledJob
 
     public async Task ExecuteAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        IReadOnlyList<Guid> due = await _invoiceQueries.ListNewlyOverdueAsync(now, cancellationToken);
+        // Durable verdicts are measured with the database's clock, not this host's — branding a
+        // punctual customer Overdue has no undo transition, so the guard in MarkOverdue must be
+        // fed a `now` that means something (see IDatabaseClock).
+        DateTimeOffset databaseNow = await _databaseClock.UtcNowAsync(cancellationToken);
+
+        IReadOnlyList<Guid> due = await _invoiceQueries.ListNewlyOverdueAsync(databaseNow, cancellationToken);
         if (due.Count == 0)
         {
             return;
@@ -64,7 +73,7 @@ internal sealed partial class InvoiceOverdueJob : IScheduledJob
                 using IServiceScope scope = _scopeFactory.CreateScope();
                 OverdueAction action = await scope.ServiceProvider
                     .GetRequiredService<InvoiceOverdueService>()
-                    .ProcessAsync(invoiceId, now, cancellationToken);
+                    .ProcessAsync(invoiceId, databaseNow, cancellationToken);
 
                 if (action is not OverdueAction.None)
                 {
