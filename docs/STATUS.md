@@ -23,7 +23,7 @@ before resuming work on any machine.
 | **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
 | **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
 | **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ **merged to `main`** (`e39eb73`) — reviewed at high effort (10 findings, all fixed), **1049 tests green**, verified live incl. idempotent replay |
-| **M3.4 — job runner + renewal/overdue jobs** | 🚧 **in progress on branch `m3.4-jobs`** — design approved 2026-08-10 (`docs/superpowers/specs/2026-08-10-job-runner-design.md`): hand-rolled schedules, auto-PastDue on overdue period invoices, trials auto-convert-and-bill |
+| **M3.4 — job runner + renewal/overdue jobs** (JobHost + advisory locks, RetentionJob, renewal sweep, overdue sweep with auto-PastDue) | ✅ complete on branch `m3.4-jobs` — design approved 2026-08-10, all tests green, verified live · ⬅ **awaiting review, not merged** |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
 | M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
@@ -492,6 +492,47 @@ theory that enforces this live against an in-test-assembly exemplar until then.
 5. **`IdempotencyRecordMaintainer`** purges expired records at startup — an interim owner of
    retention, same shape as `AuditLogPartitionMaintainer` (M1.3). Both fold into the M3.4 retention
    job once it exists (see Known open items).
+
+## M3.4 as built
+
+**Branch `m3.4-jobs`** (awaiting review). Design (approved before implementation):
+`docs/superpowers/specs/2026-08-10-job-runner-design.md` — hand-rolled schedules over a cron
+dependency, auto-PastDue on an overdue current-period invoice, trials auto-convert-and-bill.
+
+- **The job runner is BuildingBlocks machinery**: `IScheduledJob` + `JobSchedule`
+  (`Every`/`DailyAtUtc`, deliberately not cron — Hangfire is banned pending an ADR, and no job
+  needs more) + `JobHost` (`BackgroundService`, one loop per job, fresh scope per tick, failures
+  logged and the schedule advances). Cross-instance exclusion is `IJobLock` →
+  `PostgresJobLock` (session advisory lock on the scope's own connection; a crashed holder's lock
+  dies with its session — integration-tested both ways). `Jobs:Enabled=false` turns the host off
+  for hand-driven tests. New package: `Microsoft.Extensions.Hosting.Abstractions` (approved
+  `Microsoft.Extensions.*` family — no dependency-policy change needed).
+- **`RetentionJob` (daily 03:10 UTC)** — the standing instruction executed: the recurring halves
+  of `AuditLogPartitionMaintainer` + `IdempotencyRecordMaintainer` on a real schedule; the startup
+  calls stay for first boot. Partition *detachment* still waits on the counsel retention window.
+- **`RenewalJob` (15 min)** — candidates from the `(status, current_period_end_utc)` index, then
+  one `SubscriptionRenewalService` step per subscription **in its own scope/transaction**. The
+  four questions in order: expired trial converts-and-bills (unless cancellation is scheduled —
+  converting would bill a customer on their way out); scheduled cancellation finalizes at period
+  end (`CancelNow`, reason kept); auto-renew off expires (`Expired`, not `Canceled` — churn counts
+  decisions); otherwise apply a due pending change, `Renew()` from where the period *ended* (no
+  billing-date drift), and issue the renewal invoice at the **copied** price (the snapshot rule).
+  PastDue renews too — service is never withheld by billing state. Every branch consumes the
+  condition that selected it, so re-running a crashed sweep is a no-op (tested).
+- **`DisableAutoRenew()`** added to the aggregate: §2.3's `auto_renew` column and the expiry
+  branch are one policy, and nothing could turn the flag off short of cancelling. No endpoint yet
+  (AD-45's lever); no event, the `CancelPendingPlanChange` reasoning.
+- **`InvoiceOverdueJob` (hourly)** — `Issued` past due → `MarkOverdue(now)` (aggregate-guarded
+  against a wrong-clock run; raises `invoice.became_overdue`, the future dunning hook) and, for a
+  **current-period** invoice on an **Active** subscription, `MarkPastDue()` in the same
+  transaction. Old invoices mark only themselves. Transitions added deliberately:
+  `Issued → Overdue`, `Overdue → Paid | Void`; an overdue invoice is *open*, so mark-paid and void
+  accept it (`IsOpen`), and the M3.3 settled-period rule closes the loop with no operator: pay
+  everything open in the period and the subscription comes back.
+- **The read models' one-definition overdue block** now includes the stored status: filter,
+  projections, and the domain's `IsOverdue` all answer `Overdue ∨ (Issued ∧ past due)` — an Issued
+  invoice is honestly overdue in the window before the sweep's next pass.
+- The past-tense event checker learned `became` (`invoice.became_overdue`).
 
 ## M3.3 as built
 

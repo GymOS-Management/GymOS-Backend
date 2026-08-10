@@ -29,8 +29,9 @@ public static class PlatformSubscriptionsServiceCollectionExtensions
         services.TryAddScoped<IInvoiceNumberGenerator, InvoiceNumberGenerator>();
         services.TryAddScoped<IInvoiceQueries, InvoiceQueries>();
 
-        // The M3.4 sweeps: renewals every quarter hour.
+        // The M3.4 sweeps: renewals every quarter hour, overdue hourly.
         services.AddScheduledJob<RenewalJob>();
+        services.AddScheduledJob<InvoiceOverdueJob>();
 
         return services;
     }

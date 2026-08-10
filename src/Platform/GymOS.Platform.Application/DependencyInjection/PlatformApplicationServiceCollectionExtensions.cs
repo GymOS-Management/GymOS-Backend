@@ -23,6 +23,7 @@ public static class PlatformApplicationServiceCollectionExtensions
         services.TryAddScoped<SuperAdminGuard>();
         services.TryAddScoped<InvoiceIssuer>();
         services.TryAddScoped<SubscriptionRenewalService>();
+        services.TryAddScoped<InvoiceOverdueService>();
 
         return services;
     }

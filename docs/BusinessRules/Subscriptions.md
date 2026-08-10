@@ -1,7 +1,7 @@
 # Subscriptions & Billing — Business Rules
 
 **Module:** `GymOS.Platform` · schema `platform` · **platform-scoped**
-**Status:** **M3.1 and M3.2 implemented** (plan catalogue, subscription assignment). M3.3–M3.4 blocked — see Scope below.
+**Status:** **M3.1–M3.4 implemented** (plan catalogue, subscription assignment, invoices, renewal/overdue jobs).
 
 ## Purpose
 
@@ -15,8 +15,8 @@ different lifetimes, which is why they are three increments.
 |---|---|---|---|
 | **M3.1** | Plans, their limits and trial, and their prices | ✅ **built** | `Money` (AD-42) — done |
 | **M3.2** | `gym_subscriptions`: assignment, plan change, trial, period, cancellation, payment state | ✅ **built** | M3.1 — done |
-| **M3.3** | `invoices` + `invoice_lines`, mark-paid, void | not started | **AD-39 idempotency framework — not built.** "Marking an invoice paid" is the textbook qualifying command: a retried click must not pay twice. |
-| **M3.4** | Renewal and overdue jobs | not started | **A job runner — not built.** Nothing in the platform yet runs work on a schedule. |
+| **M3.3** | `invoices` + `invoice_lines`, mark-paid, void | ✅ **built** | AD-39 idempotency framework — done |
+| **M3.4** | Renewal and overdue jobs | ✅ **built** | The job runner — done (`JobHost`, advisory-lock coordinated) |
 
 `plan_features` is also specified in §2.3 but belongs with **M4**: it references the `features` catalogue,
 which does not exist. Building the join table first would give it nothing to point at.
@@ -61,10 +61,14 @@ leaves an existing subscription paying €49.99, and a *new* subscription assign
   enum has no state for "replaced", so recording an upgrade as a cancellation would inflate churn.
 - **A trial is a grace on payment, not a pause on the calendar.** A monthly plan with a 14-day trial
   still renews a month in, which is what the gym's first invoice will say.
-- **Trial conversion, renewal, and expiry are explicit operations for now.** The renewal job (M3.4) will
-  drive them from dates. Until then a trial that has run out stays `Trialing` with `trialEndsAtUtc` in
-  the past — legible rather than wrong — and `TrialHasEnded`/`PeriodHasEnded` are derived, never stored,
-  so no job is needed to keep them true.
+- **Trial conversion, renewal, and expiry are date-driven since M3.4.** The renewal sweep (every
+  15 minutes) converts-and-bills an expired trial, finalizes a scheduled cancellation at the period
+  end, applies a pending plan change at its boundary, advances the period at the **copied** price
+  and issues the renewal invoice, and expires a subscription whose auto-renew is off. A trial whose
+  gym already scheduled cancellation is deliberately *not* converted — converting would bill a
+  customer on their way out. The explicit endpoints remain for operators who will not wait a
+  quarter hour. `TrialHasEnded`/`PeriodHasEnded` stay derived; the sweep reads them, it does not
+  replace them.
 
 ## Business Rules
 
@@ -123,8 +127,8 @@ leaves an existing subscription paying €49.99, and a *new* subscription assign
 |---|---|---|
 | ~~Subscribed-gym count on a plan~~ | ~~M3.2~~ | **Done** — `subscribedGymCount` counts gyms on a live subscription, and the gym detail view now carries its `subscription`. Both were deliberately omitted while they could only have read zero or null. |
 | Feature set per plan (`plan_features`) | M4 | The `features` catalogue does not exist yet. |
-| Invoices, mark-paid, void | M3.3 | Needs AD-39 idempotency: a retried "mark paid" must not pay twice. |
-| Renewal and overdue jobs | M3.4 | Needs a job runner. |
+| ~~Invoices, mark-paid, void~~ | ~~M3.3~~ | **Done** — see `docs/BusinessRules/Invoices.md`. |
+| ~~Renewal and overdue jobs~~ | ~~M3.4~~ | **Done** — `RenewalJob` (15 min) and `InvoiceOverdueJob` (hourly) on the `JobHost`. |
 | Multi-currency *pricing within one gym* | no business case | §3.2's scope guard: a gym has one operating currency. Several currencies on a *plan* is a different thing, and is supported. |
 | Proration on plan change | **M3.3**, corrected from M3.2 | Charging or crediting the difference needs an invoice to land on. `Money.Allocate` is ready; there is nowhere to put the result until invoices exist, so changing plan leaves the paid period alone. |
 | Tax on prices | M3.3 | A plan price is pre-tax. Tax rounding is per-jurisdiction configuration needing accounting counsel (AD-42/§3.2). |

@@ -77,9 +77,15 @@ the mechanism changes; the interface (`IInvoiceNumberGenerator`) does not.
 - **Void requires confirmation** — the `X-Confirm-Action` header carrying the invoice number (the M2
   deletion pattern). Voided is a state, not a deletion: the row stays, because "this was withdrawn" is
   exactly what the record must be able to show. A paid invoice cannot be voided.
-- **Overdue is derived, never stored**: `Issued && now ≥ dueAtUtc`, answered from the clock at read
-  time. A stored flag needs a job to keep it true, and the night that job failed it would lie. The
-  `Overdue` status value exists for the M3.4 job to write when there is something to write it *for*.
+- **Overdue is both derived and durable (M3.4).** Displays still derive "overdue right now" from
+  the due date — an Issued invoice past due reads as overdue even before the sweep's next pass, so
+  the night the job fails the lists do not lie. The hourly `InvoiceOverdueJob` additionally writes
+  the durable `Overdue` status (guarded: the aggregate refuses the write when not actually past
+  due) and raises `gymos.platform.invoice.became_overdue` — the hook dunning email hangs on later.
+- **A current period going unpaid takes the subscription PastDue automatically**, in the same
+  per-invoice transaction — and settling everything open in the period flips it back (the M3.3
+  rule), so the whole loop runs with no operator in it. An *old* invoice crossing its due date
+  marks only the invoice. Service is never withheld by any of this.
 
 ## Value rules and stable codes
 
@@ -111,16 +117,19 @@ route is a PUT, and an identical retry after a lost response must succeed as a n
   supplies jurisdiction values** (⚠ flagged). Switching it on is configuration, not schema.
 - A negative total is unreachable: the net-sign policy routes net credits to scheduling. Reaching the
   guard is a caller defect, not a business case.
-- Transitions: `Issued → Paid` and `Issued → Void` only, held by an exhaustively tested 5×5 table.
-  `Draft` and `Overdue` are currently producer-less (doc comments name their future producers).
+- Transitions: `Issued → Paid | Void | Overdue` and `Overdue → Paid | Void`, held by an
+  exhaustively tested 5×5 table. An overdue invoice is **open** — late is not settled, so payment
+  and voiding accept it exactly like an issued one. `Draft` remains producer-less until manual
+  invoicing exists.
 
 ## Deferred, deliberately
 
 | Topic | Where it went |
 |---|---|
 | Credit notes (mid-period refunds) | Needs its own ADR — a credit note is a document with its own number |
-| Overdue automation (dunning, `Overdue` status writes) | M3.4 job |
-| Renewal invoices | M3.4 job, through the same `InvoiceIssuer` |
+| ~~Overdue status writes + auto-PastDue~~ | **Built — M3.4** (`InvoiceOverdueJob`, hourly) |
+| ~~Renewal invoices~~ | **Built — M3.4** (`RenewalJob`, through the same `InvoiceIssuer`) |
+| Dunning email on `became_overdue` | Needs the notification surface (AD-44 era); the event already fires |
 | Tax values per jurisdiction | Accounting counsel (⚠) |
 | Gapless numbering requirement | Accounting counsel (⚠) |
 | Invoice PDF | AD-44 file pipeline |

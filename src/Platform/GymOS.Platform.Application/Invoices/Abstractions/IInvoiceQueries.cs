@@ -70,4 +70,11 @@ public interface IInvoiceQueries
 
     /// <summary>The gym tab: every invoice ever issued to one gym, newest first, unpaged.</summary>
     Task<IReadOnlyList<InvoiceListItem>> ListForGymAsync(Guid gymId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Issued invoices whose due date has passed — the overdue sweep's candidates, oldest due
+    /// first. Rides the <c>(status, due_at_utc)</c> index; <c>InvoiceOverdueService</c> re-checks
+    /// per row inside its own transaction.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> ListNewlyOverdueAsync(DateTimeOffset now, CancellationToken cancellationToken);
 }

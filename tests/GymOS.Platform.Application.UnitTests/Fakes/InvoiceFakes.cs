@@ -126,6 +126,16 @@ internal sealed class FakeInvoiceQueries : IInvoiceQueries
                 .Select(ProjectListItem)
                 .ToList());
 
+    public Task<IReadOnlyList<Guid>> ListNewlyOverdueAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>(
+            _invoices.Invoices
+                .Where(invoice => invoice.Status == InvoiceStatus.Issued && invoice.DueAtUtc <= now)
+                .OrderBy(invoice => invoice.DueAtUtc)
+                .Select(invoice => invoice.Id)
+                .ToList());
+
     private string GymName(Guid gymId) =>
         _gyms.Gyms.SingleOrDefault(gym => gym.Id == gymId)?.Name ?? string.Empty;
 
