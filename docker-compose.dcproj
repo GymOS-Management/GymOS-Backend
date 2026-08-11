@@ -16,6 +16,12 @@
          so F5 and `docker compose up -d` drive ONE stack instead of racing for the same ports
          under two names. -->
     <DockerComposeProjectName>gymos</DockerComposeProjectName>
+    <!-- Regular, not Fast: Fast mode builds only a Dockerfile stage named `base` and swaps the
+         entrypoint for a debugger shim — this Dockerfile deliberately has no such stage, because
+         dev runs the same hardened image production runs. Without this, F5 fails with
+         "cannot find the container for the service 'api'": the partial build never produced one.
+         Regular mode builds the real Dockerfile and attaches the debugger to the real image. -->
+    <DockerDevelopmentMode>Regular</DockerDevelopmentMode>
     <DockerLaunchAction>LaunchBrowser</DockerLaunchAction>
     <!-- Lands on the Scalar API reference (Development publishes it; see appsettings.json). -->
     <DockerServiceUrl>{Scheme}://localhost:{ServicePort}/scalar/v1</DockerServiceUrl>
