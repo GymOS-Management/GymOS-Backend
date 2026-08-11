@@ -1,4 +1,5 @@
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
+using GymOS.Platform.Domain.Features;
 using GymOS.Platform.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -34,7 +35,41 @@ public sealed class SubscriptionPlanConfiguration : IEntityTypeConfiguration<Sub
         builder.Navigation(plan => plan.Prices)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
+        // What the plan includes (§2.4), reached through the plan exactly as its prices are.
+        builder.HasMany(plan => plan.Features)
+            .WithOne()
+            .HasForeignKey(feature => feature.PlanId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Navigation(plan => plan.Features)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
         builder.Property<uint>("xmin").IsRowVersion();
+    }
+}
+
+public sealed class PlanFeatureConfiguration : IEntityTypeConfiguration<PlanFeature>
+{
+    public void Configure(EntityTypeBuilder<PlanFeature> builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        builder.ToTable("plan_features", "platform");
+        builder.HasKey(feature => feature.Id);
+
+        // One opinion per (plan, feature) — the aggregate upserts, and this is what holds under a
+        // race between two operators editing the same plan.
+        builder.HasIndex(feature => new { feature.PlanId, feature.FeatureId })
+            .IsUnique()
+            .HasDatabaseName("ux_plan_features_plan_feature");
+
+        // Restrict: features are never deleted; if that changes, plan contents must be reviewed.
+        builder.HasOne<Feature>()
+            .WithMany()
+            .HasForeignKey(feature => feature.FeatureId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // No xmin: written only through the SubscriptionPlan aggregate, whose token guards it —
+        // the PlanPrice precedent, recorded in ConcurrencyModelTests' exemption list.
     }
 }
 

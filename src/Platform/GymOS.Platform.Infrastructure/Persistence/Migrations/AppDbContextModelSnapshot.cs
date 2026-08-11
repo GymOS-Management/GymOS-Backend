@@ -289,6 +289,136 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("messages", "outbox");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Features.Feature", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("category");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<bool>("DefaultEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("default_enabled");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("description");
+
+                    b.Property<bool>("IsPremium")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_premium");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("key");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("name");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id")
+                        .HasName("pk_features");
+
+                    b.HasIndex("Key")
+                        .IsUnique()
+                        .HasDatabaseName("ux_features_key");
+
+                    b.HasIndex("Category", "Name")
+                        .HasDatabaseName("ix_features_category_name");
+
+                    b.ToTable("features", "platform");
+                });
+
+            modelBuilder.Entity("GymOS.Platform.Domain.Features.GymFeatureOverride", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid>("FeatureId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("feature_id");
+
+                    b.Property<Guid>("GymId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("gym_id");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("SetAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("set_at_utc");
+
+                    b.Property<Guid?>("SetByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("set_by_user_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id")
+                        .HasName("pk_gym_feature_overrides");
+
+                    b.HasIndex("FeatureId")
+                        .HasDatabaseName("ix_gym_feature_overrides_feature_id");
+
+                    b.HasIndex("GymId")
+                        .HasDatabaseName("ix_gym_feature_overrides_gym_id");
+
+                    b.HasIndex("SetByUserId")
+                        .HasDatabaseName("ix_gym_feature_overrides_set_by_user_id");
+
+                    b.HasIndex("GymId", "FeatureId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_gym_feature_overrides_gym_feature");
+
+                    b.ToTable("gym_feature_overrides", "platform");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Gyms.Gym", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1057,6 +1187,37 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("gym_subscriptions", "platform");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanFeature", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("FeatureId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("feature_id");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("plan_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_plan_features");
+
+                    b.HasIndex("FeatureId")
+                        .HasDatabaseName("ix_plan_features_feature_id");
+
+                    b.HasIndex("PlanId", "FeatureId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_plan_features_plan_feature");
+
+                    b.ToTable("plan_features", "platform");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanPrice", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1189,6 +1350,29 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_deliveries_outbox_message_message_id");
+                });
+
+            modelBuilder.Entity("GymOS.Platform.Domain.Features.GymFeatureOverride", b =>
+                {
+                    b.HasOne("GymOS.Platform.Domain.Features.Feature", null)
+                        .WithMany()
+                        .HasForeignKey("FeatureId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_gym_feature_overrides_features_feature_id");
+
+                    b.HasOne("GymOS.Platform.Domain.Gyms.Gym", null)
+                        .WithMany()
+                        .HasForeignKey("GymId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_gym_feature_overrides_gyms_gym_id");
+
+                    b.HasOne("GymOS.Platform.Domain.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("SetByUserId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_gym_feature_overrides_user_set_by_user_id");
                 });
 
             modelBuilder.Entity("GymOS.Platform.Domain.Gyms.GymBranding", b =>
@@ -1338,6 +1522,23 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.Navigation("PendingChange");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanFeature", b =>
+                {
+                    b.HasOne("GymOS.Platform.Domain.Features.Feature", null)
+                        .WithMany()
+                        .HasForeignKey("FeatureId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_plan_features_features_feature_id");
+
+                    b.HasOne("GymOS.Platform.Domain.Subscriptions.SubscriptionPlan", null)
+                        .WithMany("Features")
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_plan_features_subscription_plans_plan_id");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanPrice", b =>
                 {
                     b.HasOne("GymOS.Platform.Domain.Subscriptions.SubscriptionPlan", null)
@@ -1365,6 +1566,8 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.SubscriptionPlan", b =>
                 {
+                    b.Navigation("Features");
+
                     b.Navigation("Prices");
                 });
 #pragma warning restore 612, 618

@@ -43,6 +43,10 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         services.TryAddScoped<AuditSaveChangesInterceptor>();
         services.TryAddScoped<PlatformIdentitySeeder>();
 
+        // Insert-only: a feature's defaults and copy belong to the operator once the row exists
+        // (§3.5), so this must never "reconcile" them — see FeatureCatalogSeeder.
+        services.TryAddScoped<FeatureCatalogSeeder>();
+
         // The audited-entity declaration never changes at runtime, so the policy is a
         // singleton built once from the module's list (AD-7).
         services.TryAddSingleton(new AuditPolicy(PlatformAuditedEntities.All));

@@ -1,4 +1,5 @@
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
+using GymOS.Platform.Domain.Features;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Invoices;
@@ -36,6 +37,12 @@ public static class PlatformAuditedEntities
         // What each gym agreed to pay, and every change to it. This is the row a billing dispute is
         // argued from, so who assigned, repriced, or cancelled it has to be recoverable.
         AuditedEntity.Of<GymSubscription>("gym_subscription"),
+
+        // Who changed what the platform ships enabled, what a plan includes, and — the one a later
+        // billing conversation turns on — who gave one gym a paid capability for free, and why.
+        AuditedEntity.Of<Feature>("feature"),
+        AuditedEntity.Of<PlanFeature>("plan_feature"),
+        AuditedEntity.Of<GymFeatureOverride>("gym_feature_override"),
 
         // What was actually charged, who marked it paid, and who voided it. payment_reference is
         // deliberately NOT redacted: it is a bank/processor transaction identifier an operator typed,

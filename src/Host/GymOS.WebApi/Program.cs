@@ -155,6 +155,11 @@ try
 
         await startupScope.ServiceProvider.GetRequiredService<PlatformIdentitySeeder>().SeedAsync(CancellationToken.None);
 
+        // The feature catalogue (§2.4). Insert-only: a feature's default and copy belong to the
+        // operator once its row exists, so this adds keys the code has newly declared and leaves
+        // everything else exactly as an administrator left it.
+        await startupScope.ServiceProvider.GetRequiredService<FeatureCatalogSeeder>().SeedAsync(CancellationToken.None);
+
         // Runs after the catalog sync: the SuperAdmin needs its role to exist first.
         // Does nothing unless Seed:SuperAdmin is configured, and never resets an
         // existing account's password.
