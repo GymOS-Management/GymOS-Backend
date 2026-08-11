@@ -1,6 +1,14 @@
 using System.Net;
 using System.Text.Json;
+using GymOS.BuildingBlocks.Infrastructure.Time;
+using GymOS.Platform.Application.Features;
+using GymOS.Platform.Application.Invoices;
+using GymOS.Platform.Application.Subscriptions;
 using GymOS.Platform.Domain.Features;
+using GymOS.Platform.Domain.Subscriptions;
+using GymOS.Platform.Infrastructure.Invoices;
+using GymOS.Platform.Infrastructure.Persistence;
+using GymOS.Platform.Infrastructure.Persistence.Repositories;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -17,6 +25,11 @@ namespace GymOS.IntegrationTests;
 public sealed class GymFeatureLifecycleTests : IAsyncLifetime
 {
     private const string TrialReason = "3-month goodwill trial.";
+
+    // Rule R2 / AD-40: SystemClock is the sole sanctioned DateTimeOffset.UtcNow call site — even
+    // here, where the test needs "real now" to backdate a subscription and to drive the renewal
+    // step at it.
+    private static readonly SystemClock Clock = new();
 
     private readonly PostgresFixture _postgres;
     private AuthenticationHost _host = null!;
@@ -111,6 +124,42 @@ public sealed class GymFeatureLifecycleTests : IAsyncLifetime
             .GetProperty("source").GetString());
     }
 
+    [Fact]
+    public async Task A_pending_plan_change_applied_at_renewal_withdraws_a_redundant_exception()
+    {
+        // The gap the coordinator caught: the brief for this task enumerated three renewal
+        // terminal branches and missed a fourth. A plan change scheduled for the period boundary
+        // (a cross-cycle or mid-period change) is applied by the renewal step, not by a console
+        // request — and that is still "the gym's plan changed", so the sweep must not be the first
+        // thing to notice a now-redundant exception.
+        Guid basic = await CreatePlanAsync("BASIC");
+        await SetPlanFeatureAsync(basic, PlatformFeatures.Crm, isEnabled: false);
+        Guid pro = await CreatePlanAsync("PRO");
+        await SetPlanFeatureAsync(pro, PlatformFeatures.Crm, isEnabled: true);
+
+        Guid gym = await CreateGymAsync("pending-change-gym");
+
+        // Seeded directly rather than through AssignAsync/SchedulePlanChange's own HTTP path,
+        // backdated so the pending change is already due at the boundary without waiting for real
+        // time to pass — the same backdating RenewalSweepTests uses to make a subscription due.
+        Guid subscriptionId = await SeedSubscriptionWithPendingChangeAsync(gym, basic, pro);
+
+        await SetGymFeaturesAsync(gym, (PlatformFeatures.Crm, true, TrialReason));
+        Assert.Equal(1, await CountOverridesAsync(gym));
+
+        // Drive the renewal step itself the way RenewalSweepTests does: construct the service
+        // directly over a fresh AppDbContext and call ProcessAsync, rather than inventing a second
+        // mechanism to trigger it.
+        RenewalAction action = await ProcessRenewalAsync(subscriptionId);
+        Assert.Equal(RenewalAction.AppliedPendingChangeAndRenewed, action);
+
+        Assert.Equal(0, await CountOverridesAsync(gym));
+
+        JsonElement crm = Feature(await ReadFeaturesAsync(gym), PlatformFeatures.Crm);
+        Assert.True(crm.GetProperty("enabled").GetBoolean());
+        Assert.Equal("Plan", crm.GetProperty("source").GetString());
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
     // Thin wrappers binding the shared PlatformApiHelpers / FeatureApiHelpers to this fixture's
     // client/host — see GymFeatureApiTests for the same pattern and why the five feature helpers
@@ -141,4 +190,58 @@ public sealed class GymFeatureLifecycleTests : IAsyncLifetime
 
     private static JsonElement Feature(JsonElement features, string key) =>
         FeatureApiHelpers.Feature(features, key);
+
+    /// <summary>
+    /// Seeds a live subscription on <paramref name="currentPlanId"/> with a plan change already
+    /// pending to <paramref name="pendingPlanId"/> — assigned five weeks ago, exactly as
+    /// <c>RenewalSweepTests.SeedSubscriptionAssignedAtAsync</c> backdates, so the period has ended
+    /// and the pending change (scheduled for that same period's boundary) is due without waiting
+    /// for real time to pass.
+    /// </summary>
+    private async Task<Guid> SeedSubscriptionWithPendingChangeAsync(
+        Guid gymId, Guid currentPlanId, Guid pendingPlanId)
+    {
+        await using AppDbContext context = _host.CreateDbContext();
+        var plans = new PlanRepository(context);
+
+        SubscriptionPlan currentPlan = await plans.FindByIdAsync(currentPlanId, CancellationToken.None)
+            ?? throw new InvalidOperationException("Seeded current plan not found.");
+        SubscriptionPlan pendingPlan = await plans.FindByIdAsync(pendingPlanId, CancellationToken.None)
+            ?? throw new InvalidOperationException("Seeded pending plan not found.");
+
+        DateTimeOffset assignedAt = Clock.UtcNow.AddDays(-35);
+        GymSubscription subscription = GymSubscription.Assign(
+            gymId, currentPlan, SubscriptionTerms.From(currentPlan.Prices.Single()), assignedAt);
+
+        // At the period boundary, exactly what AssignSubscriptionCommandHandler schedules for a
+        // cross-cycle or mid-period change — already due, since that boundary is weeks in the past.
+        subscription.SchedulePlanChange(
+            pendingPlan, SubscriptionTerms.From(pendingPlan.Prices.Single()), subscription.CurrentPeriodEndUtc);
+
+        context.Add(subscription);
+        await context.SaveChangesAsync();
+
+        return subscription.Id;
+    }
+
+    /// <summary>
+    /// Drives one renewal-sweep step directly over a fresh <see cref="AppDbContext"/> — the same
+    /// construction <c>RenewalSweepTests.Service</c> uses, so this test exercises the real
+    /// production wiring (including the real <see cref="FeatureExceptionMaintainer"/>) rather than
+    /// a second, test-only way of invoking the sweep.
+    /// </summary>
+    private async Task<RenewalAction> ProcessRenewalAsync(Guid subscriptionId)
+    {
+        await using AppDbContext context = _host.CreateDbContext();
+
+        var service = new SubscriptionRenewalService(
+            new SubscriptionRepository(context),
+            new PlanRepository(context),
+            new InvoiceIssuer(new InvoiceRepository(context), new InvoiceNumberGenerator(context), Clock),
+            new FeatureExceptionMaintainer(
+                new FeatureRepository(context), new PlanRepository(context), new SubscriptionRepository(context)),
+            new UnitOfWork(context));
+
+        return await service.ProcessAsync(subscriptionId, Clock.UtcNow, CancellationToken.None);
+    }
 }

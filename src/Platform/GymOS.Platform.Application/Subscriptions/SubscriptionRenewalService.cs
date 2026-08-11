@@ -88,6 +88,8 @@ public sealed class SubscriptionRenewalService
             return RenewalAction.None;
         }
 
+        RenewalAction action;
+
         // 1. An expired trial converts and bills — unless the gym already asked to cancel, in
         //    which case converting would bill a customer on their way out; the cancellation
         //    finalizes at the period end below instead. CatchUpPeriods first: a trial longer
@@ -100,90 +102,81 @@ public sealed class SubscriptionRenewalService
             subscription.ConvertTrial();
             subscription.CatchUpPeriods(now);
             await _issuer.IssueForPeriodAsync(subscription, plan, cancellationToken);
-
-            // The trial could have run for months; a platform default or the plan's own features
-            // may have moved underneath an exception the gym was granted at trial start, with no
-            // subsequent gym-scoped write to catch it. The sweep is exactly the moment nobody else
-            // is watching, so it re-checks here rather than assuming nothing moved.
-            await _featureExceptions.WithdrawRedundantAsync(subscription.GymId, cancellationToken);
-
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return RenewalAction.ConvertedTrial;
-        }
-
-        if (!subscription.PeriodHasEnded(now))
-        {
-            return RenewalAction.None;
-        }
-
-        // 2. A scheduled cancellation becomes final — the gym got every day it paid for.
-        if (subscription.CancelAtPeriodEnd)
-        {
-            subscription.CancelNow(reason: null, now); // keeps the reason recorded at scheduling
-
-            // A subscription that ends overnight is precisely the case nobody is watching: no
-            // operator is at the console to notice an exception that now equals the platform
-            // default it fell back to.
-            await _featureExceptions.WithdrawRedundantAsync(subscription.GymId, cancellationToken);
-
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return RenewalAction.FinalizedCancellation;
-        }
-
-        // 3. Auto-renew off with no cancellation asked: time ran out. Expired, not Canceled —
-        //    the churn figure counts decisions, and nobody decided this.
-        if (!subscription.AutoRenew)
-        {
-            subscription.Expire();
-
-            // Same reasoning as the cancellation branch above: the sweep is the only thing that
-            // will ever notice this gym's exceptions again tonight.
-            await _featureExceptions.WithdrawRedundantAsync(subscription.GymId, cancellationToken);
-
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return RenewalAction.Expired;
-        }
-
-        // 4. Renewal — applying the scheduled plan change first when one has come due, so the new
-        //    period starts on the terms the gym chose for it.
-        bool changedPlan = false;
-        SubscriptionPlan renewalPlan;
-
-        if (subscription.PendingChange is { } pending && pending.ChangeAtUtc <= now)
-        {
-            renewalPlan = await RequirePlanAsync(pending.PlanId, cancellationToken);
-
-            if (!Currency.TryOf(pending.CurrencyCode, out Currency currency))
-            {
-                throw new InvalidOperationException(
-                    $"Pending change on subscription '{subscription.Id}' carries unknown currency " +
-                    $"'{pending.CurrencyCode}'.");
-            }
-
-            subscription.ChangePlan(
-                renewalPlan,
-                new SubscriptionTerms(
-                    pending.PlanPriceId, pending.BillingCycle, Money.Of(pending.Amount, currency)));
-            changedPlan = true;
+            action = RenewalAction.ConvertedTrial;
         }
         else
         {
-            renewalPlan = await RequirePlanAsync(subscription.PlanId, cancellationToken);
+            if (!subscription.PeriodHasEnded(now))
+            {
+                return RenewalAction.None;
+            }
+
+            // 2. A scheduled cancellation becomes final — the gym got every day it paid for.
+            if (subscription.CancelAtPeriodEnd)
+            {
+                subscription.CancelNow(reason: null, now); // keeps the reason recorded at scheduling
+                action = RenewalAction.FinalizedCancellation;
+            }
+
+            // 3. Auto-renew off with no cancellation asked: time ran out. Expired, not Canceled —
+            //    the churn figure counts decisions, and nobody decided this.
+            else if (!subscription.AutoRenew)
+            {
+                subscription.Expire();
+                action = RenewalAction.Expired;
+            }
+            else
+            {
+                // 4. Renewal — applying the scheduled plan change first when one has come due, so
+                //    the new period starts on the terms the gym chose for it.
+                bool changedPlan = false;
+                SubscriptionPlan renewalPlan;
+
+                if (subscription.PendingChange is { } pending && pending.ChangeAtUtc <= now)
+                {
+                    renewalPlan = await RequirePlanAsync(pending.PlanId, cancellationToken);
+
+                    if (!Currency.TryOf(pending.CurrencyCode, out Currency currency))
+                    {
+                        throw new InvalidOperationException(
+                            $"Pending change on subscription '{subscription.Id}' carries unknown " +
+                            $"currency '{pending.CurrencyCode}'.");
+                    }
+
+                    subscription.ChangePlan(
+                        renewalPlan,
+                        new SubscriptionTerms(
+                            pending.PlanPriceId, pending.BillingCycle, Money.Of(pending.Amount, currency)));
+                    changedPlan = true;
+                }
+                else
+                {
+                    renewalPlan = await RequirePlanAsync(subscription.PlanId, cancellationToken);
+                }
+
+                // The period advances from where it ended (renewing late must not drift the
+                // billing date), and the new period bills at the subscription's copied price —
+                // the snapshot rule. A PastDue subscription renews too: service is never withheld
+                // by billing state, and the old period's invoice stays open until it is settled.
+                subscription.Renew();
+                await _issuer.IssueForPeriodAsync(subscription, renewalPlan, cancellationToken);
+                action = changedPlan ? RenewalAction.AppliedPendingChangeAndRenewed : RenewalAction.Renewed;
+            }
         }
 
-        // The period advances from where it ended (renewing late must not drift the billing
-        // date), and the new period bills at the subscription's copied price — the snapshot rule.
-        // A PastDue subscription renews too: service is never withheld by billing state, and the
-        // old period's invoice stays open until it is settled.
-        subscription.Renew();
-        await _issuer.IssueForPeriodAsync(subscription, renewalPlan, cancellationToken);
+        // One call, here, rather than one per branch above: every branch that reaches this point
+        // has just finished mutating the subscription — converted, cancelled, expired, renewed, or
+        // renewed onto a new plan — and any of those can leave a stored exception no longer
+        // differing from what the gym gets anyway. Checking once at this single point, after every
+        // mutation and before the one save that commits it, means a future fifth or sixth branch is
+        // covered by construction instead of by remembering to add another call inside it — which
+        // is exactly the enumeration mistake that left this branch uncovered the first time.
+        await _featureExceptions.WithdrawRedundantAsync(subscription.GymId, cancellationToken);
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        return changedPlan ? RenewalAction.AppliedPendingChangeAndRenewed : RenewalAction.Renewed;
+        return action;
     }
 
     private async Task<SubscriptionPlan> RequirePlanAsync(Guid planId, CancellationToken cancellationToken) =>
