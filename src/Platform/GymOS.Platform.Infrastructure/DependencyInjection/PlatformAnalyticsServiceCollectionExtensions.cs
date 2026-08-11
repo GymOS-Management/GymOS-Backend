@@ -2,6 +2,7 @@ using GymOS.BuildingBlocks.Infrastructure.Jobs;
 using GymOS.Platform.Application.Analytics.Abstractions;
 using GymOS.Platform.Infrastructure.Analytics;
 using GymOS.Platform.Infrastructure.Jobs;
+using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.Platform.Infrastructure.Persistence.Repositories;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -16,6 +17,7 @@ public static class PlatformAnalyticsServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddScoped<IPlatformStatsRepository, PlatformStatsRepository>();
+        services.TryAddScoped<IDashboardQueries, DashboardQueries>();
 
         services.TryAddScoped<DailyStatsCompiler>();
         services.AddScheduledJob<PlatformStatsJob>();

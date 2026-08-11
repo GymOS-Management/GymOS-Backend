@@ -233,6 +233,7 @@ try
     app.MapSubscriptionEndpoints();
     app.MapInvoiceEndpoints();
     app.MapFeatureEndpoints();
+    app.MapDashboardEndpoints();
     app.MapUserEndpoints();
     app.MapRoleEndpoints();
     app.MapAuditLogEndpoints();

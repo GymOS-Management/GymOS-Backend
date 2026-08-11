@@ -30,6 +30,33 @@
         ],
         "type": "object"
       },
+      "ActivityEntry": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "entityType": {
+            "type": "string"
+          },
+          "occurredAtUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "userEmail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "occurredAtUtc",
+          "action",
+          "entityType",
+          "userEmail"
+        ],
+        "type": "object"
+      },
       "AssignSubscriptionRequest": {
         "properties": {
           "billingCycle": {
@@ -300,6 +327,83 @@
           "status",
           "roles",
           "permissions"
+        ],
+        "type": "object"
+      },
+      "DashboardHealth": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/HealthCheckStatus"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ],
+        "type": "object"
+      },
+      "DashboardSummary": {
+        "properties": {
+          "activeGyms": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "liveSubscriptions": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "mrr": {
+            "items": {
+              "$ref": "#/components/schemas/MoneyDto"
+            },
+            "type": "array"
+          },
+          "provisioningGyms": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "suspendedGyms": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "totalGyms": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "totalGyms",
+          "activeGyms",
+          "suspendedGyms",
+          "provisioningGyms",
+          "liveSubscriptions",
+          "mrr"
         ],
         "type": "object"
       },
@@ -637,6 +741,21 @@
         ],
         "type": "object"
       },
+      "HealthCheckStatus": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
       "InviteUserRequest": {
         "properties": {
           "email": {
@@ -908,6 +1027,26 @@
         },
         "required": [
           "paymentReference"
+        ],
+        "type": "object"
+      },
+      "MoneyDto": {
+        "properties": {
+          "amount": {
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?$",
+            "type": [
+              "number",
+              "string"
+            ]
+          },
+          "currency": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount",
+          "currency"
         ],
         "type": "object"
       },
@@ -2683,6 +2822,165 @@
         "summary": "Exchange the refresh cookie for a new access token",
         "tags": [
           "Authentication"
+        ]
+      }
+    },
+    "/api/v1/dashboard/activity": {
+      "get": {
+        "description": "The newest audit entries, in a shape sized for a feed rather than the full audit surface. Gated on \u0060audit.read\u0060, not \u0060analytics.read\u0060 \u2014 this is the audit log wearing a different hat, and audit access must not depend on analytics access, or the reverse. \u0060limit\u0060 defaults to 20 and is clamped between 1 and 100.",
+        "operationId": "GetRecentActivity",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ActivityEntry"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The audit log, trimmed, for the dashboard\u0027s activity feed",
+        "tags": [
+          "Dashboard"
+        ]
+      }
+    },
+    "/api/v1/dashboard/health": {
+      "get": {
+        "description": "The same checks \u0060/health/ready\u0060 runs, projected to each check\u0027s name and status only. No exception details and no descriptions \u2014 either can carry a connection string or a stack trace, and this endpoint is for a status panel, not a debugger.",
+        "operationId": "GetDashboardHealth",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardHealth"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The platform\u0027s health checks, for a console panel",
+        "tags": [
+          "Dashboard"
+        ]
+      }
+    },
+    "/api/v1/dashboard/summary": {
+      "get": {
+        "description": "Gym counts and MRR, computed from the operational tables at request time \u2014 not from AD-8\u0027s daily read model. A summary served from yesterday\u0027s row would not be a trade-off, it would be wrong. \u0060mrr\u0060 carries one entry per currency; amounts in different currencies are never summed or converted (AD-43 is undecided).",
+        "operationId": "GetDashboardSummary",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardSummary"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The dashboard\u0027s headline numbers, live",
+        "tags": [
+          "Dashboard"
         ]
       }
     },
@@ -6511,6 +6809,9 @@
     },
     {
       "name": "Features"
+    },
+    {
+      "name": "Dashboard"
     },
     {
       "name": "Platform users"

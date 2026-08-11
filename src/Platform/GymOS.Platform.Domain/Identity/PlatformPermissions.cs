@@ -51,6 +51,16 @@ public static class PlatformPermissions
     public const string FeaturesRead = "features.read";
     public const string FeaturesManage = "features.manage";
 
+    /// <summary>
+    /// The dashboard's numbers and the analytics series (§3.2, §3.8).
+    ///
+    /// <para>Deliberately <b>not</b> granted to SupportAgent. MRR and churn are commercially
+    /// sensitive, and the support question this platform exists to answer — "why can this gym not do
+    /// X?" — needs the feature resolution, not the revenue. Same authority reasoning that keeps
+    /// <c>features.manage</c> apart from <c>billing.manage</c>.</para>
+    /// </summary>
+    public const string AnalyticsRead = "analytics.read";
+
     public static readonly IReadOnlyList<PermissionDefinition> All =
     [
         new(GymsRead, ModuleName, "View gyms and their details"),
@@ -68,5 +78,6 @@ public static class PlatformPermissions
         new(SubscriptionsManage, ModuleName, "Assign, change, and cancel a gym's subscription"),
         new(FeaturesRead, ModuleName, "View the feature catalogue and a gym's resolved features"),
         new(FeaturesManage, ModuleName, "Edit the feature catalogue and set or clear gym overrides"),
+        new(AnalyticsRead, ModuleName, "View the dashboard summary and analytics series"),
     ];
 }

@@ -157,7 +157,8 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         // and confirm the new operation landed in `secured` rather than in `anonymous`.
         // 43 → 49 across M4: two feature-catalogue operations, two plan-feature operations, two
         // gym-feature operations.
-        Assert.Equal(49, secured.Count);
+        // 49 → 52 in M5 task 4: the three dashboard operations (summary, health, activity).
+        Assert.Equal(52, secured.Count);
     }
 
     /// <summary>

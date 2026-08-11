@@ -45,6 +45,8 @@ public static class SystemRoles
                 // day-to-day administration, so this role holds manage as well as read.
                 PlatformPermissions.FeaturesRead,
                 PlatformPermissions.FeaturesManage,
+
+                PlatformPermissions.AnalyticsRead,
             ]),
         new(
             SupportAgent,
@@ -59,6 +61,9 @@ public static class SystemRoles
                 // "why is POS off for this gym?" needs the resolved features and their sources.
                 PlatformPermissions.BillingRead,
                 PlatformPermissions.FeaturesRead,
+
+                // Deliberately no analytics.read: a support agent explains a gym's features, and
+                // does not need the platform's revenue to do it.
             ]),
         new(
             BillingAdmin,
@@ -74,6 +79,8 @@ public static class SystemRoles
                 // What a plan includes is priced, so billing edits it — via `/plans/{id}/features`,
                 // which is gated on billing.manage. Reading the catalogue is needed to do that.
                 PlatformPermissions.FeaturesRead,
+
+                PlatformPermissions.AnalyticsRead,
             ]),
         new(
             ReadOnly,
@@ -86,6 +93,7 @@ public static class SystemRoles
                 PlatformPermissions.AuditRead,
                 PlatformPermissions.BillingRead,
                 PlatformPermissions.FeaturesRead,
+                PlatformPermissions.AnalyticsRead,
             ]),
     ];
 }
