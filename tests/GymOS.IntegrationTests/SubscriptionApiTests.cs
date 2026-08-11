@@ -45,8 +45,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "assign-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "ASSIGN", trialDays: 0, amount: 49.99m)).Id;
 
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
         JsonElement body = await assigned.Content.ReadFromJsonAsync<JsonElement>();
@@ -67,8 +66,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "trial-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "TRIALED", trialDays: 14, amount: 29.99m)).Id;
 
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         JsonElement body = await assigned.Content.ReadFromJsonAsync<JsonElement>();
 
         Assert.Equal("Trialing", body.GetProperty("status").GetString());
@@ -80,8 +78,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
     {
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "snapshot-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "SNAPSHOT", trialDays: 0, amount: 49.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         // Reprice the plan. §2.3: "renewals honor the price at assignment" — so this must not follow.
         // An FK-only snapshot could not give this, because setting a price mutates the row in place.
@@ -98,8 +95,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "withdrawn-price-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(
             _client, "WITHDRAWNPRICE", trialDays: 0, amount: 39.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         Guid priceId = await FirstPriceIdAsync(planId);
         using var removeRequest = new HttpRequestMessage(
@@ -123,10 +119,8 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
             _client, "STARTER_U", trialDays: 0, amount: 19.99m)).Id;
         Guid pro = (await PlatformApiHelpers.CreatePlanAsync(_client, "PRO_U", trialDays: 0, amount: 99.99m)).Id;
 
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, starter, "Monthly", "EUR");
-        using HttpResponseMessage changed = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, pro, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, starter);
+        using HttpResponseMessage changed = await PlatformApiHelpers.AssignAsync(_client, gymId, pro);
 
         JsonElement body = await changed.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("PRO_U", body.GetProperty("planCode").GetString());
@@ -144,14 +138,12 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "history-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "HISTORY", trialDays: 0, amount: 49.99m)).Id;
 
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         await CancelAsync(gymId, immediately: true);
 
         // A returning gym gets a *new* subscription; the partial unique index permits this only because
         // the first is no longer live.
-        using HttpResponseMessage second = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage second = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
 
         JsonElement history = await GetHistoryAsync(gymId);
@@ -195,8 +187,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "scheduled-cancel-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(
             _client, "SCHEDCANCEL", trialDays: 0, amount: 49.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         using HttpResponseMessage canceled = await CancelAsync(
             gymId, immediately: false, reason: "Too expensive");
@@ -215,8 +206,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
     {
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "resume-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "RESUMED", trialDays: 0, amount: 49.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         await CancelAsync(gymId, immediately: false);
 
         using HttpResponseMessage resumed = await _client.PostAsync(
@@ -233,8 +223,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "immediate-cancel-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(
             _client, "IMMEDIATE", trialDays: 0, amount: 49.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         using HttpResponseMessage canceled = await CancelAsync(gymId, immediately: true, reason: "Closed");
         JsonElement body = await canceled.Content.ReadFromJsonAsync<JsonElement>();
@@ -252,8 +241,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "convert-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(
             _client, "CONVERTED", trialDays: 14, amount: 29.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         using HttpResponseMessage converted = await _client.PostAsync(
             SubscriptionUri(gymId, "convert-trial"), content: null);
@@ -274,8 +262,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
     {
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "pastdue-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "PASTDUE", trialDays: 0, amount: 49.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         using HttpResponseMessage late = await _client.PostAsJsonAsync(
             SubscriptionUri(gymId, "payment-state"), new { pastDue = true });
@@ -321,7 +308,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, deactivated.StatusCode);
 
         using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR", assertSuccess: false);
+            _client, gymId, planId, assertSuccess: false);
 
         Assert.Equal(HttpStatusCode.Conflict, assigned.StatusCode);
         Assert.Equal("subscriptions.plan_inactive", await AuthApi.ReadProblemCodeAsync(assigned));
@@ -341,7 +328,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
 
         using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR", assertSuccess: false);
+            _client, gymId, planId, assertSuccess: false);
 
         Assert.Equal(HttpStatusCode.Conflict, assigned.StatusCode);
         Assert.Equal("subscriptions.gym_deleted", await AuthApi.ReadProblemCodeAsync(assigned));
@@ -360,8 +347,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, suspended.StatusCode);
 
         // Resolving a billing dispute often *is* fixing the subscription, so this must be allowed.
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
     }
 
@@ -378,8 +364,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         // Null, not absent: a gym can exist before it is sold anything.
         Assert.Equal(JsonValueKind.Null, beforeBody.GetProperty("subscription").ValueKind);
 
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         using HttpResponseMessage after = await _client.GetAsync(
             new Uri($"/api/v1/gyms/{gymId}", UriKind.Relative));
@@ -397,10 +382,8 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid firstGym = await PlatformApiHelpers.CreateGymAsync(_client, "counted-gym-one");
         Guid secondGym = await PlatformApiHelpers.CreateGymAsync(_client, "counted-gym-two");
 
-        using HttpResponseMessage assignedFirst = await PlatformApiHelpers.AssignAsync(
-            _client, firstGym, planId, "Monthly", "EUR");
-        using HttpResponseMessage assignedSecond = await PlatformApiHelpers.AssignAsync(
-            _client, secondGym, planId, "Monthly", "EUR");
+        using HttpResponseMessage assignedFirst = await PlatformApiHelpers.AssignAsync(_client, firstGym, planId);
+        using HttpResponseMessage assignedSecond = await PlatformApiHelpers.AssignAsync(_client, secondGym, planId);
 
         using HttpResponseMessage plan = await _client.GetAsync(
             new Uri($"/api/v1/plans/{planId}", UriKind.Relative));
@@ -424,8 +407,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "concurrent-sub-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(
             _client, "CONCURRENT", trialDays: 0, amount: 49.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         JsonElement subscription = await GetSubscriptionAsync(gymId);
         string version = subscription.GetProperty("rowVersion").GetString()!;
@@ -448,8 +430,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "audited-sub-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(
             _client, "AUDITEDSUB", trialDays: 0, amount: 49.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         await CancelAsync(gymId, immediately: true);
 
         using HttpResponseMessage response = await _client.GetAsync(
@@ -471,8 +452,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "scoped-sub-gym");
         Guid planId = (await PlatformApiHelpers.CreatePlanAsync(
             _client, "SCOPEDSUB", trialDays: 0, amount: 49.99m)).Id;
-        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(
-            _client, gymId, planId, "Monthly", "EUR");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         // BillingAdmin holds billing.* and subscriptions.manage; SupportAgent holds only billing.read.
         HttpClient supportAgent = await PlatformApiHelpers.SignedInAsync(

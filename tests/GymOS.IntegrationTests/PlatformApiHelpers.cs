@@ -187,6 +187,16 @@ internal static class PlatformApiHelpers
     /// proving a refusal (an inactive plan, a deleted gym, terms the plan does not offer), which need the
     /// failure status to reach them rather than be swallowed here.
     /// </summary>
+    /// <remarks>
+    /// Asserting on success is the default, not an add-on: most callers want it, and it is one line
+    /// inside the helper instead of one line at every call site. That default is a deliberate tightening
+    /// for <c>SubscriptionApiTests</c> — its local copy of this call, before extraction, was a bare
+    /// <c>PutAsJsonAsync</c> with no status check at all, so those tests relied only on downstream body
+    /// assertions to notice a bad response. Adopting this helper gives roughly seventeen of that file's
+    /// success-path call sites an assertion they did not have before. That is intentional and safe to
+    /// keep: it can only turn an obscure downstream failure into an earlier, clearer one, and it changed
+    /// no test's name or outcome. Do not "fix" this by defaulting to <see langword="false"/>.
+    /// </remarks>
     public static async Task<HttpResponseMessage> AssignAsync(
         HttpClient client,
         Guid gymId,
