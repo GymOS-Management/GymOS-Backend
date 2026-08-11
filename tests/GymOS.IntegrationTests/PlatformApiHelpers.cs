@@ -219,4 +219,29 @@ internal static class PlatformApiHelpers
 
         return response;
     }
+
+    /// <summary>
+    /// Soft-deletes a gym: reads its current row version, then sends the delete with the step-up
+    /// confirmation the endpoint requires (<c>X-Confirm-Action</c> carrying the gym's own slug,
+    /// alongside <c>If-Match</c>).
+    /// </summary>
+    public static async Task DeleteGymAsync(HttpClient client, Guid gymId, string slug)
+    {
+        using HttpResponseMessage read = await client.GetAsync(
+            new Uri($"/api/v1/gyms/{gymId}", UriKind.Relative));
+        string rowVersion = (await read.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("rowVersion").GetString()!;
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Delete, new Uri($"/api/v1/gyms/{gymId}", UriKind.Relative));
+        request.Headers.TryAddWithoutValidation("X-Confirm-Action", slug);
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
+
+        using HttpResponseMessage response = await client.SendAsync(request);
+
+        Assert.True(
+            response.StatusCode == HttpStatusCode.NoContent,
+            $"Expected 204 deleting gym {slug}, got {(int)response.StatusCode}: " +
+            await response.Content.ReadAsStringAsync());
+    }
 }
