@@ -1,12 +1,14 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-11 (late evening) · **M4 feature flags is complete on `main`** — all six
-tasks done, business rules recorded in `docs/BusinessRules/Features.md`, verified live, and
-single-pass reviewed (2 findings fixed). **1267 tests green** (1,032 unit + 235 integration), 0 build
-warnings. The multi-agent review gate over M4 is still owed. The
-whole-repository audit is fixed and merged (`d22d45a`), so the long "awaiting review" backlog (M2,
-Money, M3.1, M3.2, AD-39, M0.X) is **cleared**. Only the **API reference** increment, which landed
-after the audit's scope, is still unreviewed.
+**Last updated:** 2026-08-11 (late evening) · **M5 dashboard & analytics is complete on branch
+`m5-dashboard-analytics`** — all six tasks done, business rules recorded in
+`docs/BusinessRules/Analytics.md`, verified live against a rebuilt compose stack. **1302 tests green**
+(1,051 unit + 251 integration), 0 build warnings. M5 now goes for review as a whole, same as M4 did.
+**M4 feature flags is complete on `main`** — all six tasks done, business rules recorded in
+`docs/BusinessRules/Features.md`, verified live, and single-pass reviewed (2 findings fixed). The
+multi-agent review gate over M4 is still owed. The whole-repository audit is fixed and merged
+(`d22d45a`), so the long "awaiting review" backlog (M2, Money, M3.1, M3.2, AD-39, M0.X) is **cleared**.
+Only the **API reference** increment, which landed after the audit's scope, is still unreviewed.
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -36,7 +38,8 @@ before resuming work on any machine.
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
 | **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
 | **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1267 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · single-pass reviewed, 2 findings fixed · ⬅ **multi-agent review gate still owed** |
-| M5+ — per approved roadmap (dashboard, monitoring, settings) | next |
+| **M5 — dashboard & analytics** (daily read model + job, live dashboard, three analytics series, `analytics.read`) | ✅ complete — all six tasks on branch `m5-dashboard-analytics`, **1302 tests green**, verified live · rules in **`docs/BusinessRules/Analytics.md`** · ⬅ **review still owed** |
+| M6+ — per approved roadmap (monitoring, settings) | next |
 
 ## M1.2 as built
 
@@ -310,9 +313,12 @@ usual casualties. Verify class by class when it bites:
 dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTests"
 ```
 
-Full counts per project, for checking a run was complete — **re-measured 2026-08-11 after the M4 review fixes, every
-project complete with no `Aborted`**: SharedKernel 126 · BuildingBlocks 62 · Architecture 151 ·
-Domain 394 · Application 232 · Infrastructure 67 · Integration 235 = **1267**.
+Full counts per project, for checking a run was complete — **re-measured 2026-08-11 after M5 task 6,
+every project run individually to completion with no `Aborted`**: SharedKernel 126 · BuildingBlocks 62
+· Architecture 151 · Domain 413 · Application 232 · Infrastructure 67 · Integration 251 = **1302**.
+(Was 1267 — SharedKernel/BuildingBlocks/Application/Infrastructure unchanged; Architecture unchanged
+too, since M5 added no new theory rows; Domain 394 → 413 and Integration 235 → 251 carry all of M5's
+new tests.)
 
 Capping the test connection pools (above) may also have helped here — the last several full runs completed
 first time, where they previously needed retries.
@@ -1006,6 +1012,125 @@ changes nothing (no EF change → no UPDATE → the `xmin` precondition never te
 itself a modification. Checked live rather than reasoned about, which is why it did not become a
 "fix" for a bug that was not there.
 
+## M5 as built
+
+Design approved 2026-08-11 — `docs/superpowers/specs/2026-08-11-m5-dashboard-analytics-design.md`.
+Business rules as built: **`docs/BusinessRules/Analytics.md`**. Branch `m5-dashboard-analytics`, all
+six tasks committed to it (not yet merged to `main` — this increment now goes for review as a whole,
+the same protocol M4 followed).
+
+**Five decisions taken with the owner up front**, all recorded in the design and honoured exactly as
+written: M5 ships only the stat columns that have a real source; MRR is reported per currency with no
+conversion; MRR counts Active + PastDue, not trials; churn keeps cancellations and expiries apart; and
+`analytics.read` is not granted to SupportAgent.
+
+1. **The MRR calculator and the `Billing` status set** (`cdbee68`, review fix `c3e2b94`) —
+   `MonthlyRecurringRevenue.Calculate`, a pure domain function over `(status, cycle, price)` triples,
+   is the **one** definition of MRR; both the live dashboard and the nightly job call it, so the
+   platform's headline number cannot have two implementations that quietly disagree (the M4 review's
+   lesson, applied here before either caller existed). `SubscriptionStatusTransitions.Billing =
+   [Active, PastDue]` sits beside the existing `Live` set — deliberately not derived from it at the
+   call site — because "does the one-per-gym rule apply" and "does this contribute revenue" are
+   different questions that happen to overlap.
+2. **The daily read model** (`36f93ec`) — `DailyPlatformStats` (population + event counts) and its
+   owned `PlatformMrr` child, one row per currency, migration `AddPlatformStats`. Neither table carries
+   an `xmin`: one writer, serialised by `IJobLock`, rows written once and never updated.
+3. **The nightly job** (`86a9960`, review fixes `1a67418`, `2e4186a`) — `PlatformStatsJob` (daily
+   03:30 UTC, after `RetentionJob`'s 03:10) computes **yesterday** from `IDatabaseClock`, and
+   `DailyStatsCompiler` inserts if the day is absent and skips if present — the write-once rule is a
+   return value, not just a comment. **A real defect found by review, not by a test**: `new_gyms` was
+   originally filtered to non-deleted gyms like the population counts, so a gym created and deleted on
+   the same day vanished from every series with nothing to explain why. The owner ruled the *design
+   sentence* ("deleted gyms are excluded from every count") was too broad, not the code that already
+   read `canceled_gyms`/`expired_gyms` unfiltered — population counts answer "who is a tenant now" and
+   exclude deleted gyms, event counts answer "what happened today" and do not. §4 of the design was
+   corrected in place rather than left saying something half-true.
+4. **`analytics.read` and the dashboard endpoints** (`fb4390d`, review fix `cdc4007`) —
+   `GET /dashboard/summary`, `/health`, `/activity?limit=` (the last on `audit.read`, not
+   `analytics.read`, since it is the audit log in a trimmed shape). **A real defect found by review**:
+   `/health` first called `HealthCheckService` directly from the endpoint with no CQRS query/handler
+   behind it — the only operation in the whole application with just one permission-enforcement layer
+   instead of two. Fixed with an `IDashboardHealthCheck` seam in Application and an adapter living only
+   in the host (the health-check packages resolve exclusively from the ASP.NET shared framework, which
+   Application-layer projects cannot reference), restoring the belt-and-braces pattern every other
+   query uses.
+5. **The three analytics series** (`bff30be`) — `GET /analytics/revenue|gyms-growth|churn`, all gated
+   on `analytics.read` with `from`/`to` both required and capped at 366 days
+   (`analytics.range_invalid`, 400). Every series returns only the days actually recorded — no gap is
+   ever zero-filled — pinned by a test seeding two non-adjacent days and asserting exactly two points
+   come back.
+6. **Close-out** (this task) — `docs/BusinessRules/Analytics.md`, full verification, and the live run
+   below.
+
+### Verified live (task 6)
+
+Against the compose stack (`docker compose up -d --build`, rebuilt image, real PostgreSQL), signed in
+as `admin@gymos.local`:
+
+- **Two gyms, one EUR plan (`M5_STANDARD`, €100/month), both assigned.** `GET /dashboard/summary`
+  read `totalGyms: 16, liveSubscriptions: 13, mrr: [746.56 EUR]` immediately — no job had ever run.
+  (The dev database already held pre-existing gyms and subscriptions from earlier manual/test sessions
+  on this machine; the run demonstrates deltas against that baseline, not a clean-slate count. All
+  pre-existing and newly-created gyms were still `Provisioning` — nothing in this dev dataset had ever
+  been `POST .../activate`d — so `activeGyms: 0` throughout this run is a fact about seed data, not an
+  M5 defect.)
+- **Triggering the compiler by hand.** `PlatformStatsJob.Schedule` was temporarily changed to
+  `JobSchedule.Every(TimeSpan.FromSeconds(30))`, the API image rebuilt, and the log line
+  `Platform stats recorded for 08/10/2026.` appeared within one tick. `GET /analytics/revenue` then
+  returned exactly one point — `{"date":"2026-08-10","mrr":[{"amount":746.56,"currency":"EUR"}]}` —
+  matching the dashboard's live MRR figure exactly, because both read the same calculator. The edit was
+  reverted immediately afterward and the API rebuilt again before the next step; `git status --short`
+  and `git diff` on `PlatformStatsJob.cs` were both empty at that point, proved in this task's report
+  before any commit was made.
+- **The live-versus-recorded split, demonstrated rather than asserted — the single most important
+  thing this run proves.** A third gym was created and assigned the same EUR plan. `GET
+  /dashboard/summary` moved immediately: `totalGyms: 16 → 17`, `liveSubscriptions: 13 → 14`,
+  `mrr: 746.56 → 846.56 EUR` (exactly the new gym's €100). `GET /analytics/revenue` over the identical
+  range returned the **same single point, unchanged**: still just 2026-08-10 at 746.56 EUR — the
+  series does not know the third gym exists, because the job that would tell it has not run since.
+- **MRR excludes trials, live.** A fourth gym was assigned a plan with a 14-day trial. `totalGyms`
+  and `liveSubscriptions` both rose (Trialing is in the `Live` set); `mrr` stayed at exactly 846.56 EUR
+  — a trialing subscription is live but contributes nothing to revenue, exactly as §4 of
+  `Analytics.md` states.
+- **A gap is a gap, never zero-filled.** `GET /analytics/gyms-growth?from=2026-08-01&to=2026-08-11`
+  (11 calendar days) returned exactly **one** point, at 2026-08-10 — the other ten days have no
+  recorded row and were not synthesized as zeros.
+- **The refusal.** `GET /analytics/revenue?from=2025-01-01&to=2026-02-04` (over 366 days) returned
+  `400` with `"code":"analytics.range_invalid"` and the message naming the 366-day ceiling.
+
+**What did not work smoothly:** nothing failed outright, but the dev database's pre-existing state
+(16 gyms already `Provisioning`, none ever `Active`) meant the "before" figures were not a clean zero —
+the run had to be read as deltas rather than absolute counts. Recorded here rather than reset, per the
+instruction to report what actually happened rather than a tidier version of it.
+
+**Test counts, every project run to completion individually with no `Aborted`, 0 build warnings:**
+SharedKernel 126 · BuildingBlocks 62 · Architecture 151 · Domain 413 · Application 232 ·
+Infrastructure 67 · Integration 251 = **1302**.
+
+### Decisions and traps found
+
+- **One calculator, two callers, is what let the live-run's revenue figures agree without either being
+  faked.** `DashboardQueries.GetSummaryAsync` and `DailyStatsCompiler.CompileAsync` both call
+  `MonthlyRecurringRevenue.Calculate` — the live run's €746.56 appearing identically in both the
+  dashboard and the freshly-compiled analytics row is that invariant holding under real data, not a
+  coincidence.
+- **`new_gyms` is an event count, not a population count — a real defect a review caught before it
+  shipped**, and the design document itself was wrong until this task's predecessor corrected it (§3
+  above; full account in the task-3 report).
+- **`/dashboard/health` needed a second enforcement layer added after the fact.** The brief's own two
+  sections disagreed (one named a `GetDashboardHealthQuery`, the other said to call
+  `HealthCheckService` directly); the second was followed first, and review caught that it left the
+  route with only one permission check where every other route has two. Worth remembering for any
+  future endpoint that wraps a framework service directly: check whether the framework types are
+  reachable from Application before assuming a direct call is the shorter path — here they were not
+  (health-check packages resolve only from the ASP.NET shared framework), so the real fix needed a
+  seam in Application plus a host-only adapter, not a query type calling the service straight through.
+- **Live-run baselines are not always zero**, and a live run should say so rather than imply a clean
+  slate. This run's dev database carried real state from earlier sessions; the split it demonstrates
+  (dashboard moves, analytics does not) is exactly as convincing measured as a delta as it would have
+  been from zero, and pretending otherwise would be the "smoother than it was" writeup this task was
+  explicitly told not to produce.
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -1046,7 +1171,7 @@ To work on it — API on the host, database in a container:
 ```
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d postgres      # PostgreSQL 17 only
-dotnet test GymOS.Backend.slnx     # expect 1267 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 1302 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
@@ -1073,25 +1198,38 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
 
 ## Next step (resume here)
 
-**M4 is built, verified, and documented. It now goes for review as a whole** — the same adversarial
-gate M3.3 and M3.4 went through, over the six commits `eb185b3..` on `main` plus this close-out.
-The reviewer's sharpest questions are probably: whether the clear-vs-upsert decision is right in
-every case the handler can reach, whether "no `If-Match` on the gym write" survives contact with two
-operators, and whether the resolution query and the write path can still disagree about a gym with no
-live subscription (they share `FeatureResolution`, but they load the plan by different routes).
+**M5 is built, verified, and documented. It now goes for review as a whole** — the same protocol M4
+went through, over the six commits on branch `m5-dashboard-analytics` plus this close-out. The
+reviewer's sharpest questions are probably: whether the two recorded deviations from the frozen spec
+(per-currency MRR instead of one summed column; split `canceled_gyms`/`expired_gyms` instead of one
+`churned_gyms`) should be accepted as written or need their own ADR; whether the population/event
+split for `new_gyms` (§3 of `Analytics.md`, corrected mid-increment by an owner ruling) is the right
+line to have drawn; and whether `/dashboard/summary`'s live computation is cheap enough to stay live
+once real gym counts grow, or should move to the read model sooner than "when it stops being cheap."
+
+**M4 also still awaits its own review** — the same adversarial gate M3.3 and M3.4 went through, over
+the six commits `eb185b3..` on `main` plus its close-out. The reviewer's sharpest questions there are
+probably: whether the clear-vs-upsert decision is right in every case the handler can reach, whether
+"no `If-Match` on the gym write" survives contact with two operators, and whether the resolution query
+and the write path can still disagree about a gym with no live subscription (they share
+`FeatureResolution`, but they load the plan by different routes).
 
 Then, in priority order:
 
-1. **The API reference increment awaits review** (Konstantinos's) — unchanged by this work, and the
+1. **M5's review**, and **M4's multi-agent review gate**, both outstanding — pick the order that suits
+   the reviewer; neither blocks the other since M5 branched from `main` after M4 merged.
+2. **The API reference increment awaits review** (Konstantinos's) — unchanged by this work, and the
    only thing left over from before the audit's scope.
-2. **Audit finding 7** wants its own increment: concurrent failed sign-ins collide on the user row's
+3. **Audit finding 7** wants its own increment: concurrent failed sign-ins collide on the user row's
    version, so `/auth/login` can answer 409 and lockout under-counts. Small domain change, listed in
    full under "Known open items".
-3. **M5** — per the approved roadmap (dashboard, monitoring, settings). Note that M5's platform stats
-   are the first consumer of `Money` currency conversion (AD-43), which does not exist yet.
+4. **M6** — per the approved roadmap (monitoring, settings). `GET /monitoring/*` (§3.7) and the device
+   registry it needs are M6's; M5 deliberately left them out (`Analytics.md` §10).
 
-Nothing in M4 changed the standing debts: **R14 (RLS) has still never run** and is owed with the
-first tenant-scoped entity, and the Members domain remains frozen and ready to implement.
+Nothing in M5 changed the standing debts: **R14 (RLS) has still never run** and is owed with the
+first tenant-scoped entity, and the Members domain remains frozen and ready to implement. M5's own
+platform stats did **not** end up needing `Money` currency conversion (AD-43) — the owner's ruling to
+report MRR per currency rather than summed avoided that dependency rather than building it.
 
 ## Known open items / honest notes
 
