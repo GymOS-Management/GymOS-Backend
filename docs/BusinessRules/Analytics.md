@@ -46,10 +46,19 @@ So `DailyStatsCompiler.CompileAsync` **inserts if absent and skips if present** 
 is a return value (`false` when the day already existed), not a log line describing an assumption:
 
 - `PlatformStatsJob` computes **yesterday** (never today — the day is not over) under `IJobLock` (one
-  writer) and `IDatabaseClock` (the database's clock decides the boundary, not any one host's, the same
-  reasoning M3.4 already applies to durable, terminal verdicts).
+  writer) and `IDatabaseClock` (the database's clock decides *which date* "yesterday" is, not any one
+  host's, the same reasoning M3.4 already applies to durable, terminal verdicts).
 - Day boundaries are **UTC**. A platform-wide figure has to be summed over one clock, or gyms in
   different time zones would contribute to different days.
+
+**`IDatabaseClock` only decides the boundary date, not every timestamp compared against it.** The
+compiler's own comparisons (`Gym.CreatedAtUtc`, `GymSubscription.CanceledAtUtc`, `CurrentPeriodEndUtc`)
+are stamped when those rows were written, by whichever host handled that request, using its own
+`IClock` — not `IDatabaseClock`. A writing host's clock skewed against the database's can therefore
+file an event a few seconds either side of the true boundary and land it under the wrong day, even
+though the day the job itself compiles is exact. This is a narrower guarantee than "the clock deciding
+the boundary" reads as, and worth stating precisely rather than implying every timestamp in the row is
+equally immune to host skew.
 
 **A gap is honest, and a gap stays a gap.** If the host is down for a night, that day is missing and
 stays missing — logged, so it is discoverable, but never invented after the fact. Two temptations were
@@ -123,8 +132,8 @@ normalised to one month.**
   input, ordered by currency code, and never coerces them into one number.
 
 **This is the design's other recorded deviation.** §2.4 of the frozen spec names `mrr numeric(14,2)` as
-one column on the stats row; M5 instead ships a `(stat_date, currency)` child table
-(`daily_platform_stats_mrr`, FK to the parent, cascade). It honours the intent — "what is the platform
+one column on the stats row; M5 instead ships a `(stats_id, amount_currency)` child table
+(`daily_platform_stats_mrr`, FK to the parent on the surrogate `stats_id`, cascade). It honours the intent — "what is the platform
 earning per month" — without inventing an exchange rate, and it collapses back to one number the day
 AD-43 lands. Same shape of deviation as M3.2's price-snapshot FK: the literal column is unworkable
 against a fact nobody has decided yet, so the table records the fact honestly instead.
@@ -242,9 +251,11 @@ Migration `AddPlatformStats`, schema `platform`:
 
 - **`daily_platform_stats`** — `stat_date date` (unique), the seven population/event `int` columns
   above, `created_at_utc`.
-- **`daily_platform_stats_mrr`** — `(stat_date, currency)` unique, one `Money` per row via
+- **`daily_platform_stats_mrr`** — `(stats_id, amount_currency)` unique, one `Money` per row via
   `MoneyConventions.HasMoney` (`amount numeric(14,4)` + `currency varchar(3)`), FK to
-  `daily_platform_stats`, cascade.
+  `daily_platform_stats` on the surrogate `stats_id` (not `stat_date`), cascade. EF cannot build a
+  unique index across a complex property's member, so the uniqueness is raw SQL in the migration —
+  the same treatment M3.1 gave the `(plan, cycle, currency)` price index.
 
 **Neither table carries an `xmin` concurrency token, and neither is audited.** Both are derived data
 written by exactly one job, serialised by `IJobLock` — there is no concurrent writer for a token to
@@ -273,3 +284,42 @@ have no real source behind them yet:
 The reasoning for shipping only what has a source, rather than a column that reports `0` for months
 and reads as a broken system, is the `plan_features` precedent already set in M3.1 → M4: build it when
 its data exists, not when its slot in the schema does.
+
+## 11. Known limitations, recorded rather than hidden
+
+Two properties of the churn columns are true of what shipped and are not obvious from reading the
+endpoint table in §7. Both were found in the whole-branch review; neither blocks merge, and neither is
+fixed here.
+
+**An expiry recorded late by `RenewalJob` is lost from `expired_gyms` forever.** `DailyStatsCompiler`
+counts a subscription as an expiry for day *D* when its status is `Expired` **and**
+`CurrentPeriodEndUtc` falls inside *D* — there is no column recording when the expiry was *noticed*,
+only the business date it targets. In the ordinary case this is invisible: `RenewalJob` runs every 15
+minutes, so a subscription is flipped to `Expired` within minutes of its period ending, long before
+`PlatformStatsJob` compiles that day. But `PlatformStatsJob` runs at 03:30 UTC and compiles
+*yesterday*, so the gap between a period ending and that day's compile ranges from about **3.5 hours**
+(a period ending at yesterday's 23:59:59 UTC) to about **27.5 hours** (a period ending at yesterday's
+00:00:00 UTC). If `RenewalJob` lags past that window — a subscription that keeps throwing inside the
+sweep, or a deploy window with `Jobs:Enabled=false` — the subscription is still `Active` when its day
+is compiled. Because a stats row is written once and never revisited (§2), that day's row is now
+permanent: when `RenewalJob` eventually catches up and correctly flips the subscription to `Expired`,
+the expiry has no day left to be counted on. The gym silently disappears from the churn series with
+nothing in either series to explain why — the same shape of problem §3 already names for `new_gyms`,
+but unresolved here because, unlike `CreatedAtUtc`, nothing on `GymSubscription` records *when* the
+expiry was recorded, only what it targets.
+
+**The real fix** is an `ExpiredAtUtc` column on `GymSubscription`, set when `RenewalJob` actually flips
+the status, so `expired_gyms` can key on when the expiry was *recorded* — exactly matching how
+`canceled_gyms` already keys on `CanceledAtUtc` rather than on the period the cancellation applies to.
+That is a schema change to an M3.2 aggregate, and belongs in its own increment, not a fix folded into
+this one.
+
+**The two churn columns key on different clocks, and `/analytics/churn` presents them as symmetric.**
+`canceled_gyms` counts `CanceledAtUtc` — the real moment cancellation ran. `expired_gyms` counts
+`CurrentPeriodEndUtc` — a business date a period targets, not a moment anything ran (and, per the
+limitation above, not even reliably that). A subscription canceled at 23:58 UTC and one whose period
+ends at 00:02 UTC the same calendar day are three minutes apart in real time but land on different
+`stat_date` rows. `GET /analytics/churn` returns `canceled`, `expired`, and their `total` side by side
+as if both were counted the same way; they are not, and a caller correlating the two day-by-day, or
+summing `total` across a short window, should know the alignment between them is approximate rather
+than exact.

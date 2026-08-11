@@ -1,5 +1,6 @@
 using GymOS.Platform.Domain.Analytics;
 using GymOS.Platform.Domain.Subscriptions;
+using GymOS.SharedKernel;
 using GymOS.SharedKernel.Currencies;
 using Xunit;
 
@@ -97,6 +98,21 @@ public sealed class MonthlyRecurringRevenueTests
         // A currency-less zero has nowhere to live: Money.Zero needs a currency, and inventing one
         // would report "EUR 0.00" for a platform that has never sold in euros.
         Assert.Empty(MonthlyRecurringRevenue.Calculate([]));
+    }
+
+    [Fact]
+    public void AnOutOfRangeBillingCycleIsADomainExceptionNotADivideByZero()
+    {
+        // (BillingCycle)0 is not a value any code path produces — it can only arrive as corrupt
+        // stored data. Casting straight to an int divisor would throw DivideByZeroException for 0
+        // and silently divide by the wrong number for anything else undefined; both are invariant
+        // breaches, so this must surface as a named DomainException instead.
+        var corrupt = new MrrContribution(SubscriptionStatus.Active, (BillingCycle)0, Money.Of(10m, Eur));
+
+        DomainException exception = Assert.Throws<DomainException>(
+            () => MonthlyRecurringRevenue.Calculate([corrupt]));
+
+        Assert.Contains("0", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

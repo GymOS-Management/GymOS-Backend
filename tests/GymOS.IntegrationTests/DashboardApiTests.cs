@@ -13,6 +13,7 @@ namespace GymOS.IntegrationTests;
 public sealed class DashboardApiTests : IAsyncLifetime
 {
     private static readonly Uri Summary = new("/api/v1/dashboard/summary", UriKind.Relative);
+    private static readonly Uri Health = new("/api/v1/dashboard/health", UriKind.Relative);
     private static readonly Uri Activity = new("/api/v1/dashboard/activity", UriKind.Relative);
 
     private readonly PostgresFixture _postgres;
@@ -85,6 +86,52 @@ public sealed class DashboardApiTests : IAsyncLifetime
         JsonElement eur = Assert.Single(mrr.EnumerateArray());
         Assert.Equal("EUR", eur.GetProperty("currency").GetString());
         Assert.Equal(49.99m, eur.GetProperty("amount").GetDecimal());
+    }
+
+    [Fact]
+    public async Task HealthReportsChecksWithoutLeakingExceptionDetails()
+    {
+        // This also proves out IDashboardHealthCheck's registration: /health resolves it from the
+        // container via DashboardHealthCheckAdapter, the one Application abstraction Program.cs
+        // wires by hand rather than through AddPlatformAnalytics.
+        using HttpResponseMessage response = await _client.GetAsync(Health);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        JsonElement body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        JsonElement checks = body.GetProperty("checks");
+        Assert.NotEmpty(checks.EnumerateArray());
+
+        // The stated security property (DashboardHealthCheckAdapter's own comment): no Exception, no
+        // Description are projected anywhere in the payload, because either can carry a connection
+        // string or a stack trace and this endpoint feeds a console panel, not a debugger. Asserted
+        // structurally, at any depth, rather than trusted from reading the projection code.
+        AssertNoSensitiveKeys(body);
+    }
+
+    private static void AssertNoSensitiveKeys(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    Assert.False(
+                        string.Equals(property.Name, "description", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(property.Name, "exception", StringComparison.OrdinalIgnoreCase),
+                        $"Found forbidden key '{property.Name}' in the dashboard health response.");
+                    AssertNoSensitiveKeys(property.Value);
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    AssertNoSensitiveKeys(item);
+                }
+
+                break;
+        }
     }
 
     private async Task<JsonElement> SummaryAsync()

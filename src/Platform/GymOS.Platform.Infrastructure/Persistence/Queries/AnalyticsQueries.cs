@@ -18,13 +18,17 @@ internal sealed class AnalyticsQueries : IAnalyticsQueries
         DateOnly from, DateOnly to, CancellationToken cancellationToken) =>
         await _dbContext.Set<DailyPlatformStats>()
             .AsNoTracking()
-            .Include(stats => stats.Mrr)
             .Where(stats => stats.StatDate >= from && stats.StatDate <= to)
             .OrderBy(stats => stats.StatDate)
 
             // Only the days recorded. A missing day returned as zeros draws the chart to the floor and
             // reads as "we lost every gym that night"; a consumer that wants a continuous axis can see
             // the gap and decide for itself what to do with it.
+            //
+            // No .Include(stats => stats.Mrr) here: the Select below re-projects Mrr itself, and EF
+            // ignores an Include beneath a projection (NavigationBaseIncludeIgnored, logged at
+            // Warning on every call) rather than erroring, so the redundant Include only cost a log
+            // line per request.
             .Select(stats => new RevenuePoint(
                 stats.StatDate,
                 stats.Mrr.Select(mrr => new MoneyDto(mrr.Amount.Amount, mrr.Amount.Currency.Code)).ToList()))

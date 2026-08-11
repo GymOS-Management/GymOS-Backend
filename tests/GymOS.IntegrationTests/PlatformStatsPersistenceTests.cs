@@ -61,7 +61,7 @@ public sealed class PlatformStatsPersistenceTests : IAsyncLifetime
 
         context.Add(DailyPlatformStats.Record(new DateOnly(2026, 8, 9), new GymCounts(2, 2, 0, 0, 0, 0, 0), [], DateTimeOffset.UnixEpoch));
 
-        await Assert.ThrowsAnyAsync<Exception>(() => context.SaveChangesAsync());
+        await Assert.ThrowsAsync<DbUpdateException>(() => context.SaveChangesAsync());
     }
 
     /// <summary>

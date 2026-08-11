@@ -102,9 +102,12 @@ real status in the frozen gym schema, and without it `active + suspended` does n
 `total`, which makes the row look wrong to anyone who checks it. Additive, and nothing depends on the
 list being exactly five.
 
-**`platform.daily_platform_stats_mrr`** — `(stat_date, currency)` unique, holding a `Money` via
+**`platform.daily_platform_stats_mrr`** — `(stats_id, amount_currency)` unique, holding a `Money` via
 `MoneyConventions.HasMoney` (`amount numeric(14,4)` + `currency varchar(3)`). FK to
-`daily_platform_stats` on `stat_date`, cascade.
+`daily_platform_stats` on the surrogate `stats_id` (not `stat_date`), cascade. **As built**, not as
+first drafted: EF cannot build a unique index across a complex property's member, so the
+`(stats_id, amount_currency)` uniqueness is raw SQL in the migration, the same treatment M3.1 gave the
+`(plan, cycle, currency)` price index.
 
 **Deviation record:** §2.4 specifies `mrr numeric(14,2)` as one column on the stats row. Summing
 unlike currencies requires a conversion policy that is an accounting decision (AD-43, and *which*

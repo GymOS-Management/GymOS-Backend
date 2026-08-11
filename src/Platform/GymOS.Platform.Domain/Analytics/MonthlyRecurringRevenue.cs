@@ -1,4 +1,5 @@
 using GymOS.Platform.Domain.Subscriptions;
+using GymOS.SharedKernel;
 using GymOS.SharedKernel.Currencies;
 
 namespace GymOS.Platform.Domain.Analytics;
@@ -44,9 +45,21 @@ public static class MonthlyRecurringRevenue
     /// implicit: twelve monthly figures need not re-sum to the annual price. MRR is an indicator,
     /// not an invoice — an invoice would use <see cref="Money.Allocate"/>, which conserves every
     /// cent, and there is nothing here to conserve it into.</para>
+    ///
+    /// <para>Guarded rather than trusted: a <see cref="BillingCycle"/> outside its three defined
+    /// values reaches here only through corrupt data (a stored integer no enumerator produced), and
+    /// <c>(int)cycle</c> as a divisor would either throw <see cref="DivideByZeroException"/> for
+    /// <c>0</c> or silently divide by the wrong number for anything else — either way an invariant
+    /// breach, not a business failure, so it is a <see cref="DomainException"/> naming the value.</para>
     /// </summary>
     private static Money PerMonth(MrrContribution contribution)
     {
+        if (!Enum.IsDefined(contribution.Cycle))
+        {
+            throw new DomainException(
+                $"MonthlyRecurringRevenue cannot normalise an out-of-range BillingCycle: {(int)contribution.Cycle}.");
+        }
+
         var months = contribution.Cycle.Months();
 
         return months == 1

@@ -1233,6 +1233,27 @@ report MRR per currency rather than summed avoided that dependency rather than b
 
 ## Known open items / honest notes
 
+- **An expiry recorded late by `RenewalJob` is lost from `expired_gyms` forever** (M5 whole-branch
+  review, deliberately deferred): `DailyStatsCompiler` keys `expired_gyms` on `CurrentPeriodEndUtc` —
+  the business date a period targets — not on when the expiry was actually noticed, because nothing on
+  `GymSubscription` records that moment. `RenewalJob` normally flips a subscription within 15 minutes
+  of its period ending, well inside the roughly 3.5–27.5 hour window before `PlatformStatsJob` compiles
+  that day at 03:30 UTC. But if `RenewalJob` lags past that window — a subscription that keeps throwing
+  inside the sweep, or a deploy window with `Jobs:Enabled=false` — the subscription is still `Active`
+  when its day is compiled, and because a stats row is written once and never revisited, that day's
+  expiry never gets counted, even after the sweep catches up correctly days later. The fix is an
+  `ExpiredAtUtc` column on `GymSubscription`, mirroring `CanceledAtUtc`, so `expired_gyms` keys on when
+  the expiry was recorded rather than the date it targets — a schema change to an M3.2 aggregate that
+  belongs in its own increment. Reasoning in `docs/BusinessRules/Analytics.md` §11.
+
+- **`canceled_gyms` and `expired_gyms` key on different clocks** (M5 whole-branch review, deliberately
+  deferred): `canceled_gyms` counts `CanceledAtUtc`, the real moment cancellation ran; `expired_gyms`
+  counts `CurrentPeriodEndUtc`, a business date rather than a moment anything ran. Two subscriptions
+  ending within minutes of each other either side of UTC midnight can land on different `stat_date`
+  rows, and `GET /analytics/churn` returns both columns plus their `total` as if they were computed the
+  same way. Harmless as a known approximation; worth knowing before treating the two columns, or their
+  sum, as aligned day-by-day. Reasoning in `docs/BusinessRules/Analytics.md` §11.
+
 - **A gym feature override never expires** (M4 review, deliberately deferred): the aggregate records
   who granted the exception, when, and why, but nothing time-bounded, and an exception is only
   withdrawn when somebody re-asserts the plan's value. So the goodwill trial that is the headline
