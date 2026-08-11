@@ -134,9 +134,19 @@ normalised to one month.**
 **This is the design's other recorded deviation.** §2.4 of the frozen spec names `mrr numeric(14,2)` as
 one column on the stats row; M5 instead ships a `(stats_id, amount_currency)` child table
 (`daily_platform_stats_mrr`, FK to the parent on the surrogate `stats_id`, cascade). It honours the intent — "what is the platform
-earning per month" — without inventing an exchange rate, and it collapses back to one number the day
-AD-43 lands. Same shape of deviation as M3.2's price-snapshot FK: the literal column is unworkable
-against a fact nobody has decided yet, so the table records the fact honestly instead.
+earning per month" — without inventing an exchange rate. Same shape of deviation as M3.2's
+price-snapshot FK: the literal column is unworkable against a fact nobody has decided yet, so the
+table records the fact honestly instead.
+
+**This does not collapse back to one number the day AD-43 lands, and it is not meant to.** `mrr` is
+already shipped as a JSON **array** on both `/dashboard/summary` and `/analytics/revenue` (§7) —
+every v1 consumer already handles `n` entries, including `n = 0` for a platform with no paying gyms.
+Replacing that array with a scalar once AD-43 supplies a conversion rate would be a breaking change to
+a published contract, not a cleanup; the honest plan is that AD-43 adds a converted total *alongside*
+the array, which stays. So the per-currency array is a **permanent** part of the v1 shape, not a
+placeholder for a future scalar — and that is the better outcome anyway: a client that must handle a
+list is safer than one handed a single number that quietly means "EUR-equivalent at an unspecified
+rate." Anyone signing off on this deviation is agreeing to a permanent array, not a temporary one.
 
 **One calculator, two callers, by construction.** `MonthlyRecurringRevenue.Calculate` is a pure domain
 function over `(status, cycle, price)` triples — no database, fully unit-testable — and it is the

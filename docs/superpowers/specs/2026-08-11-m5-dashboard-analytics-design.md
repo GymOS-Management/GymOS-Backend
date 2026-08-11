@@ -113,8 +113,18 @@ first drafted: EF cannot build a unique index across a complex property's member
 unlike currencies requires a conversion policy that is an accounting decision (AD-43, and *which*
 rate — spot at capture, or month-average), and a single column would force one before anyone has
 taken it. The per-currency child table honours the intent — "what is the platform earning per
-month" — without inventing an exchange rate. Same shape of deviation as M3.2's price-snapshot FK,
-and it collapses back to one number the day AD-43 lands.
+month" — without inventing an exchange rate. Same shape of deviation as M3.2's price-snapshot FK.
+
+**This does not collapse back to one number the day AD-43 lands, and it is not meant to.** `mrr` is
+already shipped as a JSON **array** on both `/dashboard/summary` and `/analytics/revenue` (the as-built
+response shapes are in `docs/BusinessRules/Analytics.md` §7) — every v1 consumer already handles `n`
+entries, including `n = 0` for a platform with no paying gyms.
+Replacing that array with a scalar once AD-43 supplies a conversion rate would be a breaking change to
+a published contract; the honest plan is that AD-43 adds a converted total *alongside* the array,
+which stays. The per-currency array is a **permanent** part of the v1 shape, not a placeholder for a
+future scalar — and that is the better outcome anyway: a client that must handle a list is safer than
+one handed a single number that quietly means "EUR-equivalent at an unspecified rate." Whoever signs
+off on this deviation is agreeing to a permanent array, not a temporary one.
 
 Neither table is audited and neither carries a concurrency token: they are derived data written by
 one job, and the audit trail of a computed row is the job's log. `xmin` would guard a race that
