@@ -373,6 +373,39 @@ public sealed class PlanApiTests : IAsyncLifetime
             .GetProperty("features").EnumerateArray());
     }
 
+    /// <summary>
+    /// A retried PUT must be free. The route is a PUT, so a client that lost a response re-sends the
+    /// same body; if that moved the plan's version it would invalidate every other reader's
+    /// <c>If-Match</c> — and emit a `plan.feature_set` event — over a write that changed nothing.
+    /// </summary>
+    [Fact]
+    public async Task RestatingThePlansOpinion_LeavesItsVersionWhereItWas()
+    {
+        Guid planId = await CreateAsync("NOOPFEAT");
+
+        using HttpResponseMessage first = await SetFeatureAsync(planId, "crm", isEnabled: true);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        string afterChange = (await first.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("rowVersion").GetString()!;
+
+        using HttpResponseMessage retry = await SetFeatureAsync(planId, "crm", isEnabled: true);
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        Assert.Equal(afterChange, (await retry.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("rowVersion").GetString());
+
+        // Clearing something the plan never had an opinion about is the same kind of no-op.
+        using HttpResponseMessage clearUnheld = await SetFeatureAsync(planId, "nutrition", isEnabled: null);
+        Assert.Equal(HttpStatusCode.OK, clearUnheld.StatusCode);
+        Assert.Equal(afterChange, (await clearUnheld.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("rowVersion").GetString());
+
+        // And a real change still moves it, or the guard above would be indistinguishable from a
+        // version that never moves at all.
+        using HttpResponseMessage real = await SetFeatureAsync(planId, "crm", isEnabled: false);
+        Assert.NotEqual(afterChange, (await real.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("rowVersion").GetString());
+    }
+
     [Fact]
     public async Task AnAnonymousCallerGets401()
     {

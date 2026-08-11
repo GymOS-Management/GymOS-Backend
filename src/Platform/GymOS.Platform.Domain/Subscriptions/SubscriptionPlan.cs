@@ -224,15 +224,24 @@ public sealed class SubscriptionPlan : AggregateRoot, IAuditable
     ///
     /// <para>An upsert, like <see cref="SetPrice"/>: "the PRO plan includes CRM" is one intent, and
     /// making the caller check first invites the race where two operators both add a row.</para>
+    ///
+    /// <para><b>Restating what the plan already says changes nothing and announces nothing</b>, the
+    /// way <see cref="Feature.SetDefault"/> already behaves. The route is a PUT, so an identical
+    /// retry is expected; treating one as a change would announce a plan edit that never happened
+    /// and move the aggregate's version, invalidating every other reader's <c>If-Match</c>.</para>
     /// </summary>
-    public PlanFeature SetFeature(Guid featureId, bool isEnabled)
+    /// <returns><see langword="true"/> when this actually changed the plan.</returns>
+    public bool SetFeature(Guid featureId, bool isEnabled)
     {
         PlanFeature? existing = _features.SingleOrDefault(row => row.FeatureId == featureId);
 
         if (existing is null)
         {
-            existing = new PlanFeature(Guid.NewGuid(), Id, featureId, isEnabled);
-            _features.Add(existing);
+            _features.Add(new PlanFeature(Guid.NewGuid(), Id, featureId, isEnabled));
+        }
+        else if (existing.IsEnabled == isEnabled)
+        {
+            return false;
         }
         else
         {
@@ -241,7 +250,7 @@ public sealed class SubscriptionPlan : AggregateRoot, IAuditable
 
         Raise(new PlanFeatureSet(Id, featureId, isEnabled));
 
-        return existing;
+        return true;
     }
 
     /// <summary>
@@ -249,17 +258,20 @@ public sealed class SubscriptionPlan : AggregateRoot, IAuditable
     /// default — which is <b>not</b> the same as including it as disabled. See
     /// <see cref="PlanFeature"/> on why silence and "no" are different answers.
     /// </summary>
-    public void ClearFeature(Guid featureId)
+    /// <returns><see langword="true"/> when there was an opinion to remove.</returns>
+    public bool ClearFeature(Guid featureId)
     {
         PlanFeature? feature = _features.SingleOrDefault(row => row.FeatureId == featureId);
 
         if (feature is null)
         {
-            return; // Already silent: the caller's intent is satisfied.
+            return false; // Already silent: the caller's intent is satisfied.
         }
 
         _features.Remove(feature);
         Raise(new PlanFeatureCleared(Id, featureId));
+
+        return true;
     }
 
     /// <summary>Withdraws the plan from the catalogue. Existing subscriptions continue.</summary>

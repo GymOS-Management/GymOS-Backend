@@ -102,7 +102,8 @@ internal sealed class FeatureQueries : IFeatureQueries
     /// <para><b>Adoption counts gyms that resolve the feature ON</b>, through the whole three-layer
     /// rule — not plan rows, and not overrides. Counting one layer would understate reality and
     /// mislead the decision the number exists to inform ("is anyone actually using this?"). Deleted
-    /// gyms are excluded: they are not using anything.</para>
+    /// gyms are excluded from <b>both</b> counts: they are not using anything, and an exception
+    /// granted to a tenant that no longer exists is not a live exception.</para>
     /// </summary>
     private IQueryable<FeatureRow> Project() =>
         _dbContext.Set<Feature>()
@@ -118,8 +119,14 @@ internal sealed class FeatureQueries : IFeatureQueries
                 IsPremium = feature.IsPremium,
                 RowVersion = EF.Property<uint>(feature, "xmin"),
 
-                OverrideCount = _dbContext.Set<GymFeatureOverride>()
-                    .Count(over => over.FeatureId == feature.Id),
+                // Counted from the same gym population as adoption below, and written the same way
+                // so that the shared `Status != Deleted` filter is visible rather than remembered:
+                // the two numbers sit side by side in one row, and one of them silently including
+                // dead tenants made "2 of 5 gyms hold an exception" a comparison of different sets.
+                OverrideCount = _dbContext.Set<Gym>()
+                    .Where(gym => gym.Status != GymStatus.Deleted)
+                    .Count(gym => _dbContext.Set<GymFeatureOverride>()
+                        .Any(over => over.GymId == gym.Id && over.FeatureId == feature.Id)),
 
                 // Written as the same fallback chain FeatureResolution.Resolve applies —
                 // override ?? plan ?? default — so the SQL and the domain rule can be read side by

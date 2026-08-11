@@ -98,22 +98,22 @@ internal sealed class SetPlanFeaturesCommandHandler
             resolved.Add((feature, requested.IsEnabled));
         }
 
+        var changed = false;
         foreach ((Feature feature, bool? isEnabled) in resolved)
         {
-            if (isEnabled is { } enabled)
-            {
-                plan.SetFeature(feature.Id, enabled);
-            }
-            else
-            {
-                plan.ClearFeature(feature.Id);
-            }
+            changed |= isEnabled is { } enabled
+                ? plan.SetFeature(feature.Id, enabled)
+                : plan.ClearFeature(feature.Id);
         }
 
         // Feature rows live in a child table, so without this the plan's own row is never updated
         // and its version never moves — leaving concurrent feature edits unprotected. The same
         // reasoning as prices.
-        if (resolved.Count > 0)
+        //
+        // Only when something actually changed, though: a PUT restating what the plan already says
+        // is a legitimate retry, and bumping the version for it would invalidate every other
+        // caller's If-Match over a write that did nothing.
+        if (changed)
         {
             _plans.MarkAggregateChanged(plan);
         }

@@ -223,7 +223,24 @@ feature for free** is exactly what a later billing conversation turns on.
 | Topic | Where it went |
 |---|---|
 | **Enforcement** — anything actually consuming a resolved flag | The first tenant-facing module that has a capability to withhold (POS, inventory, CRM) |
+| **An expiring override** — see below | Its own increment; needs a product decision first |
 | A pricing rule tied to `is_premium` | Needs a specified commercial rule; today it is informational |
 | Per-feature usage analytics | M5 stats |
 | The console UI for all of this | A GymOS-Platform increment |
 | Bulk "apply to every gym on this plan" | No caller has needed it; the plan layer already does it without a write per gym |
+
+### An override never expires — and a trial is the reason overrides exist
+
+Raised by the M4 review, deliberately **not** fixed inside it. An override records who granted it,
+when, and why, but nothing time-bounded. The self-cleaning rule only withdraws an exception when
+somebody re-asserts the plan's value, so **a goodwill trial granted this way is permanent until a
+human remembers it**. That is the headline use case for the feature, and it currently has no ending.
+
+There is no live consequence while nothing consumes a resolved flag — but the day enforcement lands,
+this is revenue quietly leaking through the mechanism built to hand out favours.
+
+Fixing it properly is a product decision before it is a schema one: what should happen at expiry —
+does the exception simply lapse back to the plan, or does someone get told first? An expiring
+override that silently switches a customer's POS off is a worse failure than one that never expires.
+The mechanism, once that is settled, is small: an `ExpiresAtUtc` on the override plus a sweep in the
+job runner M3.4 already built, on the pattern `RenewalJob` established.

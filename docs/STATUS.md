@@ -1,8 +1,9 @@
 # GymOS — Implementation Status & Continuation Notes
 
 **Last updated:** 2026-08-11 (late evening) · **M4 feature flags is complete on `main`** — all six
-tasks done, business rules recorded in `docs/BusinessRules/Features.md`, verified live. **1262 tests
-green** (1,029 unit + 233 integration), 0 build warnings. M4 now goes for review as a whole. The
+tasks done, business rules recorded in `docs/BusinessRules/Features.md`, verified live, and
+single-pass reviewed (2 findings fixed). **1267 tests green** (1,032 unit + 235 integration), 0 build
+warnings. The multi-agent review gate over M4 is still owed. The
 whole-repository audit is fixed and merged (`d22d45a`), so the long "awaiting review" backlog (M2,
 Money, M3.1, M3.2, AD-39, M0.X) is **cleared**. Only the **API reference** increment, which landed
 after the audit's scope, is still unreviewed.
@@ -34,7 +35,7 @@ before resuming work on any machine.
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
 | **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
-| **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1262 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · ⬅ **awaiting review** (as a whole) |
+| **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1267 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · single-pass reviewed, 2 findings fixed · ⬅ **multi-agent review gate still owed** |
 | M5+ — per approved roadmap (dashboard, monitoring, settings) | next |
 
 ## M1.2 as built
@@ -309,9 +310,9 @@ usual casualties. Verify class by class when it bites:
 dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTests"
 ```
 
-Full counts per project, for checking a run was complete — **re-measured 2026-08-11 after M4, every
+Full counts per project, for checking a run was complete — **re-measured 2026-08-11 after the M4 review fixes, every
 project complete with no `Aborted`**: SharedKernel 126 · BuildingBlocks 62 · Architecture 151 ·
-Domain 391 · Application 232 · Infrastructure 67 · Integration 233 = **1262**.
+Domain 394 · Application 232 · Infrastructure 67 · Integration 235 = **1267**.
 
 Capping the test connection pools (above) may also have helped here — the last several full runs completed
 first time, where they previously needed retries.
@@ -927,8 +928,9 @@ scenario end to end:
 
 **Test counts, every project run to completion with no `Aborted`, 0 build warnings:** SharedKernel
 126 · BuildingBlocks 62 · Architecture 151 · Domain 391 · Application 232 · Infrastructure 67 ·
-Integration 233 = **1262**. (The 1,028 unit figure recorded after task 5 was one short; the measured
-unit total is 1,029.) The integration suite completed first time on this run — none of the
+Integration 233 = **1262** *(as at task 6; the review below adds five more)*. (The 1,028 unit figure
+recorded after task 5 was one short; the measured unit total is 1,029.) The integration suite
+completed first time on this run — none of the
 intermittent connection-open failures noted after task 5.
 
 ### Decisions and traps found
@@ -961,6 +963,48 @@ intermittent connection-open failures noted after task 5.
   intermittent connection-open failures under parallel load (2 of 233 on the run for this task, both
   green in isolation) — the same environmental symptom recorded for the M3.3 run, not an assertion
   failure.
+
+### M4 review (2026-08-11) — 2 fixed, 2 recorded, 1 refuted
+
+**Coverage caveat, stated because it matters:** this was a **single-pass review**, not the
+multi-agent adversarial gate M3.3 and M3.4 went through. It should not be read as equivalent
+assurance, and running the real gate over M4 is still worth doing.
+
+**Structure verdict: conformant.** Resolution lives in the Domain as one pure function and is never
+re-expressed in SQL; `GymQueries` delegates rather than reprojecting; the permission split matches
+the design; both `SubscriptionPlan` loaders carry the `Features` include whose absence caused the
+task-5 defect, and nothing else loads a plan. One thing checked specifically because it would have
+failed silently: a cleared override raises its event on an aggregate the repository then **removes**,
+which would be lost if the outbox interceptor filtered by entity state. It does not — every tracked
+aggregate is drained regardless of state.
+
+Fixed, each with a pinning test:
+
+- **`adoptionCount` and `overrideCount` counted different populations.** Adoption excluded deleted
+  gyms; the override count counted every row, so "2 of 5 gyms hold an exception" could include dead
+  tenants. Both now start from the same non-deleted gym population, written the same way so the
+  shared filter is visible rather than remembered.
+- **A no-op `PUT /plans/{id}/features` moved the plan's version and emitted an event.**
+  `SetFeature` announced a change it had not made — unlike `Feature.SetDefault`, which already
+  returned early — and the handler called `MarkAggregateChanged` for any non-empty request. The route
+  is a PUT, so an identical retry is expected; charging it a version bump invalidated every other
+  reader's `If-Match` over a write that did nothing. Both now report whether anything actually
+  changed.
+
+Recorded rather than fixed:
+
+- **An override never expires** — the gap deserves its own increment and a product decision first;
+  the full reasoning is in `docs/BusinessRules/Features.md`. Listed under "Known open items".
+- **`GET /features` adoption is O(features × gyms)** — two correlated subqueries per gym per feature,
+  unbounded. Deliberately left alone: the query's own comment records that an earlier, cleverer
+  version was "correct-looking and unverifiable", and trading that back for performance nobody needs
+  yet is the wrong direction. Listed under "Known open items" with the trigger to revisit.
+
+**Refuted:** the suspicion that a stale `If-Match` slips through `PUT /features/{id}` when the body
+changes nothing (no EF change → no UPDATE → the `xmin` precondition never tested). It does not —
+409 `concurrency.conflict` either way, because setting the token's original value to a stale one is
+itself a modification. Checked live rather than reasoned about, which is why it did not become a
+"fix" for a bug that was not there.
 
 ## Standing rules (non-negotiable, enforced)
 
@@ -1002,7 +1046,7 @@ To work on it — API on the host, database in a container:
 ```
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d postgres      # PostgreSQL 17 only
-dotnet test GymOS.Backend.slnx     # expect 1262 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 1267 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
@@ -1050,6 +1094,21 @@ Nothing in M4 changed the standing debts: **R14 (RLS) has still never run** and 
 first tenant-scoped entity, and the Members domain remains frozen and ready to implement.
 
 ## Known open items / honest notes
+
+- **A gym feature override never expires** (M4 review, deliberately deferred): the aggregate records
+  who granted the exception, when, and why, but nothing time-bounded, and an exception is only
+  withdrawn when somebody re-asserts the plan's value. So the goodwill trial that is the headline
+  reason overrides exist has **no ending** — harmless while nothing consumes a resolved flag, and
+  revenue leakage the day enforcement lands. The product decision comes first (does an expiring
+  override lapse silently, or does someone get told?), then `ExpiresAtUtc` plus a sweep on M3.4's job
+  runner. Reasoning in `docs/BusinessRules/Features.md`.
+
+- **`GET /features` computes adoption with two correlated subqueries per gym per feature**, with no
+  bound and no cache — 12 features × every gym, on every catalogue page load. Fine at present scale
+  and deliberately not optimized: the query is written to be readable against `FeatureResolution`,
+  and its own comment records that a cleverer earlier version was "correct-looking and
+  unverifiable". Revisit when the console shows it on a hot path or gym counts reach the thousands,
+  and pin the counts with the existing integration test before touching the shape.
 
 - **Concurrent failed sign-ins for one account collide on the user row's version** (audit finding 7,
   deliberately deferred): four of five parallel guesses raise a concurrency conflict, so

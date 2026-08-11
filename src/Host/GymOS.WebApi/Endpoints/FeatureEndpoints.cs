@@ -39,7 +39,8 @@ public static class FeatureEndpoints
                 "Every feature the platform can switch on, with `adoptionCount` — how many gyms "
                     + "currently resolve it **on** through the full three-layer rule (override → "
                     + "plan → platform default), not merely how many plans include it. "
-                    + "`overrideCount` is how many gyms hold an explicit exception. Ordered by "
+                    + "`overrideCount` is how many of those gyms hold an explicit exception. Both "
+                    + "counts exclude deleted gyms, so they describe one population. Ordered by "
                     + "category then name; the catalogue is seeded, so this list is not paged.")
             .Produces<IReadOnlyList<FeatureListItem>>()
             .ProducesProblem(StatusCodes.Status401Unauthorized)

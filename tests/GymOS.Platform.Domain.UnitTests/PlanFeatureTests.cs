@@ -50,6 +50,44 @@ public sealed class PlanFeatureTests
     }
 
     [Fact]
+    public void SetFeature_WithTheValueItAlreadyHas_AnnouncesNothing()
+    {
+        SubscriptionPlan plan = Plan();
+        plan.SetFeature(Crm, isEnabled: true);
+        plan.DequeueDomainEvents();
+
+        plan.SetFeature(Crm, isEnabled: true);
+
+        // Feature.SetDefault already works this way, and the asymmetry was the problem: a retried
+        // PUT announced a plan change that did not happen, and every subscriber would have had to
+        // learn to ignore it. Nothing changed, so nothing is announced.
+        Assert.Empty(plan.DomainEvents);
+        Assert.True(Assert.Single(plan.Features).IsEnabled);
+    }
+
+    [Fact]
+    public void SetFeature_ReportsWhetherItChangedAnything()
+    {
+        SubscriptionPlan plan = Plan();
+
+        // The caller needs this to decide whether to move the aggregate's version: a write that
+        // changed nothing must not invalidate every other reader's ETag.
+        Assert.True(plan.SetFeature(Crm, isEnabled: true));
+        Assert.False(plan.SetFeature(Crm, isEnabled: true));
+        Assert.True(plan.SetFeature(Crm, isEnabled: false));
+    }
+
+    [Fact]
+    public void ClearFeature_OfAFeatureItNeverHeld_AnnouncesNothing()
+    {
+        SubscriptionPlan plan = Plan();
+        plan.DequeueDomainEvents();
+
+        Assert.False(plan.ClearFeature(Crm));
+        Assert.Empty(plan.DomainEvents);
+    }
+
+    [Fact]
     public void ClearFeature_RemovesTheOpinion_WhichIsNotTheSameAsDisablingIt()
     {
         SubscriptionPlan plan = Plan();

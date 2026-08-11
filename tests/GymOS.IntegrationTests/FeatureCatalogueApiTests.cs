@@ -102,6 +102,26 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_deleted_gyms_exception_counts_towards_neither_number()
+    {
+        // Both figures sit in the same catalogue row, so they have to describe the same population.
+        // Adoption already excluded deleted gyms; overrideCount counted every row, which meant
+        // "3 gyms hold an exception" could include tenants that no longer exist.
+        Guid gym = await CreateGymAsync("counted-then-deleted");
+        await SetGymFeatureAsync(gym, PlatformFeatures.Crm, enabled: true, "Goodwill trial.");
+
+        JsonElement live = FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm);
+        Assert.Equal(1, live.GetProperty("adoptionCount").GetInt32());
+        Assert.Equal(1, live.GetProperty("overrideCount").GetInt32());
+
+        await DeleteGymAsync(gym, "counted-then-deleted");
+
+        JsonElement dead = FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm);
+        Assert.Equal(0, dead.GetProperty("adoptionCount").GetInt32());
+        Assert.Equal(0, dead.GetProperty("overrideCount").GetInt32());
+    }
+
+    [Fact]
     public async Task A_default_on_feature_counts_every_gym_that_never_decided()
     {
         // POS ships on. Two gyms, neither with a plan or an override: both adopt it by default.
@@ -320,6 +340,26 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
 
         using HttpResponseMessage response = await _client.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Soft-deletes a gym through the real endpoint, confirmation header and all — the row survives,
+    /// which is exactly why the counts have to decide what to do about it.
+    /// </summary>
+    private async Task DeleteGymAsync(Guid gymId, string slug)
+    {
+        using HttpResponseMessage read = await _client.GetAsync(
+            new Uri($"/api/v1/gyms/{gymId}", UriKind.Relative));
+        string rowVersion = (await read.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("rowVersion").GetString()!;
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Delete, new Uri($"/api/v1/gyms/{gymId}", UriKind.Relative));
+        request.Headers.TryAddWithoutValidation("X-Confirm-Action", slug);
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
+
+        using HttpResponseMessage response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }
 
     /// <summary>Same, for a gym override — task 5's <c>PUT /gyms/{id}/features</c>.</summary>

@@ -2688,7 +2688,7 @@
     },
     "/api/v1/features": {
       "get": {
-        "description": "Every feature the platform can switch on, with \u0060adoptionCount\u0060 \u2014 how many gyms currently resolve it **on** through the full three-layer rule (override \u2192 plan \u2192 platform default), not merely how many plans include it. \u0060overrideCount\u0060 is how many gyms hold an explicit exception. Ordered by category then name; the catalogue is seeded, so this list is not paged.",
+        "description": "Every feature the platform can switch on, with \u0060adoptionCount\u0060 \u2014 how many gyms currently resolve it **on** through the full three-layer rule (override \u2192 plan \u2192 platform default), not merely how many plans include it. \u0060overrideCount\u0060 is how many of those gyms hold an explicit exception. Both counts exclude deleted gyms, so they describe one population. Ordered by category then name; the catalogue is seeded, so this list is not paged.",
         "operationId": "ListFeatures",
         "responses": {
           "200": {
