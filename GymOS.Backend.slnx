@@ -7,6 +7,13 @@
     <File Path="docker/postgres/initdb/00-extensions.sql" />
     <File Path="docs/Infrastructure/DOCKER.md" />
     <File Path="src/Host/GymOS.WebApi/Dockerfile" />
+    <Project Path="docker-compose.dcproj" Type="E53339B2-1760-4266-BCC7-CA923CBCF16C">
+      <!-- VS-only orchestration, excluded from build so `dotnet build`/CI never restore a
+           project type only Visual Studio understands. If VS strips this rule on save (it
+           serializes Configuration Manager state), re-uncheck Build for this project in
+           Configuration Manager so VS writes the exclusion itself. -->
+      <Build Solution="*|*" Project="false" />
+    </Project>
   </Folder>
   <Folder Name="/src/" />
   <Folder Name="/src/BuildingBlocks/">

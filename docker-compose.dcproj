@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.Docker.Sdk">
+  <!--
+    Visual Studio's Docker Compose orchestration project: makes the compose stack a solution
+    node and an F5 target ("Docker Compose" in the launch bar). It adds NO new behavior — it
+    drives the exact same docker-compose.yml + docker-compose.override.yml that `docker compose
+    up -d` uses, so what F5 starts is what the README describes and what production overlays.
+
+    Build note: only Visual Studio understands Microsoft.Docker.Sdk. The solution marks this
+    project as non-building (see GymOS.Backend.slnx), so `dotnet build` and CI never touch it.
+  -->
+  <PropertyGroup Label="Globals">
+    <ProjectVersion>2.1</ProjectVersion>
+    <DockerTargetOS>Linux</DockerTargetOS>
+    <ProjectGuid>888ba519-2a38-410c-ab54-d275d4e7903a</ProjectGuid>
+    <!-- The same compose project name the CLI uses (docker-compose.yml declares `name: gymos`),
+         so F5 and `docker compose up -d` drive ONE stack instead of racing for the same ports
+         under two names. -->
+    <DockerComposeProjectName>gymos</DockerComposeProjectName>
+    <DockerLaunchAction>LaunchBrowser</DockerLaunchAction>
+    <!-- Lands on the Scalar API reference (Development publishes it; see appsettings.json). -->
+    <DockerServiceUrl>{Scheme}://localhost:{ServicePort}/scalar/v1</DockerServiceUrl>
+    <DockerServiceName>api</DockerServiceName>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="docker-compose.yml" />
+    <None Include="docker-compose.override.yml">
+      <DependentUpon>docker-compose.yml</DependentUpon>
+    </None>
+    <None Include="docker-compose.prod.yml">
+      <DependentUpon>docker-compose.yml</DependentUpon>
+    </None>
+    <None Include=".dockerignore" />
+  </ItemGroup>
+</Project>
