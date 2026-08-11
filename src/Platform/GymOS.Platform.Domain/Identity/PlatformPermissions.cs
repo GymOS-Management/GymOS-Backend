@@ -42,6 +42,15 @@ public static class PlatformPermissions
     /// </summary>
     public const string SubscriptionsManage = "subscriptions.manage";
 
+    /// <summary>
+    /// The feature catalogue and per-gym overrides (§3.4/§3.5). Separate from <see cref="BillingManage"/>
+    /// because they answer different questions: what a plan *includes* is a commercial decision made
+    /// once for every customer on it, while an override is an exception granted to one gym — which is
+    /// day-to-day administration, and the reason support staff need it without holding the price list.
+    /// </summary>
+    public const string FeaturesRead = "features.read";
+    public const string FeaturesManage = "features.manage";
+
     public static readonly IReadOnlyList<PermissionDefinition> All =
     [
         new(GymsRead, ModuleName, "View gyms and their details"),
@@ -57,5 +66,7 @@ public static class PlatformPermissions
         new(BillingRead, ModuleName, "View subscription plans and prices"),
         new(BillingManage, ModuleName, "Create and edit subscription plans and prices"),
         new(SubscriptionsManage, ModuleName, "Assign, change, and cancel a gym's subscription"),
+        new(FeaturesRead, ModuleName, "View the feature catalogue and a gym's resolved features"),
+        new(FeaturesManage, ModuleName, "Edit the feature catalogue and set or clear gym overrides"),
     ];
 }

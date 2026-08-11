@@ -40,6 +40,11 @@ public static class SystemRoles
                 // Read, deliberately not manage: what the platform charges is a commercial decision,
                 // not day-to-day administration.
                 PlatformPermissions.BillingRead,
+
+                // Features are the other way round: turning a capability on for one customer IS
+                // day-to-day administration, so this role holds manage as well as read.
+                PlatformPermissions.FeaturesRead,
+                PlatformPermissions.FeaturesManage,
             ]),
         new(
             SupportAgent,
@@ -50,8 +55,10 @@ public static class SystemRoles
                 PlatformPermissions.UsersRead,
                 PlatformPermissions.AuditRead,
 
-                // A support agent answering "what am I paying for?" needs the catalogue.
+                // A support agent answering "what am I paying for?" needs the catalogue — and
+                // "why is POS off for this gym?" needs the resolved features and their sources.
                 PlatformPermissions.BillingRead,
+                PlatformPermissions.FeaturesRead,
             ]),
         new(
             BillingAdmin,
@@ -63,6 +70,10 @@ public static class SystemRoles
                 PlatformPermissions.BillingRead,
                 PlatformPermissions.BillingManage,
                 PlatformPermissions.SubscriptionsManage,
+
+                // What a plan includes is priced, so billing edits it — via `/plans/{id}/features`,
+                // which is gated on billing.manage. Reading the catalogue is needed to do that.
+                PlatformPermissions.FeaturesRead,
             ]),
         new(
             ReadOnly,
@@ -74,6 +85,7 @@ public static class SystemRoles
                 PlatformPermissions.RolesRead,
                 PlatformPermissions.AuditRead,
                 PlatformPermissions.BillingRead,
+                PlatformPermissions.FeaturesRead,
             ]),
     ];
 }

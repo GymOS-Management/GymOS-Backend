@@ -30,6 +30,24 @@ public sealed record PlanPriceSet(
     public override string EventName => "gymos.platform.plan.price_set";
 }
 
+/// <summary>
+/// The plan's opinion about a feature changed (§2.4's second resolution layer). Affects every gym
+/// on the plan that has no override of its own, which is why it is worth an event.
+/// </summary>
+public sealed record PlanFeatureSet(Guid PlanId, Guid FeatureId, bool IsEnabled) : DomainEvent
+{
+    public override string EventName => "gymos.platform.plan.feature_set";
+}
+
+/// <summary>
+/// The plan no longer has an opinion about a feature: gyms on it fall through to the platform
+/// default. Distinct from setting it disabled — see <c>PlanFeature</c>.
+/// </summary>
+public sealed record PlanFeatureCleared(Guid PlanId, Guid FeatureId) : DomainEvent
+{
+    public override string EventName => "gymos.platform.plan.feature_cleared";
+}
+
 public sealed record PlanPriceRemoved(Guid PlanId, Guid PlanPriceId) : DomainEvent
 {
     public override string EventName => "gymos.platform.plan.price_removed";

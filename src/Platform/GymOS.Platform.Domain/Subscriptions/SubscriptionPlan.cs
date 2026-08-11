@@ -20,6 +20,7 @@ namespace GymOS.Platform.Domain.Subscriptions;
 public sealed class SubscriptionPlan : AggregateRoot, IAuditable
 {
     private readonly List<PlanPrice> _prices = [];
+    private readonly List<PlanFeature> _features = [];
 
     private SubscriptionPlan(Guid id, string code, string name, string description)
         : base(id)
@@ -82,6 +83,9 @@ public sealed class SubscriptionPlan : AggregateRoot, IAuditable
     public int SortOrder { get; private set; }
 
     public IReadOnlyCollection<PlanPrice> Prices => _prices.AsReadOnly();
+
+    /// <summary>What the plan includes (§2.4). Absent features are silence, not exclusion.</summary>
+    public IReadOnlyCollection<PlanFeature> Features => _features.AsReadOnly();
 
     public DateTimeOffset CreatedAtUtc { get; set; }
 
@@ -213,6 +217,49 @@ public sealed class SubscriptionPlan : AggregateRoot, IAuditable
 
         _prices.Remove(price);
         Raise(new PlanPriceRemoved(Id, planPriceId));
+    }
+
+    /// <summary>
+    /// States what this plan says about a feature — the second resolution layer (§2.4).
+    ///
+    /// <para>An upsert, like <see cref="SetPrice"/>: "the PRO plan includes CRM" is one intent, and
+    /// making the caller check first invites the race where two operators both add a row.</para>
+    /// </summary>
+    public PlanFeature SetFeature(Guid featureId, bool isEnabled)
+    {
+        PlanFeature? existing = _features.SingleOrDefault(row => row.FeatureId == featureId);
+
+        if (existing is null)
+        {
+            existing = new PlanFeature(Guid.NewGuid(), Id, featureId, isEnabled);
+            _features.Add(existing);
+        }
+        else
+        {
+            existing.ChangeTo(isEnabled);
+        }
+
+        Raise(new PlanFeatureSet(Id, featureId, isEnabled));
+
+        return existing;
+    }
+
+    /// <summary>
+    /// Removes the plan's opinion about a feature, so gyms on it fall through to the platform
+    /// default — which is <b>not</b> the same as including it as disabled. See
+    /// <see cref="PlanFeature"/> on why silence and "no" are different answers.
+    /// </summary>
+    public void ClearFeature(Guid featureId)
+    {
+        PlanFeature? feature = _features.SingleOrDefault(row => row.FeatureId == featureId);
+
+        if (feature is null)
+        {
+            return; // Already silent: the caller's intent is satisfied.
+        }
+
+        _features.Remove(feature);
+        Raise(new PlanFeatureCleared(Id, featureId));
     }
 
     /// <summary>Withdraws the plan from the catalogue. Existing subscriptions continue.</summary>

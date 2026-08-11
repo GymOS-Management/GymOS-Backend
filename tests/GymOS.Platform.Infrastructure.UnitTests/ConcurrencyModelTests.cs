@@ -51,6 +51,11 @@ public sealed class ConcurrencyModelTests
         // send back, since the plan is the resource the API exposes and the ETag belongs to it.
         [typeof(PlanPrice)] = "updated only through the SubscriptionPlan aggregate, whose token guards it",
 
+        // Same reasoning as PlanPrice above: what a plan includes is written only through the plan,
+        // whose handler calls MarkAggregateChanged so the plan's own token moves on every feature
+        // write. A second token here would be a version no caller ever sees.
+        [typeof(PlanFeature)] = "updated only through the SubscriptionPlan aggregate, whose token guards it",
+
         // Owned by GymSubscription and stored in its row, so the subscription's own xmin already
         // moves when a scheduled change is written, replaced, or cleared. A second token here would
         // describe the same row twice.
