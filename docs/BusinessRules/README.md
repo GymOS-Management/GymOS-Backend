@@ -15,6 +15,12 @@ was deliberately deferred to M3–M6.
 as built, and why invoices and renewal jobs wait on the idempotency framework and a job runner
 respectively.
 
+**Invoices are implemented** — [`Invoices.md`](Invoices.md) records M3.3–M3.4 as built: the three
+creation paths, the plan-change decision tree, and what waits on accounting counsel.
+
+**Feature flags are implemented** — [`Features.md`](Features.md) records M4 as built: the three-layer
+resolution rule, the twelve keys, and why an override is stored only while it differs from the plan.
+
 **The rest are drafts, not specifications.** They record what the frozen architecture already decides,
 what is assumed (marked `(?)`), and what is genuinely unanswered. The Golden Rule
 (GymOS-Specification/PRODUCT-PRINCIPLES.md) is the scope authority: a rule listed here is not a
@@ -24,6 +30,8 @@ commitment to build the feature it belongs to.
 |---|---|---|
 | Gyms | **[Gyms.md](Gyms.md)** | **Implemented (M2).** A specification, not a draft: it records the rules as built. |
 | Subscriptions & Billing | **[Subscriptions.md](Subscriptions.md)** | **Plan catalogue implemented (M3.1).** Records why M3 is four increments and what each waits on. |
+| Invoices | **[Invoices.md](Invoices.md)** | **Implemented (M3.3–M3.4).** Issued as a consequence, never on request; numbering and tax are flagged for counsel. |
+| Features | **[Features.md](Features.md)** | **Implemented (M4).** `override ?? plan ?? platform default`, with the layer that decided it reported alongside the answer. Nothing enforces a flag yet. |
 | Members | **[Domain design](../Domain/MEMBERS-DOMAIN-DESIGN.md)** · [draft](Members.md) | **Specified.** Health data, minors, and retention need legal counsel. |
 | Memberships | **[Domain design](../Domain/MEMBERS-DOMAIN-DESIGN.md)** · [draft](Memberships.md) | **Specified.** Freeze policy and visit definition are blocking decisions. |
 | Payments | [Payments.md](Payments.md) | Least tolerance for a wrong rule. Idempotency is mandatory. |

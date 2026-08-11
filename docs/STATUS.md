@@ -1,8 +1,8 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-11 (evening) · **M4 feature flags, tasks 1–5 of 6 on `main`** — the
-catalogue, plan contents, and per-gym overrides all work end to end; only the documentation +
-final-verification task remains. **1261 tests green** (1,028 unit + 233 integration). The
+**Last updated:** 2026-08-11 (late evening) · **M4 feature flags is complete on `main`** — all six
+tasks done, business rules recorded in `docs/BusinessRules/Features.md`, verified live. **1262 tests
+green** (1,029 unit + 233 integration), 0 build warnings. M4 now goes for review as a whole. The
 whole-repository audit is fixed and merged (`d22d45a`), so the long "awaiting review" backlog (M2,
 Money, M3.1, M3.2, AD-39, M0.X) is **cleared**. Only the **API reference** increment, which landed
 after the audit's scope, is still unreviewed.
@@ -34,7 +34,7 @@ before resuming work on any machine.
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
 | **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
-| **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | 🚧 **tasks 1–5 of 6 on `main`** — see "M4 as built"; task 6 (business-rules doc, live run, final verification) is what remains |
+| **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1262 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · ⬅ **awaiting review** (as a whole) |
 | M5+ — per approved roadmap (dashboard, monitoring, settings) | next |
 
 ## M1.2 as built
@@ -301,17 +301,17 @@ Two traps it sets:
    with 103 tests is a crash, not a pass. **A run is only trustworthy if its output contains no
    `Aborted`** and the total matches the project's known count.
 
-Longer runs fail more often, so the two largest projects (`Platform.Domain.UnitTests` 337,
-`Platform.Application.UnitTests` 201) and the slow one (`IntegrationTests` 179, ~2 min) are the
+Longer runs fail more often, so the two largest projects (`Platform.Domain.UnitTests` 391,
+`Platform.Application.UnitTests` 232) and the slow one (`IntegrationTests` 233, ~2½ min) are the
 usual casualties. Verify class by class when it bites:
 
 ```
 dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTests"
 ```
 
-Full counts per project, for checking a run was complete — **re-measured 2026-08-10, every project
-complete with no `Aborted`**: SharedKernel 126 · BuildingBlocks 55 · Architecture 136 ·
-Domain 337 · Application 201 · Infrastructure 67 · Integration 201 = **1123**.
+Full counts per project, for checking a run was complete — **re-measured 2026-08-11 after M4, every
+project complete with no `Aborted`**: SharedKernel 126 · BuildingBlocks 62 · Architecture 151 ·
+Domain 391 · Application 232 · Infrastructure 67 · Integration 233 = **1262**.
 
 Capping the test connection pools (above) may also have helped here — the last several full runs completed
 first time, where they previously needed retries.
@@ -860,9 +860,10 @@ pipeline requires; the first two were the missing bearer scheme and the empty `s
   requiredness to `versionRequired`, so the two cannot drift apart silently.
 - **Test counts after this work: 1123** (was 1116) — Integration 194 → 201.
 
-## M4 as built (tasks 1–5 of 6)
+## M4 as built
 
-Design approved 2026-08-11 — `docs/superpowers/specs/2026-08-11-feature-flags-design.md`. Branch
+Design approved 2026-08-11 — `docs/superpowers/specs/2026-08-11-feature-flags-design.md`. Business
+rules as built: **`docs/BusinessRules/Features.md`**. Branch
 `m4-feature-flags`, merged to `main` after each task. **Nothing consumes a resolved flag yet**, and
 that is deliberate (design §6): the tenant-facing modules that would — POS, inventory, CRM — do not
 exist. M4 delivers the decision and its API; the first consumer enforces it.
@@ -897,6 +898,38 @@ in SQL for that reason.
    frozen by a row nobody remembers creating. `reason` is required only when an override is genuinely
    needed, and the response is the **full resolution, not an echo**: after a withdrawal the stored
    state is deliberately not what was sent.
+6. **Close-out** (this commit) — `docs/BusinessRules/Features.md`, full verification, and the live
+   run the design's §7 asks for.
+
+### Verified live (task 6)
+
+Against the compose stack (`docker compose up -d`, rebuilt image, real PostgreSQL), the design's §7
+scenario end to end:
+
+- **The same feature, three answers, three reasons.** One plan flipped to include `crm`; a gym on
+  that plan reads `enabled=true source=Plan`, a gym with an exception reads
+  `enabled=true source=Override` carrying its reason, and a gym with no subscription reads
+  `enabled=false source=Default`. Only `source` says which lever changes each.
+- **The self-cleaning rule, live.** Asking the plan gym for exactly what its plan already gives
+  stored nothing and needed no reason; asking the override gym for the default **withdrew** its
+  exception (`overrideCount` back to 0) rather than storing a redundant row.
+- **Validation ahead of mutation.** A reasonless exception (`features.override_reason_required`), an
+  unknown key (`features.unknown_key`), a key stated twice (`features.duplicate_key`) and a **mixed**
+  request whose second key lacked a reason were each refused whole — 0 overrides stored by any of
+  them. `PUT /features/{id}` without `If-Match` → 428 `concurrency.version_required`;
+  `POST /features` → 405.
+- **The seeder really is insert-only.** `crm`'s platform default was flipped to `true` and its name
+  edited through the API, the API container restarted, and the edit **survived** — 12 rows still, no
+  duplicates. This is the claim with the nastiest failure mode (an operator's change works until
+  someone reboots), so it is worth proving outside the test suite too.
+- The gym detail block returns the same 12 resolved rows as `GET /gyms/{id}/features`, and
+  `adoptionCount` moved with the resolution rather than with plan rows.
+
+**Test counts, every project run to completion with no `Aborted`, 0 build warnings:** SharedKernel
+126 · BuildingBlocks 62 · Architecture 151 · Domain 391 · Application 232 · Infrastructure 67 ·
+Integration 233 = **1262**. (The 1,028 unit figure recorded after task 5 was one short; the measured
+unit total is 1,029.) The integration suite completed first time on this run — none of the
+intermittent connection-open failures noted after task 5.
 
 ### Decisions and traps found
 
@@ -969,7 +1002,7 @@ To work on it — API on the host, database in a container:
 ```
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d postgres      # PostgreSQL 17 only
-dotnet test GymOS.Backend.slnx     # expect 1261 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 1262 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
@@ -996,18 +1029,25 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
 
 ## Next step (resume here)
 
-**M4 task 6 of 6** — the documentation-and-verification close-out, on `main`:
+**M4 is built, verified, and documented. It now goes for review as a whole** — the same adversarial
+gate M3.3 and M3.4 went through, over the six commits `eb185b3..` on `main` plus this close-out.
+The reviewer's sharpest questions are probably: whether the clear-vs-upsert decision is right in
+every case the handler can reach, whether "no `If-Match` on the gym write" survives contact with two
+operators, and whether the resolution query and the write path can still disagree about a gym with no
+live subscription (they share `FeatureResolution`, but they load the plan by different routes).
 
-1. `docs/BusinessRules/Features.md` — the three-layer rule, the twelve keys and why each default is
-   what it is, the store-only-when-it-differs invariant, and the permission split (`features.*` for a
-   gym's exceptions, `billing.*` for what a plan sells).
-2. STATUS.md: flip the M4 row to complete.
-3. Full verification, and the **live run** the design's §7 asks for: seed, flip a plan feature,
-   override one gym, then read two gyms' resolutions and see the same feature answered differently
-   for different reasons (`source` = `Plan` vs `Override` vs `Default`).
+Then, in priority order:
 
-Then M4 goes for review as a whole. Still owed, unchanged by this work: the **API reference**
-increment awaits review (Konstantinos's), and audit finding 7 (below) wants its own increment.
+1. **The API reference increment awaits review** (Konstantinos's) — unchanged by this work, and the
+   only thing left over from before the audit's scope.
+2. **Audit finding 7** wants its own increment: concurrent failed sign-ins collide on the user row's
+   version, so `/auth/login` can answer 409 and lockout under-counts. Small domain change, listed in
+   full under "Known open items".
+3. **M5** — per the approved roadmap (dashboard, monitoring, settings). Note that M5's platform stats
+   are the first consumer of `Money` currency conversion (AD-43), which does not exist yet.
+
+Nothing in M4 changed the standing debts: **R14 (RLS) has still never run** and is owed with the
+first tenant-scoped entity, and the Members domain remains frozen and ready to implement.
 
 ## Known open items / honest notes
 
