@@ -15,6 +15,22 @@ internal sealed class RefreshTokenRepository : IRefreshTokenRepository
         _dbContext.Set<RefreshToken>()
             .SingleOrDefaultAsync(token => token.TokenHash == tokenHash, cancellationToken);
 
+    public async Task<RefreshToken?> FindByHashForUpdateAsync(
+        string tokenHash,
+        CancellationToken cancellationToken)
+    {
+        // Two statements, the SubscriptionRepository pattern: EF has no FOR UPDATE operator, so
+        // the lock is taken as a scalar statement (a row lock needs no entity) and the aggregate
+        // then loads through the normal pipeline on the same connection and transaction, where
+        // the lock is already held. Concurrent rotations of one token serialize here — which is
+        // what lets the second one see a revoked token and detect the reuse.
+        await _dbContext.Database.ExecuteSqlAsync(
+            $"SELECT 1 FROM platform.refresh_tokens WHERE token_hash = {tokenHash} FOR UPDATE",
+            cancellationToken);
+
+        return await FindByHashAsync(tokenHash, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<RefreshToken>> ListByUserAsync(Guid userId, CancellationToken cancellationToken) =>
         await _dbContext.Set<RefreshToken>()
             .Where(token => token.UserId == userId)

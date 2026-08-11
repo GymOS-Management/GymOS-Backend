@@ -1,4 +1,5 @@
 using GymOS.Platform.Application.Subscriptions.Abstractions;
+using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
 using RowVersion = GymOS.BuildingBlocks.Application.Abstractions.RowVersion;
@@ -42,7 +43,13 @@ internal sealed class SubscriptionQueries : ISubscriptionQueries
             .Where(subscription => LiveStatuses.Contains(subscription.Status)
                 && (subscription.CurrentPeriodEndUtc <= now
                     || (subscription.Status == SubscriptionStatus.Trialing
-                        && subscription.TrialEndsAtUtc <= now)))
+                        && subscription.TrialEndsAtUtc <= now))
+                // Never bill a deleted tenant. Deletion cancels the live subscription in the same
+                // transaction, so this should find nothing to exclude — it is the belt to that
+                // braces, because the cost of the sweep being wrong here is money charged to a
+                // business that no longer exists.
+                && !_dbContext.Set<Gym>()
+                    .Any(gym => gym.Id == subscription.GymId && gym.DeletedAtUtc != null))
             .OrderBy(subscription => subscription.CurrentPeriodEndUtc)
             .Select(subscription => subscription.Id)
             .ToListAsync(cancellationToken);

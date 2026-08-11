@@ -27,9 +27,52 @@ public static class ExceptionHandlingExtensions
 
         services.AddExceptionHandler<PermissionDeniedExceptionHandler>();
         services.AddExceptionHandler<ConcurrencyConflictExceptionHandler>();
+        services.AddExceptionHandler<UniquenessConflictExceptionHandler>();
         services.AddExceptionHandler<DomainExceptionHandler>();
 
         return services;
+    }
+
+    /// <summary>
+    /// A unique index refused the write — another caller took the value between this request's
+    /// pre-check and its insert.
+    ///
+    /// <para>409 with a retryable hint, not the 500 an untranslated provider error produced: the
+    /// caller did nothing wrong, and for a value they choose (a slug) the remedy is to pick
+    /// another. The constraint name travels because it is the difference between "try another
+    /// slug" and a support ticket.</para>
+    /// </summary>
+    private sealed class UniquenessConflictExceptionHandler : IExceptionHandler
+    {
+        public async ValueTask<bool> TryHandleAsync(
+            HttpContext httpContext,
+            Exception exception,
+            CancellationToken cancellationToken)
+        {
+            if (exception is not UniquenessConflictException conflict)
+            {
+                return false;
+            }
+
+            await Results.Problem(
+                title: "Conflict",
+                detail:
+                    "Another record already uses one of the values in this request. Re-read the " +
+                    "resource and choose a value that is still free.",
+                statusCode: StatusCodes.Status409Conflict,
+                extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["code"] = "persistence.uniqueness_conflict",
+                    ["constraint"] = conflict.ConstraintName,
+
+                    // Retrying the identical request cannot succeed — the value is taken. Only a
+                    // different value can, which is the caller's decision to make.
+                    ["retryable"] = false,
+                })
+                .ExecuteAsync(httpContext).ConfigureAwait(false);
+
+            return true;
+        }
     }
 
     /// <summary>

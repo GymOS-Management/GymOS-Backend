@@ -234,8 +234,13 @@ internal sealed class SetPlanPriceCommandHandler
             return Result.Failure<PlanDetail>(PlanErrors.NotFound(command.PlanId));
         }
 
+        // Required, not optional: this overwrites a price the caller read, and unlike the
+        // activate/deactivate actions there is no state machine to refuse a stale interleaving —
+        // SetPrice is an upsert, so without the precondition one operator's €59.99 is silently
+        // replaced by another's €45.00 from a stale page, and every later assignment copies it.
+        // This is the platform convention for a PUT that overwrites (API_STANDARDS §3).
         Result version = PlanWrites.ApplyExpectedVersion(
-            _plans, plan, command.ExpectedRowVersion, versionRequired: false);
+            _plans, plan, command.ExpectedRowVersion, versionRequired: true);
         if (version.IsFailure)
         {
             return Result.Failure<PlanDetail>(version.Error!);
@@ -291,8 +296,10 @@ internal sealed class RemovePlanPriceCommandHandler
             return Result.Failure<PlanDetail>(PlanErrors.NotFound(command.PlanId));
         }
 
+        // Required, like the upsert above: withdrawing a price the caller may not have seen
+        // repriced is the same lost-update hazard from the other direction.
         Result version = PlanWrites.ApplyExpectedVersion(
-            _plans, plan, command.ExpectedRowVersion, versionRequired: false);
+            _plans, plan, command.ExpectedRowVersion, versionRequired: true);
         if (version.IsFailure)
         {
             return Result.Failure<PlanDetail>(version.Error!);

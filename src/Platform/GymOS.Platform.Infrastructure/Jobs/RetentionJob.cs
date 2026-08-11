@@ -1,5 +1,6 @@
 using GymOS.BuildingBlocks.Application.Jobs;
 using GymOS.Platform.Infrastructure.Idempotency;
+using GymOS.Platform.Infrastructure.Identity;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 
 namespace GymOS.Platform.Infrastructure.Jobs;
@@ -23,13 +24,16 @@ internal sealed class RetentionJob : IScheduledJob
 {
     private readonly AuditLogPartitionMaintainer _auditPartitions;
     private readonly IdempotencyRecordMaintainer _idempotencyRecords;
+    private readonly RefreshTokenMaintainer _refreshTokens;
 
     public RetentionJob(
         AuditLogPartitionMaintainer auditPartitions,
-        IdempotencyRecordMaintainer idempotencyRecords)
+        IdempotencyRecordMaintainer idempotencyRecords,
+        RefreshTokenMaintainer refreshTokens)
     {
         _auditPartitions = auditPartitions;
         _idempotencyRecords = idempotencyRecords;
+        _refreshTokens = refreshTokens;
     }
 
     public string Name => "retention";
@@ -41,5 +45,9 @@ internal sealed class RetentionJob : IScheduledJob
     {
         await _auditPartitions.EnsurePartitionsAsync(cancellationToken);
         await _idempotencyRecords.PurgeExpiredAsync(cancellationToken);
+
+        // The purge IRefreshTokenRepository always documented: rotation inserts a row per refresh,
+        // and the session-ending paths load every token a user ever held.
+        await _refreshTokens.PurgeUnusableAsync(cancellationToken);
     }
 }

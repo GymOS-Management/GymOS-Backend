@@ -2,8 +2,10 @@ using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
 using GymOS.Platform.Application.Gyms.Abstractions;
+using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Identity;
+using GymOS.Platform.Domain.Subscriptions;
 using GymOS.SharedKernel.Results;
 
 namespace GymOS.Platform.Application.Gyms;
@@ -209,12 +211,18 @@ internal sealed class ReactivateGymCommandHandler
 internal sealed class DeleteGymCommandHandler : ICommandHandler<DeleteGymCommand, Result>
 {
     private readonly IGymRepository _gyms;
+    private readonly ISubscriptionRepository _subscriptions;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
 
-    public DeleteGymCommandHandler(IGymRepository gyms, IUnitOfWork unitOfWork, IClock clock)
+    public DeleteGymCommandHandler(
+        IGymRepository gyms,
+        ISubscriptionRepository subscriptions,
+        IUnitOfWork unitOfWork,
+        IClock clock)
     {
         _gyms = gyms;
+        _subscriptions = subscriptions;
         _unitOfWork = unitOfWork;
         _clock = clock;
     }
@@ -251,9 +259,30 @@ internal sealed class DeleteGymCommandHandler : ICommandHandler<DeleteGymCommand
             return version;
         }
 
-        gym.Delete(_clock.UtcNow);
+        DateTimeOffset now = _clock.UtcNow;
+        gym.Delete(now);
+
+        // A deleted gym must stop costing money. Assignment already refuses a deleted gym
+        // (SubscriptionErrors.GymDeleted), but nothing enforced the same intent on this side, so
+        // the renewal sweep kept advancing the period and issuing invoices against a business
+        // that no longer exists — billing, and reporting as receivable, a deleted tenant forever.
+        // Cancelled in the same transaction as the deletion: two separate commits could leave a
+        // deleted gym holding a live subscription.
+        GymSubscription? subscription = await _subscriptions.FindLiveByGymAsync(
+            command.GymId, cancellationToken);
+        if (subscription is not null)
+        {
+            // Immediately, not at the period end: there is nothing left to deliver service to,
+            // and a scheduled cancellation would be applied by a sweep that must no longer see
+            // this gym at all. Invoices already issued stay — they are the billing record.
+            subscription.CancelNow(RevocationReasonGymDeleted, now);
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return Result.Success();
     }
+
+    /// <summary>Recorded as the cancellation reason, so the history says why it ended.</summary>
+    private const string RevocationReasonGymDeleted = "The gym was deleted.";
 }

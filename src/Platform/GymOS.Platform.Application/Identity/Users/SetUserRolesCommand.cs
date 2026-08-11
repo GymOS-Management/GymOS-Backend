@@ -85,6 +85,13 @@ internal sealed class SetUserRolesCommandHandler : ICommandHandler<SetUserRolesC
             return Result.Failure<UserDetail>(UserErrors.TenantRoleNotAssignable(tenantScoped.Name));
         }
 
+        // One transaction from the guard to the commit — see SuspendUserCommandHandler: the
+        // last-SuperAdmin rule constrains a SET, so the guard holds an advisory lock for this
+        // span. Without it, dropping the role from two different admins concurrently passes both
+        // checks and commits both, and no row-level token can see it.
+        await using IUnitOfWorkTransaction transaction =
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
+
         Result guard = await _superAdminGuard.EnsureRoleChangeKeepsASuperAdminAsync(
             user, requestedRoleIds, cancellationToken);
         if (guard.IsFailure)
@@ -127,6 +134,7 @@ internal sealed class SetUserRolesCommandHandler : ICommandHandler<SetUserRolesC
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return await UserWrites.ReadBackAsync(_userQueries, command.UserId, cancellationToken);
     }

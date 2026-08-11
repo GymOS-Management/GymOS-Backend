@@ -1,6 +1,7 @@
-using System.Linq.Expressions;
+﻿using System.Linq.Expressions;
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Models;
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Invoices.Abstractions;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Invoices;
@@ -11,7 +12,7 @@ namespace GymOS.Platform.Infrastructure.Persistence.Queries;
 
 internal sealed class InvoiceQueries : IInvoiceQueries
 {
-    /// <summary>Sortable columns, by request value — an allowlist, for the reason in <c>GymQueries</c>.</summary>
+    /// <summary>Sortable columns, by request value â€” an allowlist, for the reason in <c>GymQueries</c>.</summary>
     private static readonly string[] SortableFields =
         ["invoiceNumber", "issuedAtUtc", "dueAtUtc", "total", "status"];
 
@@ -30,7 +31,7 @@ internal sealed class InvoiceQueries : IInvoiceQueries
     {
         ArgumentNullException.ThrowIfNull(filter);
 
-        // Read once, so every row in the page answers "overdue?" about the same instant — a page
+        // Read once, so every row in the page answers "overdue?" about the same instant â€” a page
         // where two rows disagree about what time it is would be a strange document.
         DateTimeOffset now = _clock.UtcNow;
 
@@ -57,8 +58,9 @@ internal sealed class InvoiceQueries : IInvoiceQueries
         {
             // Escaped, so an operator searching "2026_0001" or a stray "%" matches the literal
             // text instead of turning the search into a wildcard over the whole table.
-            string pattern = $"%{EscapeLike(search)}%";
-            query = query.Where(invoice => EF.Functions.ILike(invoice.InvoiceNumber, pattern, @"\"));
+            string pattern = SearchPatterns.Contains(search);
+            query = query.Where(invoice =>
+                EF.Functions.ILike(invoice.InvoiceNumber, pattern, SearchPatterns.EscapeCharacter));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);
@@ -152,7 +154,7 @@ internal sealed class InvoiceQueries : IInvoiceQueries
 
         var lines = projection.Lines
             // Charges before credits. The table has no insertion-order column (an invoice's lines
-            // are written once and never edited), so display order is a projection decision — and
+            // are written once and never edited), so display order is a projection decision â€” and
             // an invoice reads charge-then-credit.
             .OrderByDescending(line => line.Amount)
             .ThenBy(line => line.Description, StringComparer.Ordinal)
@@ -192,7 +194,7 @@ internal sealed class InvoiceQueries : IInvoiceQueries
         CancellationToken cancellationToken)
     {
         // "Every invoice ever issued", literally: pages accumulate until the reported total is
-        // reached, so a long-lived gym's history is never silently truncated at one page — an
+        // reached, so a long-lived gym's history is never silently truncated at one page â€” an
         // accountant reconciling against this list must be able to trust its completeness.
         var all = new List<InvoiceListItem>();
 
@@ -225,14 +227,14 @@ internal sealed class InvoiceQueries : IInvoiceQueries
             .Select(invoice => invoice.Id)
             .ToListAsync(cancellationToken);
 
-    // ── One definition of "overdue" ────────────────────────────────────────────────────────────
-    // Three bindings of the same predicate — a queryable expression, its negation (EF cannot
+    // â”€â”€ One definition of "overdue" â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Three bindings of the same predicate â€” a queryable expression, its negation (EF cannot
     // negate an expression tree for us), and a plain bool for materialized rows. They must agree,
     // which is why they live together. Since M3.4 the stored status is part of the answer: the
     // sweep writes Overdue durably, and an Issued invoice past its due date is overdue in the
     // window before the next sweep notices.
     //
-    // The boundary is INCLUSIVE (due <= now) at every binding — matching Invoice.IsOverdue
+    // The boundary is INCLUSIVE (due <= now) at every binding â€” matching Invoice.IsOverdue
     // (now >= DueAtUtc) and the sweep's candidate query, so the instant the sweep may brand an
     // invoice overdue is the same instant every read model starts saying it.
 
@@ -247,10 +249,6 @@ internal sealed class InvoiceQueries : IInvoiceQueries
     private static bool IsOverdueAt(InvoiceStatus status, DateTimeOffset dueAtUtc, DateTimeOffset now) =>
         status == InvoiceStatus.Overdue
             || (status == InvoiceStatus.Issued && dueAtUtc <= now);
-
-    /// <summary>Escapes LIKE metacharacters so a search matches its text literally.</summary>
-    private static string EscapeLike(string value) =>
-        value.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_");
 
     private static IQueryable<Invoice> Sort(IQueryable<Invoice> query, PageRequest page) =>
         (page.SortBy is not null && SortableFields.Contains(page.SortBy, StringComparer.OrdinalIgnoreCase)

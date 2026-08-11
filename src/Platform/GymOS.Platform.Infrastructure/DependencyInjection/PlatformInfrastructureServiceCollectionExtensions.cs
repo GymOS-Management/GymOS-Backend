@@ -6,6 +6,7 @@ using GymOS.BuildingBlocks.Infrastructure.Jobs;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Idempotency;
+using GymOS.Platform.Infrastructure.Identity;
 using GymOS.Platform.Infrastructure.Jobs;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
@@ -66,6 +67,14 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         // billed renewal) must not depend on any one host's idea of the time.
         services.TryAddScoped<IJobLock, PostgresJobLock>();
         services.TryAddScoped<IDatabaseClock, PostgresDatabaseClock>();
+
+        // Serializes constraints over a SET of rows, which optimistic tokens cannot express —
+        // the last-active-SuperAdmin rule is the first consumer.
+        services.TryAddScoped<IAdvisoryLock, PostgresAdvisoryLock>();
+
+        // Refresh tokens accumulate one row per refresh; the retention job deletes the unusable
+        // ones (the purge IRefreshTokenRepository has always documented).
+        services.TryAddScoped<RefreshTokenMaintainer>();
 
         // The recurring half of retention (AD-23) — the startup maintainers above cover first
         // boot; this covers every night after.

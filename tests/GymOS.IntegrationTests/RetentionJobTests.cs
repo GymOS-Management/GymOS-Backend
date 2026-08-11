@@ -1,5 +1,6 @@
 using GymOS.BuildingBlocks.Infrastructure.Time;
 using GymOS.Platform.Infrastructure.Idempotency;
+using GymOS.Platform.Infrastructure.Identity;
 using GymOS.Platform.Infrastructure.Jobs;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
@@ -68,7 +69,9 @@ public sealed class RetentionJobTests : IAsyncLifetime
                 Options.Create(new AuditLogPartitionOptions()),
                 NullLogger<AuditLogPartitionMaintainer>.Instance),
             new IdempotencyRecordMaintainer(
-                context, Clock, NullLogger<IdempotencyRecordMaintainer>.Instance));
+                context, Clock, NullLogger<IdempotencyRecordMaintainer>.Instance),
+            new RefreshTokenMaintainer(
+                context, Clock, NullLogger<RefreshTokenMaintainer>.Instance));
 
         await job.ExecuteAsync(Clock.UtcNow, CancellationToken.None);
 

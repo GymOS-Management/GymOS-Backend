@@ -188,8 +188,14 @@ public sealed class PlanApiTests : IAsyncLifetime
         JsonElement body = await detail.Content.ReadFromJsonAsync<JsonElement>();
         Guid priceId = body.GetProperty("prices").EnumerateArray().Single().GetProperty("id").GetGuid();
 
-        using HttpResponseMessage removed = await _client.DeleteAsync(
-            new Uri($"/api/v1/plans/{planId}/prices/{priceId}", UriKind.Relative));
+        // If-Match required, like the upsert: withdrawing a price the caller may not have seen
+        // repriced is the same lost-update hazard from the other direction.
+        using var removeRequest = new HttpRequestMessage(
+            HttpMethod.Delete, new Uri($"/api/v1/plans/{planId}/prices/{priceId}", UriKind.Relative));
+        removeRequest.Headers.TryAddWithoutValidation(
+            "If-Match", $"\"{await RowVersionAsync(planId)}\"");
+
+        using HttpResponseMessage removed = await _client.SendAsync(removeRequest);
 
         Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
         JsonElement after = await removed.Content.ReadFromJsonAsync<JsonElement>();
@@ -388,15 +394,27 @@ public sealed class PlanApiTests : IAsyncLifetime
         return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
     }
 
+    /// <summary>
+    /// Upserts a price, sending the plan's current <c>If-Match</c> — the endpoint requires it,
+    /// because it overwrites a price the caller read and <c>SetPrice</c> is an upsert with no
+    /// state machine to refuse a stale interleaving.
+    /// </summary>
     private async Task<HttpResponseMessage> SetPriceAsync(
         Guid planId,
         string billingCycle,
         string currency,
         decimal amount)
     {
-        HttpResponseMessage response = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative),
-            new { billingCycle, currency, amount });
+        string rowVersion = await RowVersionAsync(planId);
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { billingCycle, currency, amount }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
+
+        HttpResponseMessage response = await _client.SendAsync(request);
 
         Assert.True(
             response.StatusCode == HttpStatusCode.OK,

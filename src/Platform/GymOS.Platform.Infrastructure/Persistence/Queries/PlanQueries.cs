@@ -1,4 +1,5 @@
-using GymOS.BuildingBlocks.Application.Models;
+﻿using GymOS.BuildingBlocks.Application.Models;
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
@@ -8,7 +9,7 @@ namespace GymOS.Platform.Infrastructure.Persistence.Queries;
 
 internal sealed class PlanQueries : IPlanQueries
 {
-    /// <summary>Sortable columns, by request value — an allowlist, for the reason in <c>GymQueries</c>.</summary>
+    /// <summary>Sortable columns, by request value â€” an allowlist, for the reason in <c>GymQueries</c>.</summary>
     private static readonly string[] SortableFields = ["name", "code", "sortOrder", "createdAtUtc"];
 
     private readonly AppDbContext _dbContext;
@@ -35,9 +36,10 @@ internal sealed class PlanQueries : IPlanQueries
 
         if (filter.Page.Search is { } search)
         {
-            string pattern = $"%{search}%";
+            string pattern = SearchPatterns.Contains(search);
             query = query.Where(plan =>
-                EF.Functions.ILike(plan.Name, pattern) || EF.Functions.ILike(plan.Code, pattern));
+                EF.Functions.ILike(plan.Name, pattern, SearchPatterns.EscapeCharacter) ||
+                EF.Functions.ILike(plan.Code, pattern, SearchPatterns.EscapeCharacter));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);
@@ -105,7 +107,7 @@ internal sealed class PlanQueries : IPlanQueries
                 plan.CreatedAtUtc,
                 RowVersion = EF.Property<uint>(plan, "xmin"),
 
-                // Gyms on a live subscription to this plan — the number that decides whether
+                // Gyms on a live subscription to this plan â€” the number that decides whether
                 // withdrawing it is safe.
                 SubscribedGymCount = _dbContext.Set<GymSubscription>()
                     .Count(subscription => subscription.PlanId == plan.Id
@@ -130,7 +132,7 @@ internal sealed class PlanQueries : IPlanQueries
         }
 
         var prices = projection.Prices
-            // Ordered by period length, so a price list reads monthly → quarterly → yearly rather than
+            // Ordered by period length, so a price list reads monthly â†’ quarterly â†’ yearly rather than
             // in whatever order the rows were inserted.
             .OrderBy(price => (int)price.BillingCycle)
             .ThenBy(price => price.Currency.Code, StringComparer.Ordinal)

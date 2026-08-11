@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Application.Identity.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
@@ -16,13 +17,23 @@ namespace GymOS.Platform.Application.Identity.Users;
 /// </summary>
 internal sealed class SuperAdminGuard
 {
+    /// <summary>
+    /// The lock name every caller of this guard serializes on. A constraint over a set needs the
+    /// checks serialized, not just the rows versioned: two administrators removing the role from
+    /// two <em>different</em> users both count two holders and both commit, because their writes
+    /// never touch the same row — leaving zero. Held from the count to the commit.
+    /// </summary>
+    internal const string SuperAdminSetLock = "identity.superadmins";
+
     private readonly IUserQueries _userQueries;
     private readonly IRoleRepository _roles;
+    private readonly IAdvisoryLock _advisoryLock;
 
-    public SuperAdminGuard(IUserQueries userQueries, IRoleRepository roles)
+    public SuperAdminGuard(IUserQueries userQueries, IRoleRepository roles, IAdvisoryLock advisoryLock)
     {
         _userQueries = userQueries;
         _roles = roles;
+        _advisoryLock = advisoryLock;
     }
 
     /// <summary>
@@ -45,6 +56,10 @@ internal sealed class SuperAdminGuard
         {
             return Result.Success();
         }
+
+        // Serialize before counting. The caller holds a transaction, so the lock is held through
+        // its commit: whoever waits here counts a set that already includes the other's change.
+        await _advisoryLock.AcquireAsync(SuperAdminSetLock, cancellationToken);
 
         int activeSuperAdmins = await _userQueries.CountActiveUsersInRoleAsync(
             SystemRoles.SuperAdmin, cancellationToken);

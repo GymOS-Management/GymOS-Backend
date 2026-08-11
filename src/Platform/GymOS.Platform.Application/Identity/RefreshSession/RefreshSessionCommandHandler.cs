@@ -68,7 +68,16 @@ internal sealed partial class RefreshSessionCommandHandler
         }
 
         string presentedHash = _refreshTokenGenerator.ComputeHash(command.RefreshToken);
-        RefreshToken? presented = await _refreshTokens.FindByHashAsync(presentedHash, cancellationToken);
+
+        // Rotation is a read-then-write, so the whole of it runs in one transaction over a locked
+        // read. Without that, two simultaneous uses of one token both see it unrevoked and both
+        // succeed — a replayed stolen token would quietly yield a second live session and reuse
+        // detection would never fire, which is the one guarantee this handler exists to provide.
+        await using IUnitOfWorkTransaction transaction =
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        RefreshToken? presented = await _refreshTokens.FindByHashForUpdateAsync(
+            presentedHash, cancellationToken);
 
         if (presented is null)
         {
@@ -79,6 +88,7 @@ internal sealed partial class RefreshSessionCommandHandler
         if (presented.IsRevoked)
         {
             await RevokeChainAsync(presented, command.IpAddress, now, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return Result.Failure<AuthenticatedSession>(AuthenticationErrors.InvalidRefreshToken);
         }
 
@@ -102,6 +112,7 @@ internal sealed partial class RefreshSessionCommandHandler
         {
             presented.Revoke(now, command.IpAddress, RevocationReasons.AccountSuspended);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return Result.Failure<AuthenticatedSession>(AuthenticationErrors.AccountSuspended);
         }
 
@@ -109,6 +120,7 @@ internal sealed partial class RefreshSessionCommandHandler
             user, command.IpAddress, now, cancellationToken, replacing: presented);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return Result.Success(session);
     }
 

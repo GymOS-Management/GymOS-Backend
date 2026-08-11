@@ -499,6 +499,59 @@ theory that enforces this live against an in-test-assembly exemplar until then.
    retention, same shape as `AuditLogPartitionMaintainer` (M1.3). Both were folded into M3.4's
    `RetentionJob`; the startup calls stay for first boot.
 
+## Whole-repository audit (2026-08-11) — 10 findings, all fixed
+
+The first adversarial review of the **older, never-reviewed increments** (M1 identity/auth, M2 gyms,
+M3.1/M3.2, the audit interceptor, rate limiting) plus cross-cutting security, transactions, and
+structure. 39 agents over 382 files; 38 candidates verified, 1 refuted; 27 lower-severity findings
+(mostly duplication) below the reporting cap.
+
+**Structure verdict: conformant.** No layering violations, no misplaced responsibilities, no drift
+from the ARCHITECTURE.md folder plan — the architecture tests are holding. The duplication the
+cleanup finders flagged (the `*Writes` helpers, sort scaffolding, session-termination loops) is
+maintenance drag, not rot; the one place it had already caused divergence was the LIKE escaping,
+now shared.
+
+Fixed, each with a pinning test:
+
+- **Refresh-token rotation is serialized** (`FindByHashForUpdateAsync` + a transaction). It was a
+  read-then-write with no lock, so two simultaneous uses of one token both succeeded and reuse
+  detection never fired — a replayed stolen cookie yielded a second live session invisibly. This is
+  the guarantee `ConcurrencyModelTests` cites to justify exempting `RefreshToken` from concurrency,
+  and it was not true until now.
+- **Change-password is no longer an unthrottled, untraced oracle**: lockout is checked before the
+  current password is verified, wrong attempts count towards the same per-account lockout as
+  sign-in and are audited (`auth.password_change_failed`), and the endpoint carries the sign-in rate
+  limiter. A successful guess ends every session, so this door needed sign-in's guards.
+- **Deleting a gym cancels its live subscription in the same transaction**, and the renewal sweep
+  excludes deleted gyms defensively. Assignment already refused a deleted gym; nothing enforced the
+  same intent on the delete path, so the M3.4 sweeps billed deleted tenants every cycle, forever.
+- **The persistence boundary translates unique-index violations** into
+  `UniquenessConflictException` → 409 `persistence.uniqueness_conflict` (with the constraint name).
+  Slug, normalized-email, custom-domain and one-live-subscription races previously reached callers
+  as bare 500s — the handlers' pre-checks are a courtesy and the index is the guarantee, so the
+  race is expected, not exceptional.
+- **The audit trail fits values to their columns.** An over-long email in a failed sign-in made the
+  audit write throw (22001), turning a 401 into a 500 and losing the row documenting the attempt.
+  An audit entry must never be why a request fails.
+- **The last-SuperAdmin invariant is serialized** by a new `IAdvisoryLock`
+  (`pg_advisory_xact_lock`), held from the count to the commit. It constrains a *set*, so two
+  administrators editing two *different* users both passed the check and both committed — no
+  row-level token can see that.
+- **Plan price upsert and removal require `If-Match`** (they overwrite what the caller read, and
+  `SetPrice` is an upsert with no state machine to refuse a stale interleaving).
+- **One LIKE-escaping implementation** (`SearchPatterns`) used by all five query classes: four of
+  them passed the caller's `%`/`_` straight into ILIKE, so a search for "100% Fitness" returned
+  every row starting with "100" and a bare `_` returned the whole table.
+- **The retention job purges refresh tokens** — the purge `IRefreshTokenRepository` documented and
+  nothing performed. Rotation inserts a row per refresh, and the session-ending paths load every
+  token a user ever held, so suspension got slower forever.
+
+**Still open, deliberately:** concurrent failed sign-ins for one account still collide on the user
+row's token (finding 7's 409 on `/auth/login`). The clean fix is a counter update that does not ride
+the aggregate's version, which is a small domain change worth doing on its own rather than inside a
+ten-finding batch.
+
 ## M3.4 as built
 
 **Merged to `main`** (`bd722bb`, review complete). Design (approved before implementation):

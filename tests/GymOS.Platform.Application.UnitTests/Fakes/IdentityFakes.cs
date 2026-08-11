@@ -66,6 +66,9 @@ internal sealed class FakeRefreshTokenRepository : IRefreshTokenRepository
         Task.FromResult(_tokens.SingleOrDefault(token =>
             string.Equals(token.TokenHash, tokenHash, StringComparison.Ordinal)));
 
+    public Task<RefreshToken?> FindByHashForUpdateAsync(string tokenHash, CancellationToken cancellationToken) =>
+        FindByHashAsync(tokenHash, cancellationToken); // in-memory: no rows, no locks
+
     public Task<IReadOnlyList<RefreshToken>> ListByUserAsync(Guid userId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<RefreshToken>>(_tokens.Where(token => token.UserId == userId).ToList());
 
@@ -146,6 +149,21 @@ internal sealed class FakeRefreshTokenGenerator : IRefreshTokenGenerator
     public string GenerateRawToken() => $"raw-refresh-{++_issued}";
 
     public string ComputeHash(string rawToken) => "sha256:" + rawToken;
+}
+
+/// <summary>
+/// In-memory stand-in for the set-level lock. Records what was locked so a test can assert the
+/// guard serialized at all; there is nothing to serialize against in a single-threaded fake.
+/// </summary>
+internal sealed class FakeAdvisoryLock : IAdvisoryLock
+{
+    public List<string> Acquired { get; } = [];
+
+    public Task AcquireAsync(string name, CancellationToken cancellationToken)
+    {
+        Acquired.Add(name);
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class FakeUnitOfWork : IUnitOfWork

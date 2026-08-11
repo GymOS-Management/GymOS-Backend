@@ -83,6 +83,13 @@ internal sealed class SuspendUserCommandHandler : ICommandHandler<SuspendUserCom
             return Result.Failure<UserDetail>(UserErrors.AlreadySuspended);
         }
 
+        // One transaction from the guard to the commit: the guard's constraint is over the SET of
+        // active SuperAdmins, and it holds an advisory lock for exactly this span. Two suspensions
+        // of two different admins would otherwise both count two holders and both commit — each
+        // write touching its own row, so no concurrency token could catch it — leaving zero.
+        await using IUnitOfWorkTransaction transaction =
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
+
         Result guard = await _superAdminGuard.EnsureNotLastSuperAdminAsync(user, cancellationToken);
         if (guard.IsFailure)
         {
@@ -107,6 +114,7 @@ internal sealed class SuspendUserCommandHandler : ICommandHandler<SuspendUserCom
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return await UserWrites.ReadBackAsync(_userQueries, command.UserId, cancellationToken);
     }

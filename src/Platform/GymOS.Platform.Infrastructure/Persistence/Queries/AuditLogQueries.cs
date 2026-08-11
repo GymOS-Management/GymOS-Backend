@@ -1,4 +1,5 @@
-using GymOS.BuildingBlocks.Application.Models;
+﻿using GymOS.BuildingBlocks.Application.Models;
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
 using GymOS.Platform.Application.Auditing;
 using Microsoft.EntityFrameworkCore;
@@ -27,7 +28,7 @@ internal sealed class AuditLogQueries : IAuditLogQueries
         if (!string.IsNullOrWhiteSpace(filter.Action))
         {
             // Prefix match, so `user.` finds every action on users without the caller
-            // enumerating them (ARCHITECTURE.md §2.6 action prefix search).
+            // enumerating them (ARCHITECTURE.md Â§2.6 action prefix search).
             string prefix = filter.Action.Trim();
             query = query.Where(log => log.Action == prefix || log.Action.StartsWith(prefix));
         }
@@ -55,10 +56,11 @@ internal sealed class AuditLogQueries : IAuditLogQueries
 
         if (filter.Page.Search is { } search)
         {
-            string pattern = $"%{search}%";
+            string pattern = SearchPatterns.Contains(search);
             query = query.Where(log =>
-                EF.Functions.ILike(log.Action, pattern) ||
-                (log.UserEmail != null && EF.Functions.ILike(log.UserEmail, pattern)));
+                EF.Functions.ILike(log.Action, pattern, SearchPatterns.EscapeCharacter) ||
+                (log.UserEmail != null
+                    && EF.Functions.ILike(log.UserEmail, pattern, SearchPatterns.EscapeCharacter)));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);

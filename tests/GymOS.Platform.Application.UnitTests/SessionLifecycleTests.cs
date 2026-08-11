@@ -86,7 +86,7 @@ public sealed class SessionLifecycleTests
     }
 
     [Fact]
-    public async Task ChangePassword_WithTheWrongCurrentPassword_ChangesNothing()
+    public async Task ChangePassword_WithTheWrongCurrentPassword_ChangesNoPasswordButIsCountedAndAudited()
     {
         var context = new IdentityTestContext();
         User user = context.GivenActiveUser(password: Password);
@@ -98,7 +98,34 @@ public sealed class SessionLifecycleTests
         Assert.Equal(AuthenticationErrors.InvalidCurrentPassword, result.Error);
         Assert.Equal(hashBefore, user.PasswordHash);
         Assert.False(token.IsRevoked);
-        Assert.Equal(0, context.UnitOfWork.SaveCount);
+
+        // The attempt IS recorded — the endpoint verifies a password, so leaving failures
+        // uncounted and untraced made it an unlimited oracle for anyone holding a stolen access
+        // token. One save: the failed-attempt counter and its audit row commit together.
+        Assert.Equal(1, user.FailedLoginAttempts);
+        Assert.Equal(1, context.UnitOfWork.SaveCount);
+    }
+
+    [Fact]
+    public async Task ChangePassword_RepeatedWrongCurrentPasswords_LockTheAccount()
+    {
+        var context = new IdentityTestContext(policy => policy.MaxFailedAttempts = 3);
+        User user = context.GivenActiveUser(password: Password);
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            await ChangePasswordAsync(context, user.Id, "not-my-password", "a-brand-new-password");
+        }
+
+        // Lockout applies to this door as well as the login form: they are attempts on one
+        // account, and a guess that lands here ends every session the real owner holds.
+        Assert.True(user.IsLockedOut(context.Clock.UtcNow));
+
+        Result afterLockout = await ChangePasswordAsync(
+            context, user.Id, Password, "a-brand-new-password");
+
+        // Even the CORRECT password is refused while locked out, and the hash is untouched.
+        Assert.Equal(AuthenticationErrors.AccountLocked, afterLockout.Error);
     }
 
     [Fact]

@@ -86,14 +86,21 @@ public static class AuthEndpoints
 
         group.MapPost("/change-password", ChangePasswordAsync)
             .RequireAuthorization()
+            // The same per-IP limiter sign-in uses: this endpoint verifies a password, so it is a
+            // password oracle to anyone holding a stolen access token. The account lockout behind
+            // it caps attempts per account; this caps them per source.
+            .RequireRateLimiting(RateLimitingExtensions.SignInPolicy)
             .WithName("ChangePassword")
             .WithSummary("Change your own password")
             .WithDescription(
                 "Requires the current password. Rotates the security stamp and revokes every " +
-                "refresh token, including the caller's — the client must sign in again.")
+                "refresh token, including the caller's — the client must sign in again. " +
+                "Wrong current passwords count towards the account lockout and are audited, " +
+                "and the endpoint is rate-limited per client IP.")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized);
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
         return endpoints;
     }

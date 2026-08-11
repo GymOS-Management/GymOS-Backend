@@ -1,4 +1,4 @@
-using GymOS.BuildingBlocks.Application.Abstractions;
+﻿using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Models;
@@ -20,7 +20,7 @@ using Xunit;
 namespace GymOS.Platform.Application.UnitTests;
 
 /// <summary>
-/// The plan catalogue's use cases. The interesting cases are the refusals and the price semantics —
+/// The plan catalogue's use cases. The interesting cases are the refusals and the price semantics â€”
 /// what stops a price edit from silently repricing a live subscription, and what stops a plan from being
 /// destroyed when billing history points at it.
 /// </summary>
@@ -28,6 +28,13 @@ public sealed class PlanCatalogueTests
 {
     private const string Read = PlatformPermissions.BillingRead;
     private const string Manage = PlatformPermissions.BillingManage;
+
+    /// <summary>
+    /// The version <c>FakePlanQueries</c> reports, i.e. what a caller would have just read. The
+    /// price endpoints require <c>If-Match</c> — they overwrite a price the caller read, and
+    /// <c>SetPrice</c> is an upsert with no state machine to refuse a stale interleaving.
+    /// </summary>
+    private const string CurrentVersion = "1";
 
     private sealed class Context
     {
@@ -92,7 +99,7 @@ public sealed class PlanCatalogueTests
     private static CreatePlanCommand NewPlan(string code = "STARTER") =>
         new(code, "Starter", "For new gyms", 14, 100, 3, 5, 1_024, 1);
 
-    // ── Creation ─────────────────────────────────────────────────────────────────
+    // â”€â”€ Creation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task CreatedPlan_StartsActivePublicAndPriceless()
@@ -152,7 +159,7 @@ public sealed class PlanCatalogueTests
         Assert.Empty(context.Plans.Plans);
     }
 
-    // ── Prices ───────────────────────────────────────────────────────────────────
+    // â”€â”€ Prices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task SettingAPrice_AddsItAndAdvancesThePlansVersion()
@@ -161,7 +168,7 @@ public sealed class PlanCatalogueTests
         SubscriptionPlan plan = context.GivenPlan();
 
         Result<PlanDetail> result = await context.Dispatcher.SendAsync(
-            new SetPlanPriceCommand(plan.Id, "Monthly", "EUR", 49.99m, null),
+            new SetPlanPriceCommand(plan.Id, "Monthly", "EUR", 49.99m, CurrentVersion),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -182,11 +189,11 @@ public sealed class PlanCatalogueTests
         SubscriptionPlan plan = context.GivenPlan();
 
         await context.Dispatcher.SendAsync(
-            new SetPlanPriceCommand(plan.Id, "Monthly", "EUR", 49.99m, null),
+            new SetPlanPriceCommand(plan.Id, "Monthly", "EUR", 49.99m, CurrentVersion),
             CancellationToken.None);
 
         Result<PlanDetail> result = await context.Dispatcher.SendAsync(
-            new SetPlanPriceCommand(plan.Id, "monthly", "eur", 59.99m, null),
+            new SetPlanPriceCommand(plan.Id, "monthly", "eur", 59.99m, CurrentVersion),
             CancellationToken.None);
 
         // Cycle and currency are matched case-insensitively; the row is the same one.
@@ -200,13 +207,13 @@ public sealed class PlanCatalogueTests
         SubscriptionPlan plan = context.GivenPlan();
 
         Result<PlanDetail> eur = await context.Dispatcher.SendAsync(
-            new SetPlanPriceCommand(plan.Id, "Monthly", "EUR", 49.999m, null),
+            new SetPlanPriceCommand(plan.Id, "Monthly", "EUR", 49.999m, CurrentVersion),
             CancellationToken.None);
         Assert.Equal(50.00m, Assert.Single(eur.Value.Prices).Amount);
 
         // JPY has no minor unit at all, which a hard-coded two-decimal rounding would get wrong.
         Result<PlanDetail> jpy = await context.Dispatcher.SendAsync(
-            new SetPlanPriceCommand(plan.Id, "Monthly", "JPY", 4999.6m, null),
+            new SetPlanPriceCommand(plan.Id, "Monthly", "JPY", 4999.6m, CurrentVersion),
             CancellationToken.None);
         Assert.Equal(5000m, jpy.Value.Prices.Single(price => price.Currency == "JPY").Amount);
     }
@@ -221,7 +228,7 @@ public sealed class PlanCatalogueTests
         SubscriptionPlan plan = context.GivenPlan();
 
         Result<PlanDetail> result = await context.Dispatcher.SendAsync(
-            new SetPlanPriceCommand(plan.Id, cycle, "EUR", 49.99m, null),
+            new SetPlanPriceCommand(plan.Id, cycle, "EUR", 49.99m, CurrentVersion),
             CancellationToken.None);
 
         // Billing a gym annually for a monthly plan is not a mistake worth being lenient about.
@@ -236,7 +243,7 @@ public sealed class PlanCatalogueTests
         SubscriptionPlan plan = context.GivenPlan();
 
         Result<PlanDetail> result = await context.Dispatcher.SendAsync(
-            new SetPlanPriceCommand(plan.Id, "Monthly", "EUROS", 49.99m, null),
+            new SetPlanPriceCommand(plan.Id, "Monthly", "EUROS", 49.99m, CurrentVersion),
             CancellationToken.None);
 
         Assert.Equal("plans.currency_invalid", result.Error!.Code);
@@ -249,7 +256,7 @@ public sealed class PlanCatalogueTests
         SubscriptionPlan plan = context.GivenPlan();
 
         Result<PlanDetail> result = await context.Dispatcher.SendAsync(
-            new SetPlanPriceCommand(plan.Id, "Monthly", "EUR", 0m, null),
+            new SetPlanPriceCommand(plan.Id, "Monthly", "EUR", 0m, CurrentVersion),
             CancellationToken.None);
 
         Assert.Equal(ErrorKind.Validation, result.Error!.Kind);
@@ -264,7 +271,7 @@ public sealed class PlanCatalogueTests
         PlanPrice price = plan.SetPrice(BillingCycle.Monthly, Money.Of(49.99m, Currency.Euro));
 
         Result<PlanDetail> result = await context.Dispatcher.SendAsync(
-            new RemovePlanPriceCommand(plan.Id, price.Id, null),
+            new RemovePlanPriceCommand(plan.Id, price.Id, CurrentVersion),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -278,14 +285,14 @@ public sealed class PlanCatalogueTests
         SubscriptionPlan plan = context.GivenPlan();
 
         Result<PlanDetail> result = await context.Dispatcher.SendAsync(
-            new RemovePlanPriceCommand(plan.Id, Guid.NewGuid(), null),
+            new RemovePlanPriceCommand(plan.Id, Guid.NewGuid(), CurrentVersion),
             CancellationToken.None);
 
         Assert.Equal(ErrorKind.NotFound, result.Error!.Kind);
         Assert.Equal("plans.price_not_found", result.Error.Code);
     }
 
-    // ── Withdrawal ───────────────────────────────────────────────────────────────
+    // â”€â”€ Withdrawal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task DeactivatingAPlan_KeepsItsPricesAndItsHistory()
@@ -332,7 +339,7 @@ public sealed class PlanCatalogueTests
         Assert.Equal("plans.already_active", result.Error!.Code);
     }
 
-    // ── Concurrency ──────────────────────────────────────────────────────────────
+    // â”€â”€ Concurrency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task UpdatingAPlan_RequiresAnExpectedVersion()
@@ -392,7 +399,7 @@ public sealed class PlanCatalogueTests
         Assert.Equal("plans.not_found", result.Error.Code);
     }
 
-    // ── Reading ──────────────────────────────────────────────────────────────────
+    // â”€â”€ Reading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task ListingExcludesWithdrawnPlansByDefault()

@@ -1,5 +1,6 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace GymOS.Platform.Infrastructure.Persistence;
 
@@ -30,6 +31,14 @@ internal sealed class UnitOfWork : IUnitOfWork
             // scope, and silently reloading here would hand the caller a "successful" write that
             // discarded whatever the other writer did.
             throw new ConcurrencyConflictException(exception);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } unique)
+        {
+            // A unique index refused the write — the race the handlers' pre-checks cannot close,
+            // and the reason those indexes exist. Not a server fault, so not a 500: translated
+            // into the conflict the pre-check itself would have returned.
+            throw new UniquenessConflictException(exception, unique.ConstraintName);
         }
     }
 

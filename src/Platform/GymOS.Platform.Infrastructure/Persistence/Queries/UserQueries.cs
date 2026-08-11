@@ -1,5 +1,6 @@
-using GymOS.BuildingBlocks.Application.Abstractions;
+﻿using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Models;
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Identity.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -50,11 +51,11 @@ internal sealed class UserQueries : IUserQueries
 
         if (filter.Page.Search is { } search)
         {
-            string pattern = $"%{search}%";
+            string pattern = SearchPatterns.Contains(search);
             query = query.Where(user =>
-                EF.Functions.ILike(user.Email, pattern) ||
-                EF.Functions.ILike(user.FirstName, pattern) ||
-                EF.Functions.ILike(user.LastName, pattern));
+                EF.Functions.ILike(user.Email, pattern, SearchPatterns.EscapeCharacter) ||
+                EF.Functions.ILike(user.FirstName, pattern, SearchPatterns.EscapeCharacter) ||
+                EF.Functions.ILike(user.LastName, pattern, SearchPatterns.EscapeCharacter));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);
@@ -135,7 +136,7 @@ internal sealed class UserQueries : IUserQueries
         // the question an administrator is actually asking when they open this page.
         //
         // Delegated rather than re-expressed: if this page and the authorization check computed
-        // effective permissions from two copies of the same joins, they could disagree — and a
+        // effective permissions from two copies of the same joins, they could disagree â€” and a
         // console that shows a permission the server refuses is worse than showing nothing.
         IReadOnlyCollection<string> permissions =
             await _identityQueries.GetEffectivePermissionsAsync(userId, cancellationToken);

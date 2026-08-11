@@ -333,9 +333,20 @@ public sealed class InvoiceApiTests : IAsyncLifetime
 
         Guid planId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
 
-        using HttpResponseMessage priced = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative),
-            new { billingCycle = "Monthly", currency = "EUR", amount });
+        // If-Match required on the price upsert — it overwrites a price the caller read.
+        using HttpResponseMessage plan = await _client.GetAsync(
+            new Uri($"/api/v1/plans/{planId}", UriKind.Relative));
+        string rowVersion = (await plan.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("rowVersion").GetString()!;
+
+        using var priceRequest = new HttpRequestMessage(
+            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { billingCycle = "Monthly", currency = "EUR", amount }),
+        };
+        priceRequest.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
+
+        using HttpResponseMessage priced = await _client.SendAsync(priceRequest);
         Assert.Equal(HttpStatusCode.OK, priced.StatusCode);
 
         return planId;

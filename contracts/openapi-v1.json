@@ -2199,7 +2199,7 @@
     },
     "/api/v1/auth/change-password": {
       "post": {
-        "description": "Requires the current password. Rotates the security stamp and revokes every refresh token, including the caller\u0027s \u2014 the client must sign in again.",
+        "description": "Requires the current password. Rotates the security stamp and revokes every refresh token, including the caller\u0027s \u2014 the client must sign in again. Wrong current passwords count towards the account lockout and are audited, and the endpoint is rate-limited per client IP.",
         "operationId": "ChangePassword",
         "requestBody": {
           "content": {
@@ -2234,6 +2234,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Too Many Requests"
           }
         },
         "security": [

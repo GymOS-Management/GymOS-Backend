@@ -1,4 +1,5 @@
-using GymOS.BuildingBlocks.Application.Models;
+﻿using GymOS.BuildingBlocks.Application.Models;
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Gyms;
@@ -55,11 +56,11 @@ internal sealed class GymQueries : IGymQueries
         {
             // Name, slug, and owner email: reception calls a gym by its name, an operator looking at a
             // support ticket has the URL or the email the owner wrote from.
-            string pattern = $"%{search}%";
+            string pattern = SearchPatterns.Contains(search);
             query = query.Where(gym =>
-                EF.Functions.ILike(gym.Name, pattern) ||
-                EF.Functions.ILike(gym.Slug, pattern) ||
-                EF.Functions.ILike(gym.OwnerEmail, pattern));
+                EF.Functions.ILike(gym.Name, pattern, SearchPatterns.EscapeCharacter) ||
+                EF.Functions.ILike(gym.Slug, pattern, SearchPatterns.EscapeCharacter) ||
+                EF.Functions.ILike(gym.OwnerEmail, pattern, SearchPatterns.EscapeCharacter));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);
@@ -136,7 +137,7 @@ internal sealed class GymQueries : IGymQueries
                     })
                     .FirstOrDefault(),
 
-                // The gym's live subscription, if any (M3.2 — §3.3 always described the detail view as
+                // The gym's live subscription, if any (M3.2 â€” Â§3.3 always described the detail view as
                 // carrying it). Projected here rather than fetched separately so the detail response
                 // stays one round trip.
                 Subscription = _dbContext.Set<GymSubscription>()

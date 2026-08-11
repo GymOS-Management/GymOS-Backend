@@ -51,6 +51,9 @@ internal sealed class IdentityTestContext
         services.AddSingleton<IRoleRepository>(Roles);
         services.AddSingleton<IIdentityQueries>(IdentityQueries);
         services.AddSingleton<IUserQueries>(UserQueries);
+
+        // The last-SuperAdmin guard serializes on a set-level lock (see SuperAdminGuard).
+        services.AddSingleton<IAdvisoryLock>(AdvisoryLock);
         services.AddSingleton<IPasswordHasher>(PasswordHasher);
         services.AddSingleton<IAccessTokenIssuer>(AccessTokens);
         services.AddSingleton<IRefreshTokenGenerator>(RefreshTokenGenerator);
@@ -79,6 +82,9 @@ internal sealed class IdentityTestContext
     public FakeRefreshTokenGenerator RefreshTokenGenerator { get; } = new();
 
     public FakeUnitOfWork UnitOfWork { get; } = new();
+
+    /// <summary>Records the set-level locks the SuperAdmin guard takes.</summary>
+    public FakeAdvisoryLock AdvisoryLock { get; } = new();
 
     public FakeRoleRepository Roles { get; } = new();
 

@@ -5,6 +5,8 @@ using GymOS.Platform.Application.Gyms;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Identity;
+using GymOS.Platform.Domain.Subscriptions;
+using GymOS.SharedKernel.Currencies;
 using GymOS.SharedKernel.Results;
 using Xunit;
 
@@ -391,6 +393,36 @@ public sealed class GymManagementTests
         Assert.True(result.IsSuccess);
         Assert.True(gym.IsDeleted);
         Assert.Equal(GymTestContext.Start, gym.DeletedAtUtc);
+    }
+
+    [Fact]
+    public async Task DeletingAGym_EndsTheSubscriptionItWasPayingFor()
+    {
+        var context = new GymTestContext().ActingAs(Delete);
+        Gym gym = context.GivenActiveGym();
+
+        SubscriptionPlan plan = SubscriptionPlan.Create("PRO", "PRO", "", 0, PlanLimits.Unlimited);
+        plan.SetPrice(BillingCycle.Monthly, Money.Of(49.99m, Currency.Euro));
+        GymSubscription subscription = GymSubscription.Assign(
+            gym.Id, plan, SubscriptionTerms.From(plan.Prices.Single()), GymTestContext.Start);
+        context.Subscriptions.Seed(subscription);
+
+        Result result = await context.Dispatcher.SendAsync(
+            new DeleteGymCommand(gym.Id, "acme-gym", null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(gym.IsDeleted);
+
+        // A deleted gym must stop costing money: left live, the renewal sweep would advance the
+        // period and issue an invoice against a business that no longer exists, every cycle.
+        Assert.Equal(SubscriptionStatus.Canceled, subscription.Status);
+        Assert.False(subscription.IsLive);
+        Assert.Equal(GymTestContext.Start, subscription.CanceledAtUtc);
+
+        // One transaction: a deleted gym holding a live subscription must never be a state that
+        // exists between two commits.
+        Assert.Equal(1, context.UnitOfWork.SaveCount);
     }
 
     [Fact]

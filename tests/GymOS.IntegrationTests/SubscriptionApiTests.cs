@@ -85,9 +85,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
 
         // Reprice the plan. §2.3: "renewals honor the price at assignment" — so this must not follow.
         // An FK-only snapshot could not give this, because setting a price mutates the row in place.
-        using HttpResponseMessage repriced = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative),
-            new { billingCycle = "Monthly", currency = "EUR", amount = 79.99m });
+        using HttpResponseMessage repriced = await SetPriceAsync(planId, 79.99m);
         Assert.Equal(HttpStatusCode.OK, repriced.StatusCode);
 
         JsonElement subscription = await GetSubscriptionAsync(gymId);
@@ -102,8 +100,11 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         await AssignAsync(gymId, planId, "Monthly", "EUR");
 
         Guid priceId = await FirstPriceIdAsync(planId);
-        using HttpResponseMessage removed = await _client.DeleteAsync(
-            new Uri($"/api/v1/plans/{planId}/prices/{priceId}", UriKind.Relative));
+        using var removeRequest = new HttpRequestMessage(
+            HttpMethod.Delete, new Uri($"/api/v1/plans/{planId}/prices/{priceId}", UriKind.Relative));
+        removeRequest.Headers.TryAddWithoutValidation(
+            "If-Match", $"\"{await PlanRowVersionAsync(planId)}\"");
+        using HttpResponseMessage removed = await _client.SendAsync(removeRequest);
         Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
 
         // The FK is nulled by ON DELETE SET NULL; the copied amount is what the gym still pays.
@@ -513,12 +514,36 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
 
         Guid planId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
 
-        using HttpResponseMessage priced = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative),
-            new { billingCycle = "Monthly", currency = "EUR", amount });
+        using HttpResponseMessage priced = await SetPriceAsync(planId, amount);
         Assert.Equal(HttpStatusCode.OK, priced.StatusCode);
 
         return planId;
+    }
+
+    /// <summary>
+    /// Upserts a Monthly/EUR price with the plan's current <c>If-Match</c> — required, because the
+    /// endpoint overwrites a price the caller read (an upsert, with no state machine to refuse a
+    /// stale interleaving).
+    /// </summary>
+    private async Task<HttpResponseMessage> SetPriceAsync(Guid planId, decimal amount)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { billingCycle = "Monthly", currency = "EUR", amount }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{await PlanRowVersionAsync(planId)}\"");
+
+        return await _client.SendAsync(request);
+    }
+
+    private async Task<string> PlanRowVersionAsync(Guid planId)
+    {
+        using HttpResponseMessage response = await _client.GetAsync(
+            new Uri($"/api/v1/plans/{planId}", UriKind.Relative));
+        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        return body.RootElement.GetProperty("rowVersion").GetString()!;
     }
 
     private Task<HttpResponseMessage> AssignAsync(

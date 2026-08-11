@@ -3,6 +3,7 @@ using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Application.Gyms.Abstractions;
+using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Application.UnitTests.Fakes;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.TestingSupport;
@@ -39,6 +40,10 @@ internal sealed class GymTestContext
         services.AddSingleton<IClock>(Clock);
         services.AddSingleton<IGymRepository>(Gyms);
         services.AddSingleton<IGymQueries>(GymQueries);
+
+        // Deleting a gym cancels its live subscription in the same transaction, so the lifecycle
+        // handlers reach the subscription write side even in gym-only tests.
+        services.AddSingleton<ISubscriptionRepository>(Subscriptions);
         services.AddSingleton<IUnitOfWork>(UnitOfWork);
         services.AddSingleton<ICurrentUser>(CurrentUser);
         services.AddSingleton<IPermissionEvaluator>(Permissions);
@@ -51,6 +56,9 @@ internal sealed class GymTestContext
     public FakeClock Clock { get; } = new(Start);
 
     public FakeGymRepository Gyms { get; } = new();
+
+    /// <summary>Deleting a gym must also end what it was paying for — see the delete handler.</summary>
+    public FakeSubscriptionRepository Subscriptions { get; } = new();
 
     public FakeGymQueries GymQueries { get; }
 
