@@ -1,8 +1,9 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-11 · M3.4 merged to `main` (`bd722bb`); API reference (security scheme,
-exposure gate, Scalar UI) and the enforced-header declarations (`5ee9aef`) built on top —
-**1123 tests green**
+**Last updated:** 2026-08-11 · whole-repository audit fixed and merged (`d22d45a`) — the long
+"awaiting review" backlog (M2, Money, M3.1, M3.2, AD-39, M0.X) is **cleared**: those increments have
+now had their review pass (see "Whole-repository audit" below). Only the **API reference** increment,
+which landed after the audit's scope, is still unreviewed — **1136 tests green**
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -18,19 +19,20 @@ before resuming work on any machine.
 | **M1.2 — auth services & endpoints** (Argon2id, JWT + rotating refresh tokens, `/api/v1/auth`, SuperAdmin seed) | ✅ complete — 159 tests green, verified live |
 | **M1.3 — permission pipeline, users/roles endpoints, audit interceptor, OpenAPI diff gate** | ✅ complete + release-reviewed — **256 tests green**, verified live |
 | **Pre-M2 hardening** (write convention, optimistic concurrency, business-rule framework, API standards, playbook) | ✅ complete — **337 tests green**, verified live |
-| **M2 — gym management** (gyms CRUD, lifecycle, branding, gym detail) | ✅ complete — 541 tests green at the time, verified live · ⬅ **awaiting review** |
-| **`Money` (AD-42)** — currency-checked arithmetic, explicit rounding, largest-remainder `Allocate`, EF mapping, rule R4 | ✅ complete — **645 tests green**, storage contract checked against PostgreSQL · ⬅ **awaiting review** |
+| **M2 — gym management** (gyms CRUD, lifecycle, branding, gym detail) | ✅ complete — verified live · **reviewed** in the 2026-08-11 audit (deleted-gym billing leak fixed) |
+| **`Money` (AD-42)** — currency-checked arithmetic, explicit rounding, largest-remainder `Allocate`, EF mapping, rule R4 | ✅ complete — storage contract checked against PostgreSQL · **reviewed** in the 2026-08-11 audit (no findings) |
 | **Members domain** (business specification, no code) | ✅ **FROZEN** — `docs/Domain/MEMBERS-DOMAIN-DESIGN.md`. 11 product decisions approved 2026-08-05; implementation may begin. 4 legal-review items deferred (mechanism to build, values from counsel). |
-| **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — **734 tests green**, verified live · ⬅ **awaiting review** |
-| **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — **853 tests green**, verified live · ⬅ **awaiting review** |
-| **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — awaiting review |
+| **M3.1 — subscription plan catalogue** (plans, limits, trial, prices; `Money`'s first consumer) | ✅ complete — verified live · **reviewed** in the 2026-08-11 audit (price writes now require `If-Match`) |
+| **M3.2 — subscription assignment** (gym_subscriptions, lifecycle, cancellation, payment state) | ✅ complete — verified live · **reviewed** in the 2026-08-11 audit (no findings of its own) |
+| **AD-39 idempotency framework** (claim table, pipeline behavior, decision table, host plumbing) | ✅ complete — **reviewed** in the 2026-08-11 audit; its own `FakeClock` time bomb was fixed earlier (`70a65c2`) |
 | **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ **merged to `main`** (`e39eb73`) — reviewed at high effort (10 findings, all fixed), **1049 tests green**, verified live incl. idempotent replay |
 | **M3.4 — job runner + renewal/overdue jobs** (JobHost + advisory locks, RetentionJob, renewal sweep, overdue sweep with auto-PastDue) | ✅ **merged to `main`** (`bd722bb`) — design approved 2026-08-10, reviewed at high effort (10 findings, all fixed), **1101 tests green**, renewal verified live on the first 15-minute tick |
-| **API reference** (OpenAPI bearer scheme + per-operation security, `OpenApi:Enabled` exposure gate, Scalar UI at `/scalar/v1`, browser opens on startup) | ✅ complete — **1116 tests green**, verified live · ⬅ **awaiting review** |
+| **API reference** (OpenAPI bearer scheme + per-operation security, `OpenApi:Enabled` exposure gate, Scalar UI at `/scalar/v1`, browser opens on startup) | ✅ complete — verified live · ⬅ **awaiting review** (Konstantinos's increment, landed after the audit's scope) |
 | **Enforced-header declarations** (`Idempotency-Key`, `If-Match`, `X-Confirm-Action` declared as real OpenAPI parameters, with the requiredness the pipeline actually applies) | ✅ **merged to `main`** (`5ee9aef`) — **1123 tests green**, snapshot regenerated and read semantically (25 header parameters added, nothing else changed) |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
-| **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
-| M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
+| **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
+| **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
+| M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | **next** |
 
 ## M1.2 as built
 
@@ -921,6 +923,15 @@ was renamed `gymos-pgdata` → `gymos-postgres-data` in M0.X, so a pre-M0.X loca
 still on disk but no longer mounted — see DOCKER.md troubleshooting.
 
 ## Known open items / honest notes
+
+- **Concurrent failed sign-ins for one account collide on the user row's version** (audit finding 7,
+  deliberately deferred): four of five parallel guesses raise a concurrency conflict, so
+  `/auth/login` can answer **409** on a login endpoint, and `FailedLoginAttempts` advances by one
+  instead of five — lockout takes roughly `MaxFailedAttempts` × concurrency to trigger. A user
+  double-submitting the form sees the 409 too. The fix is a counter update that does not ride the
+  aggregate's optimistic token (a targeted `UPDATE … SET failed_login_attempts = failed_login_attempts + 1`,
+  or a dedicated login-attempt row); it is a small domain change that deserves its own increment
+  rather than riding along in a ten-finding batch. The per-IP limiter still caps a single source.
 
 - **The dev overlay publishes ports on `0.0.0.0`**, so a running dev stack — with its
   deliberately public admin credentials — is reachable from the local network, not just the
