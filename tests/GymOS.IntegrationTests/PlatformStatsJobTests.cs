@@ -1,7 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
-using GymOS.BuildingBlocks.Infrastructure.Time;
 using GymOS.Platform.Domain.Analytics;
+using GymOS.Platform.Domain.Gyms;
+using GymOS.Platform.Domain.Subscriptions;
 using GymOS.Platform.Infrastructure.Analytics;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.SharedKernel.Currencies;
@@ -25,7 +26,6 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset Now = new(2026, 1, 15, 4, 0, 0, TimeSpan.Zero);
     private static readonly DateOnly Yesterday = DateOnly.FromDateTime(Now.UtcDateTime).AddDays(-1);
-    private static readonly SystemClock RealClock = new();
 
     private readonly PostgresFixture _postgres;
     private AuthenticationHost _host = null!;
@@ -134,14 +134,33 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
         // the day its paid subscription was cancelled by the deletion are still real events that
         // happened, so they stay in new_gyms and canceled_gyms. Suppressing them would drop the
         // population with nothing in the series to explain why.
-        //
-        // Real time here, not the fixed `Now`/`Yesterday` the other tests use: the gym is created
-        // and deleted through HTTP against the host's own (real) clock, so the day compiled has to
-        // be the day those calls actually happened on.
-        DateOnly today = DateOnly.FromDateTime(RealClock.UtcNow.UtcDateTime);
-
         Guid gym = await SeedGymOnMonthlyPlanAsync("gone-gym", 49.99m, "EUR");
         await PlatformApiHelpers.DeleteGymAsync(_client, gym, "gone-gym");
+
+        // The gym's CreatedAtUtc and its subscription's CanceledAtUtc are stamped by the host's own,
+        // real clock — at SaveChanges time and at delete time respectively, both strictly later
+        // than any `now` this test could capture beforehand. Reading the clock again afterwards
+        // would only narrow that race, not close it: the sequence could still cross a UTC midnight
+        // between the read and either write. Reading the timestamps actually stored removes the
+        // race entirely — the day compiled is, by construction, the day those events were recorded
+        // on. The equality assert documents (and guards) the one assumption this still relies on:
+        // that the whole create-plan-assign-delete sequence lands on a single calendar day.
+        DateOnly today;
+        await using (AppDbContext context = _host.CreateDbContext())
+        {
+            DateTimeOffset createdAtUtc = await context.Set<Gym>()
+                .Where(g => g.Id == gym)
+                .Select(g => g.CreatedAtUtc)
+                .SingleAsync();
+            DateTimeOffset canceledAtUtc = await context.Set<GymSubscription>()
+                .Where(subscription => subscription.GymId == gym)
+                .Select(subscription => subscription.CanceledAtUtc)
+                .SingleAsync() ?? throw new InvalidOperationException("The deleted gym's subscription was not cancelled.");
+
+            Assert.Equal(
+                DateOnly.FromDateTime(createdAtUtc.UtcDateTime), DateOnly.FromDateTime(canceledAtUtc.UtcDateTime));
+            today = DateOnly.FromDateTime(createdAtUtc.UtcDateTime);
+        }
 
         Assert.True(await CompileAsync(today));
 
