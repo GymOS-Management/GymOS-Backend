@@ -1,6 +1,7 @@
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Domain.Features;
 using GymOS.Platform.Domain.Gyms;
+using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
 using RowVersion = GymOS.BuildingBlocks.Application.Abstractions.RowVersion;
@@ -10,6 +11,16 @@ namespace GymOS.Platform.Infrastructure.Persistence.Queries;
 internal sealed class FeatureQueries : IFeatureQueries
 {
     private static readonly SubscriptionStatus[] LiveStatuses = SubscriptionStatusTransitions.Live;
+
+    /// <summary>
+    /// The code-declared keys, computed once from the constant catalogue. Compared in memory in
+    /// <see cref="Map"/>, never pushed into the query below: the declared set already lives in
+    /// <see cref="PlatformFeatures"/>, and a second copy of it in SQL is exactly the kind of drift
+    /// this increment removes elsewhere.
+    /// </summary>
+    private static readonly HashSet<string> DeclaredKeys = PlatformFeatures.All
+        .Select(definition => definition.Key)
+        .ToHashSet(StringComparer.Ordinal);
 
     private readonly AppDbContext _dbContext;
 
@@ -65,9 +76,23 @@ internal sealed class FeatureQueries : IFeatureQueries
                     .Where(row => row.FeatureId == feature.Id && row.PlanId == planId)
                     .Select(row => (bool?)row.IsEnabled)
                     .FirstOrDefault(),
+                // Joined to the user table for the email rather than returning the id: provenance is
+                // only worth carrying if the caller can read it back as a person, and
+                // GymFeatureApiTests already proves this exact join in SQL. A left join, not an
+                // inner one — SetByUserId is nullable and cleared when that account is deleted, so
+                // the override (and its history) must survive losing its author.
                 Override = _dbContext.Set<GymFeatureOverride>()
                     .Where(row => row.FeatureId == feature.Id && row.GymId == gymId)
-                    .Select(row => new { Enabled = (bool?)row.IsEnabled, row.Reason })
+                    .Select(row => new
+                    {
+                        Enabled = (bool?)row.IsEnabled,
+                        row.Reason,
+                        row.SetAtUtc,
+                        SetByEmail = _dbContext.Set<User>()
+                            .Where(user => user.Id == row.SetByUserId)
+                            .Select(user => (string?)user.Email)
+                            .FirstOrDefault(),
+                    })
                     .FirstOrDefault(),
             })
             .OrderBy(row => row.Category)
@@ -80,6 +105,10 @@ internal sealed class FeatureQueries : IFeatureQueries
                 ResolvedFeature resolved = FeatureResolution.Resolve(
                     row.Key, row.Override?.Enabled, row.PlanEnabled, row.DefaultEnabled);
 
+                // Only meaningful when the override decided it — a stale reason, timestamp, or author
+                // beside a plan-sourced answer would read as though an exception were in force.
+                bool decidedByOverride = resolved.Source == FeatureSource.Override;
+
                 return new ResolvedFeatureDetail(
                     row.Id,
                     row.Key,
@@ -88,10 +117,9 @@ internal sealed class FeatureQueries : IFeatureQueries
                     resolved.Enabled,
                     resolved.Source.ToString(),
                     row.IsPremium,
-
-                    // Only meaningful when the override decided it — a stale reason beside a
-                    // plan-sourced answer would read as though an exception were in force.
-                    resolved.Source == FeatureSource.Override ? row.Override?.Reason : null);
+                    decidedByOverride ? row.Override?.Reason : null,
+                    decidedByOverride ? row.Override?.SetAtUtc : null,
+                    decidedByOverride ? row.Override?.SetByEmail : null);
             })
             .ToList();
     }
@@ -160,7 +188,10 @@ internal sealed class FeatureQueries : IFeatureQueries
         row.IsPremium,
         row.AdoptionCount,
         row.OverrideCount,
-        RowVersion.ToToken(row.RowVersion));
+        RowVersion.ToToken(row.RowVersion),
+
+        // In memory against the code constant, not in SQL — see DeclaredKeys.
+        DeclaredKeys.Contains(row.Key));
 
     /// <summary>
     /// Named rather than anonymous so <see cref="ListCatalogueAsync"/> and <see cref="GetAsync"/>

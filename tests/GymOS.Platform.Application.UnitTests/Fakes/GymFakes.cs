@@ -125,7 +125,7 @@ internal sealed class FakeGymQueries : IGymQueries
     public Task<bool> ExistsAsync(Guid gymId, CancellationToken cancellationToken) =>
         Task.FromResult(_gyms.Gyms.Any(gym => gym.Id == gymId));
 
-    public async Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken)
+    public async Task<GymDetail?> GetAsync(Guid gymId, bool includeFeatures, CancellationToken cancellationToken)
     {
         Gym? gym = _gyms.Gyms.SingleOrDefault(candidate => candidate.Id == gymId);
         if (gym is null)
@@ -135,8 +135,8 @@ internal sealed class FakeGymQueries : IGymQueries
 
         GymBranding? branding = _gyms.Branding.SingleOrDefault(candidate => candidate.GymId == gymId);
 
-        IReadOnlyList<ResolvedFeatureDetail> features = FeatureQueries is null
-            ? []
+        IReadOnlyList<ResolvedFeatureDetail>? features = !includeFeatures || FeatureQueries is null
+            ? null
             : await FeatureQueries.ResolveForGymAsync(gymId, cancellationToken);
 
         return new GymDetail(

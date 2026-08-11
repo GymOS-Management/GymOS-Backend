@@ -469,6 +469,9 @@
             "format": "uuid",
             "type": "string"
           },
+          "isDeclared": {
+            "type": "boolean"
+          },
           "isPremium": {
             "type": "boolean"
           },
@@ -500,7 +503,8 @@
           "isPremium",
           "adoptionCount",
           "overrideCount",
-          "rowVersion"
+          "rowVersion",
+          "isDeclared"
         ],
         "type": "object"
       },
@@ -636,7 +640,10 @@
             "items": {
               "$ref": "#/components/schemas/ResolvedFeatureDetail"
             },
-            "type": "array"
+            "type": [
+              "null",
+              "array"
+            ]
           },
           "id": {
             "format": "uuid",
@@ -1811,6 +1818,19 @@
               "string"
             ]
           },
+          "overrideSetAtUtc": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "overrideSetByEmail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "source": {
             "type": "string"
           }
@@ -1823,7 +1843,9 @@
           "enabled",
           "source",
           "isPremium",
-          "overrideReason"
+          "overrideReason",
+          "overrideSetAtUtc",
+          "overrideSetByEmail"
         ],
         "type": "object"
       },
@@ -3785,7 +3807,7 @@
         ]
       },
       "get": {
-        "description": "A soft-deleted gym still resolves here, deliberately: an operator investigating why a tenant stopped working needs to see that it was deleted and when. \u0060features\u0060 carries the whole catalogue resolved for this gym, each entry naming the layer that decided it \u2014 the same body \u0060GET /gyms/{gymId}/features\u0060 returns. Device summary and aggregate stats arrive with the modules that own them (M5\u2013M6) rather than as fields that always read zero.",
+        "description": "A soft-deleted gym still resolves here, deliberately: an operator investigating why a tenant stopped working needs to see that it was deleted and when. \u0060features\u0060 carries the whole catalogue resolved for this gym, each entry naming the layer that decided it \u2014 the same body \u0060GET /gyms/{gymId}/features\u0060 returns \u2014 but only when you hold \u0060features.read\u0060; without it \u0060features\u0060 is \u0060null\u0060, because one entry can carry \u0060overrideReason\u0060, the commercially sensitive text behind a paid feature granted for free. Device summary and aggregate stats arrive with the modules that own them (M5\u2013M6) rather than as fields that always read zero.",
         "operationId": "GetGym",
         "parameters": [
           {

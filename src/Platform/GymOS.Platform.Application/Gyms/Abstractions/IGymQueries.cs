@@ -58,8 +58,15 @@ public sealed record GymDetail(
     /// Every feature resolved for this gym, each carrying the layer that decided it. Always the whole
     /// catalogue, never only the exceptions: "what can this gym actually do" is the question an
     /// operator opens this screen with, and a list of overrides answers a different one.
+    ///
+    /// <para><b>Null when the caller does not hold <c>features.read</c></b> (M4.1 task 4). One entry
+    /// carries <c>overrideReason</c> — the free text an operator writes when granting a paid
+    /// capability for free, commercially sensitive on its own — so a caller who only holds
+    /// <c>gyms.read</c> gets the rest of the gym's detail without it, exactly as the dedicated
+    /// <c>GET /gyms/{id}/features</c> route already requires at both its endpoint policy and its
+    /// request type.</para>
     /// </summary>
-    IReadOnlyList<ResolvedFeatureDetail> Features,
+    IReadOnlyList<ResolvedFeatureDetail>? Features,
     string RowVersion);
 
 /// <param name="Status">Optional exact-match filter on <c>GymStatus</c>, by name.</param>
@@ -80,7 +87,13 @@ public interface IGymQueries
 {
     Task<PagedResult<GymListItem>> ListAsync(GymListFilter filter, CancellationToken cancellationToken);
 
-    Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken);
+    /// <param name="includeFeatures">
+    /// Whether to resolve and attach the feature block. The query takes this as a plain flag rather
+    /// than deciding it itself: <c>features.read</c> is an authorization concept, and this read side
+    /// (AD-3) stays free of them — the caller (the handler) is where a permission is evaluated, once,
+    /// through the same <c>IPermissionEvaluator</c> the pipeline uses.
+    /// </param>
+    Task<GymDetail?> GetAsync(Guid gymId, bool includeFeatures, CancellationToken cancellationToken);
 
     /// <summary>
     /// Whether the gym exists at all, deleted or not. For handlers that need to tell "no such gym"

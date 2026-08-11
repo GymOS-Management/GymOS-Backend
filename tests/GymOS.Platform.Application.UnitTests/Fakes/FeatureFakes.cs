@@ -159,6 +159,8 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
                 ResolvedFeature answer = FeatureResolution.Resolve(
                     feature.Key, over?.IsEnabled, planEnabled, feature.DefaultEnabled);
 
+                bool decidedByOverride = answer.Source == FeatureSource.Override;
+
                 return new ResolvedFeatureDetail(
                     feature.Id,
                     feature.Key,
@@ -167,7 +169,14 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
                     answer.Enabled,
                     answer.Source.ToString(),
                     feature.IsPremium,
-                    answer.Source == FeatureSource.Override ? over?.Reason : null);
+                    decidedByOverride ? over?.Reason : null,
+                    decidedByOverride ? over?.SetAtUtc : null,
+
+                    // Not resolved here: this fake has no user directory to join against, and the
+                    // email round trip is exactly what GymFeatureApiTests.SetByEmailAsync (and the
+                    // integration-only An_override_carries_who_set_it_and_when) proves against
+                    // real PostgreSQL instead.
+                    null);
             })
             .ToList();
 
@@ -187,5 +196,7 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
         // override tally only, and the tests that care about adoption are the integration ones.
         AdoptionCount: 0,
         OverrideCount: _features.Overrides.Count(over => over.FeatureId == feature.Id),
-        RowVersion.ToString(CultureInfo.InvariantCulture));
+        RowVersion.ToString(CultureInfo.InvariantCulture),
+        IsDeclared: PlatformFeatures.All.Any(definition =>
+            string.Equals(definition.Key, feature.Key, StringComparison.Ordinal)));
 }

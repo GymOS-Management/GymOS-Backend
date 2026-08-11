@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GymOS.Platform.Domain.Features;
+using GymOS.Platform.Domain.Identity;
+using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -307,6 +309,51 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Forbidden, write.StatusCode);
 
         Assert.Equal(0, await CountOverridesAsync(gym));
+    }
+
+    [Fact]
+    public async Task The_gym_detail_omits_the_features_block_without_features_read()
+    {
+        // gyms.read alone must not expose overrideReason — the commercially sensitive free text the
+        // module's own docs call "what a later billing conversation turns on". The sibling route,
+        // GET /gyms/{id}/features, requires features.read at both the endpoint policy and the request
+        // type; this route reached the same data through GymQueries with only gyms.read checked,
+        // bypassing both layers.
+        //
+        // No stock role holds gyms.read without features.read (roles.manage will one day be able to
+        // create one; it cannot yet — RoleEndpoints is read-only). A role is written directly into the
+        // database instead, exactly as an operator using a future roles.manage endpoint would end up
+        // with one: gyms.read only.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "gyms-read-only-gym");
+        const string RoleName = "Gym Viewer (gyms.read only)";
+        const string Email = "gyms-read-only@gymos.test";
+
+        await using (AppDbContext context = _host.CreateDbContext())
+        {
+            Guid permissionId = await context.Set<Permission>()
+                .Where(permission => permission.Key == PlatformPermissions.GymsRead)
+                .Select(permission => permission.Id)
+                .SingleAsync();
+
+            Role role = Role.Create(RoleName, "Integration test: gyms.read without features.read.", RoleScope.Platform);
+            role.GrantPermission(permissionId);
+
+            context.Add(role);
+            await context.SaveChangesAsync();
+        }
+
+        using HttpClient limited = await PlatformApiHelpers.SignedInAsync(_host, _client, RoleName, Email);
+
+        using HttpResponseMessage detail = await limited.GetAsync(
+            new Uri($"/api/v1/gyms/{gym}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+
+        JsonElement body = await detail.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(body.TryGetProperty("features", out JsonElement features) &&
+                     features.ValueKind is not JsonValueKind.Null);
+
+        // The rest of the detail is still there — a gyms.read-only role keeps a usable gym page.
+        Assert.Equal("gyms-read-only-gym", body.GetProperty("slug").GetString());
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────

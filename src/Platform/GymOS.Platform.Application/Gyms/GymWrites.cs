@@ -65,13 +65,19 @@ internal static class GymWrites
     /// <summary>
     /// Reads the gym back after a successful write, so the response matches what a following GET would
     /// return — including the *new* row version the caller needs for their next update.
+    ///
+    /// <para>Always includes the feature block: every write route this feeds is gated on
+    /// <c>gyms.create</c>, <c>gyms.update</c>, or <c>gyms.suspend</c>, and today every stock role
+    /// holding one of those also holds <c>features.read</c>. The narrower, permission-aware read
+    /// (M4.1 task 4) belongs to <c>GetGymQueryHandler</c>, for the dedicated <c>GET /gyms/{id}</c>
+    /// route the review actually flagged.</para>
     /// </summary>
     public static async Task<Result<GymDetail>> ReadBackAsync(
         IGymQueries gymQueries,
         Guid gymId,
         CancellationToken cancellationToken)
     {
-        GymDetail? detail = await gymQueries.GetAsync(gymId, cancellationToken);
+        GymDetail? detail = await gymQueries.GetAsync(gymId, includeFeatures: true, cancellationToken);
 
         return detail is null
             ? Result.Failure<GymDetail>(GymErrors.NotFound(gymId))

@@ -10,6 +10,12 @@ namespace GymOS.Platform.Application.Features.Abstractions;
 /// figure that only counted one of those would understate reality and mislead the decision it exists
 /// to inform ("can we retire this?").
 /// </param>
+/// <param name="IsDeclared">
+/// Whether a module still declares this key in <c>PlatformFeatures.All</c>. False for a row a rename
+/// left behind: the seeder never deletes an orphan (dropping it would cascade-delete plan contents and
+/// gym overrides that reference it), so without this flag the row is indistinguishable from a live
+/// feature — editable, counted in adoption, flagged only in a startup log nobody reads at 2am.
+/// </param>
 public sealed record FeatureListItem(
     Guid Id,
     string Key,
@@ -20,12 +26,23 @@ public sealed record FeatureListItem(
     bool IsPremium,
     int AdoptionCount,
     int OverrideCount,
-    string RowVersion);
+    string RowVersion,
+    bool IsDeclared);
 
 /// <summary>One feature's answer for one gym, with the layer that decided it.</summary>
 /// <param name="Source">
 /// <c>Override</c>, <c>Plan</c>, or <c>Default</c> — returned because "is POS on?" and "why is POS
 /// on?" are the same question in a support conversation.
+/// </param>
+/// <param name="OverrideSetAtUtc">
+/// When the override was set, or restated. Null unless the override decided the answer — the same rule
+/// <paramref name="OverrideReason"/> follows. Overrides never expire, so "how old is this grant" is an
+/// operator's only compensating control short of the audit log.
+/// </param>
+/// <param name="OverrideSetByEmail">
+/// Who set the override, by email. Null unless the override decided the answer, and also null when the
+/// author's account has since been deleted (<c>GymFeatureOverride.SetByUserId</c> is cleared, not the
+/// override itself — the exception survives losing its author).
 /// </param>
 public sealed record ResolvedFeatureDetail(
     Guid FeatureId,
@@ -35,7 +52,9 @@ public sealed record ResolvedFeatureDetail(
     bool Enabled,
     string Source,
     bool IsPremium,
-    string? OverrideReason);
+    string? OverrideReason,
+    DateTimeOffset? OverrideSetAtUtc,
+    string? OverrideSetByEmail);
 
 /// <summary>Read-side access to features (AD-3): projections only, never aggregates.</summary>
 public interface IFeatureQueries

@@ -54,9 +54,11 @@ public static class GymEndpoints
                 "A soft-deleted gym still resolves here, deliberately: an operator investigating why a " +
                 "tenant stopped working needs to see that it was deleted and when. `features` carries " +
                 "the whole catalogue resolved for this gym, each entry naming the layer that decided " +
-                "it — the same body `GET /gyms/{gymId}/features` returns. Device summary and aggregate " +
-                "stats arrive with the modules that own them (M5–M6) rather than as fields that always " +
-                "read zero.")
+                "it — the same body `GET /gyms/{gymId}/features` returns — but only when you hold " +
+                "`features.read`; without it `features` is `null`, because one entry can carry " +
+                "`overrideReason`, the commercially sensitive text behind a paid feature granted for " +
+                "free. Device summary and aggregate stats arrive with the modules that own them " +
+                "(M5–M6) rather than as fields that always read zero.")
             .Produces<GymDetail>()
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
