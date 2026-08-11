@@ -100,17 +100,21 @@ public sealed class MonthlyRecurringRevenueTests
     }
 
     [Fact]
-    public void TheBillingSetIsLiveMinusTrials()
+    public void TheBillingSetIsActiveAndPastDueByDesign()
     {
+        // Billing is not derived from Live; these are independent sets answering different questions.
+        // Live: "does the one-per-gym rule apply". Billing: "does this contribute revenue".
         Assert.Equal(
             [SubscriptionStatus.Active, SubscriptionStatus.PastDue],
             SubscriptionStatusTransitions.Billing);
 
-        Assert.True(SubscriptionStatusTransitions.IsBilling(SubscriptionStatus.PastDue));
-        Assert.False(SubscriptionStatusTransitions.IsBilling(SubscriptionStatus.Trialing));
+        // But Billing must be a subset of Live—a non-live subscription cannot contribute revenue.
+        // This invariant can fail and should fail if Billing is ever extended.
+        Assert.True(SubscriptionStatusTransitions.Billing.All(status => SubscriptionStatusTransitions.IsLive(status)));
 
-        // Live and Billing answer different questions and must not be confused: Live is
-        // "does the one-per-gym rule apply", Billing is "does this contribute revenue".
-        Assert.Contains(SubscriptionStatus.Trialing, SubscriptionStatusTransitions.Live);
+        // Trialing is live but not billing, confirming the sets are independent.
+        Assert.True(SubscriptionStatusTransitions.IsLive(SubscriptionStatus.Trialing));
+        Assert.False(SubscriptionStatusTransitions.IsBilling(SubscriptionStatus.Trialing));
     }
+
 }

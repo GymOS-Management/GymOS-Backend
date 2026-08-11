@@ -47,7 +47,7 @@ public static class MonthlyRecurringRevenue
     /// </summary>
     private static Money PerMonth(MrrContribution contribution)
     {
-        var months = (int)contribution.Cycle;
+        var months = contribution.Cycle.Months();
 
         return months == 1
             ? contribution.Price
