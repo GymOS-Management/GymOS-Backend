@@ -21,11 +21,52 @@ public static class ExceptionHandlingExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        // First on purpose: a cancellation can surface from any depth of the pipeline, and the
+        // answer never depends on what the request was doing when the caller left.
+        services.AddExceptionHandler<CanceledRequestExceptionHandler>();
+
         services.AddExceptionHandler<PermissionDeniedExceptionHandler>();
         services.AddExceptionHandler<ConcurrencyConflictExceptionHandler>();
         services.AddExceptionHandler<DomainExceptionHandler>();
 
         return services;
+    }
+
+    /// <summary>
+    /// The caller hung up — a refresh, a navigation, an aborted fetch — while the request was in
+    /// flight, and the cancellation surfaced as an exception. That is the framework correctly
+    /// abandoning work nobody is waiting on, not a failure of ours, so it must not be recorded
+    /// as a 500. With the database across a network, every request holds queries long enough for
+    /// aborts to land mid-flight; before this handler, each one polluted the error log.
+    ///
+    /// <para>Internal (not private) so the contract has a direct test.</para>
+    /// </summary>
+    internal sealed class CanceledRequestExceptionHandler : IExceptionHandler
+    {
+        /// <summary>
+        /// nginx's "client closed request". No standard code exists for this; 499 is the
+        /// convention log pipelines already understand, and no body travels — there is nobody
+        /// left to read one.
+        /// </summary>
+        internal const int ClientClosedRequest = 499;
+
+        public ValueTask<bool> TryHandleAsync(
+            HttpContext httpContext,
+            Exception exception,
+            CancellationToken cancellationToken)
+        {
+            // Only when the CALLER aborted. An OperationCanceledException on a request whose
+            // caller is still waiting is a genuine defect and falls through to the 500 it
+            // deserves.
+            if (exception is not OperationCanceledException
+                || !httpContext.RequestAborted.IsCancellationRequested)
+            {
+                return ValueTask.FromResult(false);
+            }
+
+            httpContext.Response.StatusCode = ClientClosedRequest;
+            return ValueTask.FromResult(true);
+        }
     }
 
     /// <summary>

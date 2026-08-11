@@ -90,7 +90,22 @@ public static class AuthenticationExtensions
         }
 
         ICallerSnapshot snapshot = context.HttpContext.RequestServices.GetRequiredService<ICallerSnapshot>();
-        UserSecuritySnapshot? current = await snapshot.GetAsync(userId, context.HttpContext.RequestAborted);
+
+        UserSecuritySnapshot? current;
+        try
+        {
+            current = await snapshot.GetAsync(userId, context.HttpContext.RequestAborted);
+        }
+        catch (OperationCanceledException) when (context.HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            // The caller hung up while the stamp check was in flight — routine once the database
+            // sits across a network, where every request holds this query long enough for an
+            // abort to land inside it. Fail quietly: nobody will read the response, and letting
+            // the cancellation escape makes the bearer handler log a dead request as an error
+            // ("Exception occurred while processing message.").
+            context.Fail("The request was canceled by the caller.");
+            return;
+        }
 
         if (current is null)
         {

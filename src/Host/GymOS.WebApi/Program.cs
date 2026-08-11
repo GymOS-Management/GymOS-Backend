@@ -189,7 +189,18 @@ try
 
     app.UseMiddleware<CorrelationMiddleware>();
     app.UseMiddleware<IdempotencyHeaderMiddleware>();
-    app.UseSerilogRequestLogging();
+    app.UseSerilogRequestLogging(options =>
+        // The default level rule, with one carve-out: a request the CALLER abandoned logs as
+        // information, not error. This middleware sits inside UseExceptionHandler, so it sees
+        // the cancellation on the way out before the 499 handler converts it — without the
+        // carve-out every aborted fetch writes an ERR line for a request nobody was waiting on.
+        options.GetLevel = (httpContext, _, exception) =>
+            exception is OperationCanceledException
+                && httpContext.RequestAborted.IsCancellationRequested
+                ? Serilog.Events.LogEventLevel.Information
+                : exception is not null || httpContext.Response.StatusCode >= StatusCodes.Status500InternalServerError
+                    ? Serilog.Events.LogEventLevel.Error
+                    : Serilog.Events.LogEventLevel.Information);
 
     app.UseRateLimiter();
     app.UseAuthentication();
