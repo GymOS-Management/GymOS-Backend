@@ -45,15 +45,25 @@ internal sealed class DailyStatsCompiler
             .AsNoTracking()
             .Where(gym => gym.Status != GymStatus.Deleted);
 
+        // Two families of count, and they deliberately read differently:
+        //
+        // Population counts (Total/Active/Suspended/Provisioning) describe who is a tenant RIGHT
+        // NOW, so they run over livingGyms and exclude anything deleted — a deleted gym is not a
+        // tenant any more.
+        //
+        // Event counts (New/Canceled/Expired) record what HAPPENED on this day, regardless of the
+        // gym's status now. A gym created and deleted on the same day must still show up as one
+        // created — suppressing it would drop the population with nothing in the series to explain
+        // why. Canceled/Expired already run unfiltered by gym status for the same reason: deleting a
+        // gym cancels its live subscription in the same transaction, and that cancellation is the
+        // strongest form of churn there is.
         var counts = new GymCounts(
             Total: await livingGyms.CountAsync(cancellationToken),
             Active: await livingGyms.CountAsync(gym => gym.Status == GymStatus.Active, cancellationToken),
             Suspended: await livingGyms.CountAsync(gym => gym.Status == GymStatus.Suspended, cancellationToken),
             Provisioning: await livingGyms.CountAsync(gym => gym.Status == GymStatus.Provisioning, cancellationToken),
 
-            // The three event counts are the day's, not the running total — they are what a growth
-            // or churn chart plots, and each is dated by a column rather than inferred.
-            New: await livingGyms.CountAsync(
+            New: await _dbContext.Set<Gym>().AsNoTracking().CountAsync(
                 gym => gym.CreatedAtUtc >= dayStart && gym.CreatedAtUtc < dayEnd, cancellationToken),
             Canceled: await _dbContext.Set<GymSubscription>().AsNoTracking().CountAsync(
                 subscription => subscription.Status == SubscriptionStatus.Canceled

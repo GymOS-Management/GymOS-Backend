@@ -113,7 +113,7 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
         Assert.Equal(1, live.GetProperty("adoptionCount").GetInt32());
         Assert.Equal(1, live.GetProperty("overrideCount").GetInt32());
 
-        await DeleteGymAsync(gym, "counted-then-deleted");
+        await PlatformApiHelpers.DeleteGymAsync(_client, gym, "counted-then-deleted");
 
         JsonElement dead = FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm);
         Assert.Equal(0, dead.GetProperty("adoptionCount").GetInt32());
@@ -278,26 +278,6 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
 
         using HttpResponseMessage response = await _client.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    }
-
-    /// <summary>
-    /// Soft-deletes a gym through the real endpoint, confirmation header and all — the row survives,
-    /// which is exactly why the counts have to decide what to do about it.
-    /// </summary>
-    private async Task DeleteGymAsync(Guid gymId, string slug)
-    {
-        using HttpResponseMessage read = await _client.GetAsync(
-            new Uri($"/api/v1/gyms/{gymId}", UriKind.Relative));
-        string rowVersion = (await read.Content.ReadFromJsonAsync<JsonElement>())
-            .GetProperty("rowVersion").GetString()!;
-
-        using var request = new HttpRequestMessage(
-            HttpMethod.Delete, new Uri($"/api/v1/gyms/{gymId}", UriKind.Relative));
-        request.Headers.TryAddWithoutValidation("X-Confirm-Action", slug);
-        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
-
-        using HttpResponseMessage response = await _client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }
 
     /// <summary>Same, for a gym override — task 5's <c>PUT /gyms/{id}/features</c>.</summary>

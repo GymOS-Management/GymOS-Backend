@@ -83,9 +83,19 @@ Migration `AddPlatformStats`:
 
 **`platform.daily_platform_stats`** — `stat_date date` (unique), `total_gyms`, `active_gyms`,
 `suspended_gyms`, `provisioning_gyms`, `new_gyms`, `canceled_gyms`, `expired_gyms` (all `int`),
-`created_at_utc`. Deleted gyms are excluded from every count: they are not tenants any more. (The M4
-review's lesson, applied at the point the numbers are defined rather than discovered later — every
-count in this module describes one population.)
+`created_at_utc`. These eight columns split into two families that answer different questions, and
+read differently on purpose:
+
+- **Population** (`total_gyms`, `active_gyms`, `suspended_gyms`, `provisioning_gyms`) — who is a
+  tenant *right now*. Deleted gyms are excluded from every population count: they are not tenants
+  any more. (The M4 review's lesson, applied at the point the numbers are defined rather than
+  discovered later.)
+- **Events** (`new_gyms`, `canceled_gyms`, `expired_gyms`) — what *happened* on this day, regardless
+  of the gym's status now. A gym created and deleted the same day is still one created — omitting it
+  from `new_gyms` would drop the population with nothing in the series to explain why. Deleting a
+  gym cancels its live subscription in the same transaction, and that cancellation counts in
+  `canceled_gyms` for the same reason: a deletion is the strongest form of churn there is, not an
+  erasure of it.
 
 `provisioning_gyms` is an **addition** to §2.4's column list, not a change to it: `Provisioning` is a
 real status in the frozen gym schema, and without it `active + suspended` does not reconcile to
@@ -208,8 +218,8 @@ excluding `Trialing` and including `PastDue`; a scheduled cancellation still cou
 validator.
 
 **Application.** The job's decision through fakes: computes and writes when the day is absent; writes
-**nothing** when the row exists; counts exclude deleted gyms; per-currency grouping produces one
-entry per currency rather than a silent sum.
+**nothing** when the row exists; population counts exclude deleted gyms while event counts do not
+(§4); per-currency grouping produces one entry per currency rather than a silent sum.
 
 **Integration, over real PostgreSQL.** The job writes one row and a second run leaves it byte-identical
 (the write-once rule, which is the design's central claim); a gap survives as a gap rather than being

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using GymOS.BuildingBlocks.Infrastructure.Time;
 using GymOS.Platform.Domain.Analytics;
 using GymOS.Platform.Infrastructure.Analytics;
 using GymOS.Platform.Infrastructure.Persistence;
@@ -24,6 +25,7 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset Now = new(2026, 1, 15, 4, 0, 0, TimeSpan.Zero);
     private static readonly DateOnly Yesterday = DateOnly.FromDateTime(Now.UtcDateTime).AddDays(-1);
+    private static readonly SystemClock RealClock = new();
 
     private readonly PostgresFixture _postgres;
     private AuthenticationHost _host = null!;
@@ -125,14 +127,28 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ADeletedGymIsCountedNowhere()
+    public async Task ADeletedGymLeavesThePopulationButStillCountsAsChurn()
     {
-        await SeedDeletedGymAsync("gone-gym");
+        // Population and event counts read differently on purpose (design §4): a deleted gym is
+        // gone from the population — it is not a tenant any more — but the day it was created and
+        // the day its paid subscription was cancelled by the deletion are still real events that
+        // happened, so they stay in new_gyms and canceled_gyms. Suppressing them would drop the
+        // population with nothing in the series to explain why.
+        //
+        // Real time here, not the fixed `Now`/`Yesterday` the other tests use: the gym is created
+        // and deleted through HTTP against the host's own (real) clock, so the day compiled has to
+        // be the day those calls actually happened on.
+        DateOnly today = DateOnly.FromDateTime(RealClock.UtcNow.UtcDateTime);
 
-        await CompileAsync(Yesterday);
+        Guid gym = await SeedGymOnMonthlyPlanAsync("gone-gym", 49.99m, "EUR");
+        await PlatformApiHelpers.DeleteGymAsync(_client, gym, "gone-gym");
 
-        DailyPlatformStats stats = await ReadAsync(Yesterday);
+        Assert.True(await CompileAsync(today));
+
+        DailyPlatformStats stats = await ReadAsync(today);
         Assert.Equal(0, stats.TotalGyms);
+        Assert.Equal(1, stats.NewGyms);
+        Assert.Equal(1, stats.CanceledGyms);
     }
 
     /// <summary>A plan code is upper-case letters, digits and underscores only — a slug is not.</summary>
@@ -158,13 +174,6 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
         await PlatformApiHelpers.AssignAsync(_client, gymId, plan.Id, currency: currency);
 
         return gymId;
-    }
-
-    /// <summary>Provisions a gym, then soft-deletes it.</summary>
-    private async Task SeedDeletedGymAsync(string slug)
-    {
-        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, slug);
-        await PlatformApiHelpers.DeleteGymAsync(_client, gymId, slug);
     }
 
     /// <summary>
