@@ -155,8 +155,9 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         // A tripwire, not a specification: this number is expected to change whenever an endpoint
         // is added, and the point of asserting it is that adding one makes you look at this test
         // and confirm the new operation landed in `secured` rather than in `anonymous`.
-        // 43 → 47 across M4: two feature-catalogue operations, two plan-feature operations.
-        Assert.Equal(47, secured.Count);
+        // 43 → 49 across M4: two feature-catalogue operations, two plan-feature operations, two
+        // gym-feature operations.
+        Assert.Equal(49, secured.Count);
     }
 
     /// <summary>

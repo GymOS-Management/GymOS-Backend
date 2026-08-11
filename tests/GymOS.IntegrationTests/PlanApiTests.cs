@@ -342,6 +342,37 @@ public sealed class PlanApiTests : IAsyncLifetime
         supportAgent.Dispose();
     }
 
+    /// <summary>
+    /// Editing the same plan feature twice, which is what a real console does. This exists because it
+    /// did not work: <c>PlanRepository</c> loaded the plan without its features, so the second edit
+    /// inserted a second row for the same key and died on
+    /// <c>ux_plan_features_plan_feature</c> — and clearing an opinion found nothing to remove. Unit
+    /// tests could not see it; their fake repository always hands back the whole aggregate.
+    /// </summary>
+    [Fact]
+    public async Task EditingThePlansOpinionTwice_UpdatesTheRowRatherThanAddingASecondOne()
+    {
+        Guid planId = await CreateAsync("FEATURES");
+
+        using HttpResponseMessage included = await SetFeatureAsync(planId, "crm", isEnabled: true);
+        Assert.Equal(HttpStatusCode.OK, included.StatusCode);
+
+        using HttpResponseMessage flipped = await SetFeatureAsync(planId, "crm", isEnabled: false);
+        Assert.Equal(HttpStatusCode.OK, flipped.StatusCode);
+
+        JsonElement body = await flipped.Content.ReadFromJsonAsync<JsonElement>();
+        JsonElement crm = Assert.Single(
+            body.GetProperty("features").EnumerateArray(),
+            feature => feature.GetProperty("key").GetString() == "crm");
+        Assert.False(crm.GetProperty("isEnabled").GetBoolean());
+
+        // Clearing must find the row it is meant to remove.
+        using HttpResponseMessage cleared = await SetFeatureAsync(planId, "crm", isEnabled: null);
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        Assert.Empty((await cleared.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("features").EnumerateArray());
+    }
+
     [Fact]
     public async Task AnAnonymousCallerGets401()
     {
@@ -422,6 +453,18 @@ public sealed class PlanApiTests : IAsyncLifetime
             await response.Content.ReadAsStringAsync());
 
         return response;
+    }
+
+    private async Task<HttpResponseMessage> SetFeatureAsync(Guid planId, string key, bool? isEnabled)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/features", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { features = new[] { new { key, isEnabled } } }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{await RowVersionAsync(planId)}\"");
+
+        return await _client.SendAsync(request);
     }
 
     private async Task<HttpResponseMessage> PutAsync(Guid planId, object payload, string rowVersion)

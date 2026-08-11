@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GymOS.Platform.Domain.Features;
-using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -161,7 +160,16 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
         // gym nobody touched now resolves CRM on.
         Assert.Equal(1, FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm)
             .GetProperty("adoptionCount").GetInt32());
-        Assert.Equal(gym, gym); // the gym itself was never written to
+
+        // Nothing was written to the gym itself — it holds no override and no plan, so the answer
+        // changed underneath it. That is the point, and it is why this write requires If-Match.
+        using HttpResponseMessage resolved = await _client.GetAsync(
+            new Uri($"/api/v1/gyms/{gym}/features", UriKind.Relative));
+        JsonElement forGym = FeatureByKey(
+            await resolved.Content.ReadFromJsonAsync<JsonElement>(), PlatformFeatures.Crm);
+
+        Assert.True(forGym.GetProperty("enabled").GetBoolean());
+        Assert.Equal("Default", forGym.GetProperty("source").GetString());
     }
 
     [Fact]
@@ -292,31 +300,36 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Sets one plan feature. Task 4 adds <c>PUT /plans/{id}/features</c>; until then the test
-    /// drives the same state through the database so task 3's counting can be proven now.
+    /// Sets one plan feature through the real endpoint. This drove the state through raw SQL until
+    /// task 4 shipped <c>PUT /plans/{id}/features</c> — going through HTTP now means the adoption
+    /// counts above are computed over state the API itself can produce.
     /// </summary>
     private async Task SetPlanFeatureAsync(Guid planId, string featureKey, bool enabled)
     {
-        await using var context = _host.CreateDbContext();
-        await context.Database.ExecuteSqlAsync($"""
-            INSERT INTO platform.plan_features (id, plan_id, feature_id, is_enabled)
-            SELECT gen_random_uuid(), {planId}, f.id, {enabled}
-            FROM platform.features f WHERE f.key = {featureKey}
-            """);
+        using HttpResponseMessage plan = await _client.GetAsync(
+            new Uri($"/api/v1/plans/{planId}", UriKind.Relative));
+        string rowVersion = (await plan.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("rowVersion").GetString()!;
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/features", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { features = new[] { new { key = featureKey, isEnabled = enabled } } }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
+
+        using HttpResponseMessage response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    /// <summary>Same, for a gym override — task 5 brings the endpoint.</summary>
+    /// <summary>Same, for a gym override — task 5's <c>PUT /gyms/{id}/features</c>.</summary>
     private async Task SetGymFeatureAsync(Guid gymId, string featureKey, bool enabled, string reason)
     {
-        await using var context = _host.CreateDbContext();
-        await context.Database.ExecuteSqlAsync($"""
-            INSERT INTO platform.gym_feature_overrides
-                (id, gym_id, feature_id, is_enabled, reason, set_at_utc, created_at_utc, updated_at_utc)
-            SELECT gen_random_uuid(), {gymId}, f.id, {enabled}, {reason}, now(), now(), now()
-            FROM platform.features f WHERE f.key = {featureKey}
-            ON CONFLICT (gym_id, feature_id) DO UPDATE
-                SET is_enabled = EXCLUDED.is_enabled, reason = EXCLUDED.reason
-            """);
+        using HttpResponseMessage response = await _client.PutAsJsonAsync(
+            new Uri($"/api/v1/gyms/{gymId}/features", UriKind.Relative),
+            new { features = new[] { new { key = featureKey, isEnabled = enabled, reason } } });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     private async Task<HttpClient> SignedInAsync(string roleName, string email)

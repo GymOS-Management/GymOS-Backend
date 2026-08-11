@@ -2,6 +2,8 @@ using Asp.Versioning;
 using Asp.Versioning.Builder;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Models;
+using GymOS.Platform.Application.Features;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Domain.Identity;
@@ -47,12 +49,14 @@ public static class GymEndpoints
         group.MapGet("/{gymId:guid}", GetAsync)
             .RequireAuthorization(PlatformPermissions.GymsRead)
             .WithName("GetGym")
-            .WithSummary("One gym, with its branding")
+            .WithSummary("One gym, with its branding, subscription, and resolved features")
             .WithDescription(
                 "A soft-deleted gym still resolves here, deliberately: an operator investigating why a " +
-                "tenant stopped working needs to see that it was deleted and when. Subscription, " +
-                "resolved features, device summary, and aggregate stats arrive with the modules that " +
-                "own them (M3–M6) rather than as fields that always read zero.")
+                "tenant stopped working needs to see that it was deleted and when. `features` carries " +
+                "the whole catalogue resolved for this gym, each entry naming the layer that decided " +
+                "it — the same body `GET /gyms/{gymId}/features` returns. Device summary and aggregate " +
+                "stats arrive with the modules that own them (M5–M6) rather than as fields that always " +
+                "read zero.")
             .Produces<GymDetail>()
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -169,6 +173,46 @@ public static class GymEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapGet("/{gymId:guid}/features", GetFeaturesAsync)
+            .RequireAuthorization(PlatformPermissions.FeaturesRead)
+            .WithName("GetGymFeatures")
+            .WithSummary("What this gym's features resolve to, and why")
+            .WithDescription(
+                "The **whole catalogue**, each entry carrying `enabled` and the `source` that decided "
+                    + "it — `Override`, `Plan`, or `Default` (§2.4). Not a list of exceptions: \"what "
+                    + "can this gym do\" is the question worth answering, and `source` is what makes "
+                    + "the answer explainable in a support conversation. `overrideReason` is present "
+                    + "only when an override is what decided it. A gym with no live subscription "
+                    + "resolves every feature against the platform default.")
+            .Produces<IReadOnlyList<ResolvedFeatureDetail>>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPut("/{gymId:guid}/features", SetFeaturesAsync)
+            .RequireAuthorization(PlatformPermissions.FeaturesManage)
+            .WithName("SetGymFeatures")
+            .WithSummary("Grant or withdraw this gym's feature exceptions")
+            .WithDescription(
+                "An override is stored **only when it differs from what the gym would get anyway**. "
+                    + "Ask for exactly what the plan — or the platform default, when the plan is "
+                    + "silent — already gives, and any existing exception is **withdrawn** instead, so "
+                    + "a gym that later changes plan follows the new plan rather than staying frozen "
+                    + "by a row nobody remembers creating. `reason` is therefore required only when an "
+                    + "override is actually needed.\n\n"
+                    + "The response is the **full resolution, not an echo** of the request: after a "
+                    + "withdrawal the stored state is deliberately not what was sent.\n\n"
+                    + "Only the keys listed are touched. No `If-Match`: each override is its own "
+                    + "record keyed on (gym, feature), so there is no single version to match, and two "
+                    + "operators editing different features do not conflict. Deciding what a *plan* "
+                    + "includes is `billing.manage` instead.")
+            .Produces<IReadOnlyList<ResolvedFeatureDetail>>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
 
         return endpoints;
     }
@@ -330,5 +374,30 @@ public static class GymEndpoints
             cancellationToken);
 
         return WriteResults.Updated(result, result.IsSuccess ? result.Value.RowVersion : null);
+    }
+
+    private static async Task<IResult> GetFeaturesAsync(
+        Guid gymId,
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        Result<IReadOnlyList<ResolvedFeatureDetail>> result = await dispatcher.QueryAsync(
+            new GetGymFeaturesQuery(gymId), cancellationToken);
+
+        return result.IsSuccess ? TypedResults.Ok(result.Value) : result.ToProblem();
+    }
+
+    private static async Task<IResult> SetFeaturesAsync(
+        Guid gymId,
+        SetGymFeaturesRequest request,
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        Result<IReadOnlyList<ResolvedFeatureDetail>> result = await dispatcher.SendAsync(
+            new SetGymFeaturesCommand(gymId, request.Features ?? []), cancellationToken);
+
+        // No ETag: the resolution is not a versioned resource, and there is no If-Match to echo
+        // (see the route's description).
+        return result.IsSuccess ? TypedResults.Ok(result.Value) : result.ToProblem();
     }
 }

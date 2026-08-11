@@ -51,7 +51,13 @@ public sealed record OverrideReasonIsRequired(string? Reason) : IBusinessRule
 {
     public const int MaximumLength = 500;
 
-    public string Code => "features.override_reason_required";
+    /// <summary>
+    /// The code as a constant as well as a property: the handler refuses a reasonless request before
+    /// it touches the aggregate, and it must report the same code the aggregate would have thrown.
+    /// </summary>
+    public const string RuleCode = "features.override_reason_required";
+
+    public string Code => RuleCode;
 
     public string Message =>
         "An override needs a reason — it is an exception to what the gym's plan gives, and a later " +

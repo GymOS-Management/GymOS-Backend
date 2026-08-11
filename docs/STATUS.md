@@ -1,9 +1,11 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-11 · whole-repository audit fixed and merged (`d22d45a`) — the long
-"awaiting review" backlog (M2, Money, M3.1, M3.2, AD-39, M0.X) is **cleared**: those increments have
-now had their review pass (see "Whole-repository audit" below). Only the **API reference** increment,
-which landed after the audit's scope, is still unreviewed — **1136 tests green**
+**Last updated:** 2026-08-11 (evening) · **M4 feature flags, tasks 1–5 of 6 on `main`** — the
+catalogue, plan contents, and per-gym overrides all work end to end; only the documentation +
+final-verification task remains. **1261 tests green** (1,028 unit + 233 integration). The
+whole-repository audit is fixed and merged (`d22d45a`), so the long "awaiting review" backlog (M2,
+Money, M3.1, M3.2, AD-39, M0.X) is **cleared**. Only the **API reference** increment, which landed
+after the audit's scope, is still unreviewed.
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -32,7 +34,8 @@ before resuming work on any machine.
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
 | **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
-| M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | **next** |
+| **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | 🚧 **tasks 1–5 of 6 on `main`** — see "M4 as built"; task 6 (business-rules doc, live run, final verification) is what remains |
+| M5+ — per approved roadmap (dashboard, monitoring, settings) | next |
 
 ## M1.2 as built
 
@@ -857,6 +860,75 @@ pipeline requires; the first two were the missing bearer scheme and the empty `s
   requiredness to `versionRequired`, so the two cannot drift apart silently.
 - **Test counts after this work: 1123** (was 1116) — Integration 194 → 201.
 
+## M4 as built (tasks 1–5 of 6)
+
+Design approved 2026-08-11 — `docs/superpowers/specs/2026-08-11-feature-flags-design.md`. Branch
+`m4-feature-flags`, merged to `main` after each task. **Nothing consumes a resolved flag yet**, and
+that is deliberate (design §6): the tenant-facing modules that would — POS, inventory, CRM — do not
+exist. M4 delivers the decision and its API; the first consumer enforces it.
+
+**The rule, in one line:** `override ?? plan ?? platform default`, with the layer that decided it
+reported alongside the answer. `FeatureResolution` is the single definition; both the read query and
+the write path call it rather than re-expressing it, and the resolution is deliberately **not** done
+in SQL for that reason.
+
+1. **Domain** (`eb185b3`) — `Feature` (immutable key, editable copy/default/premium),
+   `GymFeatureOverride` (required reason, one row per (gym, feature)), `PlanFeature` (the tri-state:
+   include / exclude / **say nothing**, where the third is not the second), `FeatureResolution`, and
+   `PlatformFeatures`' twelve declared keys with reasoned defaults — operational core on and free,
+   sold capabilities off and premium, per-use or hardware-dependent off.
+2. **Persistence** (`d14f601`) — three tables, both unique indexes, and an **insert-only**
+   `FeatureCatalogSeeder`. Unlike the permission seeder it does **not** reconcile: `name`,
+   `description`, `category`, `default_enabled`, and `is_premium` are operator-owned (§3.5), so
+   overwriting them on restart would silently undo a console edit. Orphaned keys are logged, never
+   deleted — a delete would cascade into plan contents and overrides.
+3. **Catalogue endpoints** (`8cc97ea`) — `GET /features` with a real **adoption count** (gyms
+   resolving it *on* through all three layers, not a count of plan rows), `PUT /features/{id}` with
+   `If-Match` **required**: changing `defaultEnabled` re-answers the feature for every gym that has
+   neither an override nor a plan opinion, the widest blast radius of any write in the module.
+4. **Plan contents** (`c51d9bb`) — `GET/PUT /plans/{id}/features`, gated **`billing.manage`**, not
+   the feature permission: what a plan includes is priced. Only the keys sent are touched;
+   `MarkAggregateChanged` moves the plan's own version so concurrent feature edits collide.
+5. **Per-gym overrides** (this task) — `GET/PUT /gyms/{id}/features` gated
+   `features.read`/`features.manage`, plus the `features` block on `GET /gyms/{id}` that §3.3 always
+   described. An override is stored **only while it differs from what the gym would get anyway**, so
+   asking for exactly what the plan (or default) already gives **withdraws** the exception rather
+   than restating it — a gym that later changes plan then follows the new plan instead of staying
+   frozen by a row nobody remembers creating. `reason` is required only when an override is genuinely
+   needed, and the response is the **full resolution, not an echo**: after a withdrawal the stored
+   state is deliberately not what was sent.
+
+### Decisions and traps found
+
+- **`PlanRepository` loaded plans without their `Features` — a real defect that task 5's integration
+  test caught, and that broke task 4 in production.** `SetFeature` inserted a second row for a key the
+  plan already had and died on `ux_plan_features_plan_feature`, so `PUT /plans/{id}/features` could
+  not be used twice on the same key; `ClearFeature` found nothing to remove; and the plan layer was
+  invisible to the override write, which then stored exceptions the plan already granted. **Unit tests
+  could not see it** — the fake repository always hands back the whole aggregate. `PlanApiTests` now
+  edits the same plan feature three times over real PostgreSQL. The general lesson: an `Include` that
+  is missing from a repository is invisible to every test that does not use the real one.
+- **No `If-Match` on `PUT /gyms/{id}/features`**, unlike the plan and catalogue writes. There is no
+  single version to match: each override is its own aggregate keyed on (gym, feature) and the request
+  merges per key, so two operators editing different features do not conflict at all. Two editing the
+  same one is a disagreement about policy rather than a lost update — the later decision wins, carries
+  its own required reason, and the audit trail keeps the earlier one.
+- **Validation runs entirely ahead of mutation.** An unknown key, a duplicate key, or a missing reason
+  refuses the whole request: a caller who cannot tell which half of their intent landed is worse off
+  than one who was refused. The reason check is duplicated in the handler rather than caught out of the
+  aggregate, so a five-key request cannot write three before discovering the fourth is unjustified.
+- **The same key twice is refused** (`features.duplicate_key`) rather than applied last-one-wins,
+  which would report success for a self-contradicting request — and would otherwise surface as an
+  unexplained 409 from the unique index.
+- **Resolution is delegated, never re-implemented.** `GymQueries` calls `IFeatureQueries` for the
+  gym-detail block, and `GetGymFeaturesQuery` proves the gym exists with a new
+  `IGymQueries.ExistsAsync` rather than loading the whole detail projection — which now resolves the
+  catalogue itself and would have done it twice per request.
+- **Test counts after task 5: 1261** — unit 1,028, integration 233. The full integration suite shows
+  intermittent connection-open failures under parallel load (2 of 233 on the run for this task, both
+  green in isolation) — the same environmental symptom recorded for the M3.3 run, not an assertion
+  failure.
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -897,7 +969,7 @@ To work on it — API on the host, database in a container:
 ```
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d postgres      # PostgreSQL 17 only
-dotnet test GymOS.Backend.slnx     # expect 1123 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 1261 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
@@ -921,6 +993,21 @@ Environment facts: .NET 10 SDK pinned via `global.json` (ADR-50); solution is
 matching `docker-compose.override.yml` (dev-only, deliberately public). The postgres volume
 was renamed `gymos-pgdata` → `gymos-postgres-data` in M0.X, so a pre-M0.X local database is
 still on disk but no longer mounted — see DOCKER.md troubleshooting.
+
+## Next step (resume here)
+
+**M4 task 6 of 6** — the documentation-and-verification close-out, on `main`:
+
+1. `docs/BusinessRules/Features.md` — the three-layer rule, the twelve keys and why each default is
+   what it is, the store-only-when-it-differs invariant, and the permission split (`features.*` for a
+   gym's exceptions, `billing.*` for what a plan sells).
+2. STATUS.md: flip the M4 row to complete.
+3. Full verification, and the **live run** the design's §7 asks for: seed, flip a plan feature,
+   override one gym, then read two gyms' resolutions and see the same feature answered differently
+   for different reasons (`source` = `Plan` vs `Override` vs `Default`).
+
+Then M4 goes for review as a whole. Still owed, unchanged by this work: the **API reference**
+increment awaits review (Konstantinos's), and audit finding 7 (below) wants its own increment.
 
 ## Known open items / honest notes
 

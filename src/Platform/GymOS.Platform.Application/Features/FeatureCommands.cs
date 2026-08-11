@@ -3,6 +3,7 @@ using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Domain.Features;
+using GymOS.Platform.Domain.Features.Rules;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel;
 using GymOS.SharedKernel.Results;
@@ -118,6 +119,24 @@ public static class FeatureErrors
     public static Error UnknownKey(string key) => Error.Validation(
         "features.unknown_key",
         $"'{key}' is not a feature in this platform's catalogue.");
+
+    /// <summary>
+    /// One key, stated twice, with no way to tell which answer was meant. There is a single row per
+    /// (gym, feature), so applying the last one would honour half the request and report success.
+    /// </summary>
+    public static Error DuplicateKey(string key) => Error.Validation(
+        "features.duplicate_key",
+        $"'{key}' appears more than once in this request. State each feature once.");
+
+    /// <summary>
+    /// The rule's own code, reported per key: a request carrying several features must say which one
+    /// lacks a justification. Only raised when the value genuinely needs an override — asking for
+    /// what the gym already gets clears one, and needs no reason.
+    /// </summary>
+    public static Error ReasonRequired(string key) => Error.Validation(
+        OverrideReasonIsRequired.RuleCode,
+        $"'{key}' differs from what this gym's plan gives, so the exception needs a reason. " +
+        $"At most {OverrideReasonIsRequired.MaximumLength} characters.");
 
     public static Error VersionRequired => Error.Conflict(
         "concurrency.version_required",

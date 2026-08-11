@@ -34,3 +34,9 @@ node_modules/
 .env.local
 .env.*.local
 !.env.example
+
+# Local agent/tooling state — machine-specific, and .neon can carry database details
+.agents/
+.claude/
+.neon
+skills-lock.json

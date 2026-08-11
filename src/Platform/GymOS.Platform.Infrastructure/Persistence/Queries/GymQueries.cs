@@ -1,5 +1,6 @@
 ﻿using GymOS.BuildingBlocks.Application.Models;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Gyms;
@@ -18,8 +19,17 @@ internal sealed class GymQueries : IGymQueries
     private static readonly string[] SortableFields = ["name", "slug", "status", "countryCode", "createdAtUtc"];
 
     private readonly AppDbContext _dbContext;
+    private readonly IFeatureQueries _featureQueries;
 
-    public GymQueries(AppDbContext dbContext) => _dbContext = dbContext;
+    /// <summary>
+    /// Resolution is delegated rather than reprojected here: <see cref="FeatureQueries"/> already owns
+    /// the three-layer read, and a second copy of it in this file would be the one that drifts.
+    /// </summary>
+    public GymQueries(AppDbContext dbContext, IFeatureQueries featureQueries)
+    {
+        _dbContext = dbContext;
+        _featureQueries = featureQueries;
+    }
 
     public async Task<PagedResult<GymListItem>> ListAsync(
         GymListFilter filter,
@@ -202,6 +212,12 @@ internal sealed class GymQueries : IGymQueries
                 projection.Subscription.TrialEndsAtUtc,
                 projection.Subscription.CancelAtPeriodEnd);
 
+        // A second round trip, deliberately: resolution reads the catalogue, the plan's opinions, and
+        // the gym's overrides, and folding that into the projection above would duplicate the rule the
+        // domain already owns.
+        IReadOnlyList<ResolvedFeatureDetail> features = await _featureQueries.ResolveForGymAsync(
+            projection.Id, cancellationToken);
+
         return new GymDetail(
             projection.Id,
             projection.Slug,
@@ -218,8 +234,12 @@ internal sealed class GymQueries : IGymQueries
             projection.CreatedAtUtc,
             branding,
             subscription,
+            features,
             RowVersion.ToToken(projection.RowVersion));
     }
+
+    public Task<bool> ExistsAsync(Guid gymId, CancellationToken cancellationToken) =>
+        _dbContext.Set<Gym>().AsNoTracking().AnyAsync(gym => gym.Id == gymId, cancellationToken);
 
     private static IQueryable<Gym> Sort(IQueryable<Gym> query, PageRequest page) =>
         (page.SortBy is not null && SortableFields.Contains(page.SortBy, StringComparer.OrdinalIgnoreCase)

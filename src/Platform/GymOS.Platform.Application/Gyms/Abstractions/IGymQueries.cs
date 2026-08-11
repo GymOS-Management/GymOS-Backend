@@ -1,4 +1,5 @@
 using GymOS.BuildingBlocks.Application.Models;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 
 namespace GymOS.Platform.Application.Gyms.Abstractions;
@@ -27,9 +28,10 @@ public sealed record GymBrandingDetail(
 /// One gym in full.
 ///
 /// <para>§3.3 describes the detail view as carrying the active subscription, resolved feature flags, a
-/// device summary, and aggregate stats. **The subscription now arrives** (M3.2). Features (M4), stats
-/// (M5), and devices (M6) are still absent rather than present and empty — a field that always reads
-/// zero teaches operators to distrust the screen, and adding one later is compatible within v1.</para>
+/// device summary, and aggregate stats. **The subscription (M3.2) and the resolved features (M4) now
+/// arrive.** Stats (M5) and devices (M6) are still absent rather than present and empty — a field that
+/// always reads zero teaches operators to distrust the screen, and adding one later is compatible
+/// within v1.</para>
 /// </summary>
 /// <param name="RowVersion">
 /// Opaque version token. Echo it in <c>If-Match</c> when updating (API_STANDARDS.md §3).
@@ -51,6 +53,13 @@ public sealed record GymDetail(
     GymBrandingDetail Branding,
     /// <summary>The gym's live subscription, or null when it has none — a gym can exist unsubscribed.</summary>
     GymSubscriptionSummary? Subscription,
+
+    /// <summary>
+    /// Every feature resolved for this gym, each carrying the layer that decided it. Always the whole
+    /// catalogue, never only the exceptions: "what can this gym actually do" is the question an
+    /// operator opens this screen with, and a list of overrides answers a different one.
+    /// </summary>
+    IReadOnlyList<ResolvedFeatureDetail> Features,
     string RowVersion);
 
 /// <param name="Status">Optional exact-match filter on <c>GymStatus</c>, by name.</param>
@@ -72,4 +81,11 @@ public interface IGymQueries
     Task<PagedResult<GymListItem>> ListAsync(GymListFilter filter, CancellationToken cancellationToken);
 
     Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether the gym exists at all, deleted or not. For handlers that need to tell "no such gym"
+    /// from an empty answer without paying for the whole detail projection — which now resolves the
+    /// feature catalogue, and would do it twice on a request that goes on to resolve it itself.
+    /// </summary>
+    Task<bool> ExistsAsync(Guid gymId, CancellationToken cancellationToken);
 }

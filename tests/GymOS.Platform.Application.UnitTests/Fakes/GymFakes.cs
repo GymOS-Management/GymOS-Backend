@@ -1,6 +1,7 @@
 using System.Globalization;
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Models;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Domain.Gyms;
 
@@ -85,6 +86,13 @@ internal sealed class FakeGymQueries : IGymQueries
     /// <summary>Settable, so a "version changed" assertion has something to see.</summary>
     public uint RowVersion { get; set; } = 1;
 
+    /// <summary>
+    /// Assign the feature fake to have the detail carry resolved features, as the real projection does
+    /// by delegating to <see cref="IFeatureQueries"/>. Left null in the many tests that predate M4 and
+    /// care about nothing here — an empty block is the honest answer when no catalogue was seeded.
+    /// </summary>
+    public IFeatureQueries? FeatureQueries { get; set; }
+
     public List<GymListFilter> ListCalls { get; } = [];
 
     public Task<PagedResult<GymListItem>> ListAsync(
@@ -114,17 +122,24 @@ internal sealed class FakeGymQueries : IGymQueries
             new PagedResult<GymListItem>(items, filter.Page.Page, filter.Page.PageSize, items.Count));
     }
 
-    public Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken)
+    public Task<bool> ExistsAsync(Guid gymId, CancellationToken cancellationToken) =>
+        Task.FromResult(_gyms.Gyms.Any(gym => gym.Id == gymId));
+
+    public async Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken)
     {
         Gym? gym = _gyms.Gyms.SingleOrDefault(candidate => candidate.Id == gymId);
         if (gym is null)
         {
-            return Task.FromResult<GymDetail?>(null);
+            return null;
         }
 
         GymBranding? branding = _gyms.Branding.SingleOrDefault(candidate => candidate.GymId == gymId);
 
-        return Task.FromResult<GymDetail?>(new GymDetail(
+        IReadOnlyList<ResolvedFeatureDetail> features = FeatureQueries is null
+            ? []
+            : await FeatureQueries.ResolveForGymAsync(gymId, cancellationToken);
+
+        return new GymDetail(
             gym.Id,
             gym.Slug,
             gym.Name,
@@ -148,6 +163,7 @@ internal sealed class FakeGymQueries : IGymQueries
             // No subscription in the gym fakes: subscriptions have their own context and fakes, and a
             // gym is perfectly valid without one.
             null,
-            RowVersion.ToString(CultureInfo.InvariantCulture)));
+            features,
+            RowVersion.ToString(CultureInfo.InvariantCulture));
     }
 }

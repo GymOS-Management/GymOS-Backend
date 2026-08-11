@@ -432,6 +432,12 @@
               "string"
             ]
           },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/ResolvedFeatureDetail"
+            },
+            "type": "array"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -496,7 +502,30 @@
           "createdAtUtc",
           "branding",
           "subscription",
+          "features",
           "rowVersion"
+        ],
+        "type": "object"
+      },
+      "GymFeatureRequest": {
+        "properties": {
+          "isEnabled": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "isEnabled",
+          "reason"
         ],
         "type": "object"
       },
@@ -1520,6 +1549,49 @@
         ],
         "type": "object"
       },
+      "ResolvedFeatureDetail": {
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "featureId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "isPremium": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "overrideReason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "featureId",
+          "key",
+          "name",
+          "category",
+          "enabled",
+          "source",
+          "isPremium",
+          "overrideReason"
+        ],
+        "type": "object"
+      },
       "RoleDetail": {
         "properties": {
           "assignedUserCount": {
@@ -1581,6 +1653,20 @@
           "id",
           "name",
           "description"
+        ],
+        "type": "object"
+      },
+      "SetGymFeaturesRequest": {
+        "properties": {
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/GymFeatureRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "features"
         ],
         "type": "object"
       },
@@ -3046,7 +3132,7 @@
         ]
       },
       "get": {
-        "description": "A soft-deleted gym still resolves here, deliberately: an operator investigating why a tenant stopped working needs to see that it was deleted and when. Subscription, resolved features, device summary, and aggregate stats arrive with the modules that own them (M3\u2013M6) rather than as fields that always read zero.",
+        "description": "A soft-deleted gym still resolves here, deliberately: an operator investigating why a tenant stopped working needs to see that it was deleted and when. \u0060features\u0060 carries the whole catalogue resolved for this gym, each entry naming the layer that decided it \u2014 the same body \u0060GET /gyms/{gymId}/features\u0060 returns. Device summary and aggregate stats arrive with the modules that own them (M5\u2013M6) rather than as fields that always read zero.",
         "operationId": "GetGym",
         "parameters": [
           {
@@ -3106,7 +3192,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "One gym, with its branding",
+        "summary": "One gym, with its branding, subscription, and resolved features",
         "tags": [
           "Gyms"
         ]
@@ -3395,6 +3481,176 @@
           }
         ],
         "summary": "Replace a gym\u0027s branding",
+        "tags": [
+          "Gyms"
+        ]
+      }
+    },
+    "/api/v1/gyms/{gymId}/features": {
+      "get": {
+        "description": "The **whole catalogue**, each entry carrying \u0060enabled\u0060 and the \u0060source\u0060 that decided it \u2014 \u0060Override\u0060, \u0060Plan\u0060, or \u0060Default\u0060 (\u00A72.4). Not a list of exceptions: \u0022what can this gym do\u0022 is the question worth answering, and \u0060source\u0060 is what makes the answer explainable in a support conversation. \u0060overrideReason\u0060 is present only when an override is what decided it. A gym with no live subscription resolves every feature against the platform default.",
+        "operationId": "GetGymFeatures",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ResolvedFeatureDetail"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "What this gym\u0027s features resolve to, and why",
+        "tags": [
+          "Gyms"
+        ]
+      },
+      "put": {
+        "description": "An override is stored **only when it differs from what the gym would get anyway**. Ask for exactly what the plan \u2014 or the platform default, when the plan is silent \u2014 already gives, and any existing exception is **withdrawn** instead, so a gym that later changes plan follows the new plan rather than staying frozen by a row nobody remembers creating. \u0060reason\u0060 is therefore required only when an override is actually needed.\n\nThe response is the **full resolution, not an echo** of the request: after a withdrawal the stored state is deliberately not what was sent.\n\nOnly the keys listed are touched. No \u0060If-Match\u0060: each override is its own record keyed on (gym, feature), so there is no single version to match, and two operators editing different features do not conflict. Deciding what a *plan* includes is \u0060billing.manage\u0060 instead.",
+        "operationId": "SetGymFeatures",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gymId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetGymFeaturesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ResolvedFeatureDetail"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Grant or withdraw this gym\u0027s feature exceptions",
         "tags": [
           "Gyms"
         ]
