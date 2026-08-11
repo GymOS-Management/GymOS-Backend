@@ -1,7 +1,8 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-10 · M3.4 merged to `main` (`bd722bb`); API reference (OpenAPI security
-scheme, exposure gate, Scalar UI) built on top — **1116 tests green**
+**Last updated:** 2026-08-11 · M3.4 merged to `main` (`bd722bb`); API reference (security scheme,
+exposure gate, Scalar UI) and the enforced-header declarations (`5ee9aef`) built on top —
+**1123 tests green**
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
 before resuming work on any machine.
 
@@ -26,6 +27,7 @@ before resuming work on any machine.
 | **M3.3 — invoices** (Invoice aggregate, per-year numbering, issuing on assignment/conversion/upgrade, net-sign proration, mark-paid as the first production `IIdempotentCommand`, void, §3.4 endpoints) | ✅ **merged to `main`** (`e39eb73`) — reviewed at high effort (10 findings, all fixed), **1049 tests green**, verified live incl. idempotent replay |
 | **M3.4 — job runner + renewal/overdue jobs** (JobHost + advisory locks, RetentionJob, renewal sweep, overdue sweep with auto-PastDue) | ✅ **merged to `main`** (`bd722bb`) — design approved 2026-08-10, reviewed at high effort (10 findings, all fixed), **1101 tests green**, renewal verified live on the first 15-minute tick |
 | **API reference** (OpenAPI bearer scheme + per-operation security, `OpenApi:Enabled` exposure gate, Scalar UI at `/scalar/v1`, browser opens on startup) | ✅ complete — **1116 tests green**, verified live · ⬅ **awaiting review** |
+| **Enforced-header declarations** (`Idempotency-Key`, `If-Match`, `X-Confirm-Action` declared as real OpenAPI parameters, with the requiredness the pipeline actually applies) | ✅ **merged to `main`** (`5ee9aef`) — **1123 tests green**, snapshot regenerated and read semantically (25 header parameters added, nothing else changed) |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · ⬅ **awaiting review** |
 | M4+ — per approved roadmap (feature flags, dashboard, monitoring, settings) | later |
@@ -304,7 +306,7 @@ dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~GymApiTest
 
 Full counts per project, for checking a run was complete — **re-measured 2026-08-10, every project
 complete with no `Aborted`**: SharedKernel 126 · BuildingBlocks 55 · Architecture 136 ·
-Domain 337 · Application 201 · Infrastructure 67 · Integration 194 = **1116**.
+Domain 337 · Application 201 · Infrastructure 67 · Integration 201 = **1123**.
 
 Capping the test connection pools (above) may also have helped here — the last several full runs completed
 first time, where they previously needed retries.
@@ -758,6 +760,48 @@ host-only; approved in `docs/Engineering/DEPENDENCY_POLICY.md` in the same commi
   watch applies (Scalar sells a hosted product beside the MIT library); it is confined to the
   presentation edge and nothing depends on its types, so replacing it is deleting two calls.
 
+## Enforced-header declarations as built
+
+**Merged to `main`** (`5ee9aef`). No migration, no domain change — host and contract only. Built as the
+prerequisite for the frontend's F2 billing increment, which was the first thing to consume this
+contract the way a generated client does.
+
+**The defect.** Three headers were enforced by the pipeline and documented in prose alone:
+`Idempotency-Key` by `IdempotencyHeaderMiddleware` (AD-39), `If-Match` by `PreconditionHeaders.IfMatch`
+inside the handlers, and `X-Confirm-Action` by a comparison inside the command (AD-6). None was a
+declared parameter, so `openapi-typescript` could not surface any of them and every new client
+rediscovered the requirement by getting a 4xx. `POST /invoices/{id}/mark-paid` alone needs two of the
+three. This was the **third** instance of one underlying fault — the document not describing what the
+pipeline requires; the first two were the missing bearer scheme and the empty `security: [{}]`.
+
+1. **Declared from markers on the endpoints that enforce them** (`RequiredHeaders.cs`): `RequiresIfMatch()`,
+   `HonoursIfMatch()`, `RequiresIdempotencyKey()`, `RequiresConfirmAction()`, read by the same operation
+   transformer that adds the bearer requirement. The declaration sits beside the route it describes, and
+   the R13 snapshot gate turns any omission into a reviewed diff rather than a silent one.
+2. **`If-Match` requiredness is uneven, deliberately, and the contract now says so.** `versionRequired`
+   in the command is the source of truth, and only **five** pass `true` — `UpdatePlan`, `UpdateGym`,
+   `UpdateGymBranding`, `UpdateUser`, `SetUserRoles`. Every one is a **PUT that overwrites fields the
+   caller did not send**, where a missing precondition is last-write-wins over data nobody saw. Action
+   endpoints — plan activate/deactivate and the price writes, gym lifecycle, user suspend/reactivate,
+   the subscription writes, and invoice `mark-paid`/`void` — pass `false`: they honour the header when
+   supplied (a stale value is still 409) but do not demand it.
+3. **`Declare` de-duplicates by header name**, so chaining two contradictory markers on one route cannot
+   emit duplicate parameters — which would break `openapi-typescript` downstream.
+
+### Decisions and traps found
+
+- **Reading a header is not requiring it, and the difference was nearly inverted into the contract.**
+  The implementing agent stopped before writing code to challenge an instruction that said every
+  `If-Match` call site was required. It was right: following it would have declared the header mandatory
+  on about twelve endpoints where it is optional — the same lie this work removes, pointing the other
+  way. A contract that overstates enforcement is as false as one that hides it, and a generated client
+  would have been forced to supply a value it never needed.
+- **A test that samples cannot pin what the snapshot already pins.** The theory covers 7 of the 25
+  declared headers; `OpenApiContractTests` byte-pins the whole document, so flipping any declaration
+  fails CI regardless. What is still missing — recorded as owed — is a **semantic** assertion binding
+  requiredness to `versionRequired`, so the two cannot drift apart silently.
+- **Test counts after this work: 1123** (was 1116) — Integration 194 → 201.
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -798,7 +842,7 @@ To work on it — API on the host, database in a container:
 ```
 dotnet tool restore                # pinned dotnet-ef
 docker compose up -d postgres      # PostgreSQL 17 only
-dotnet test GymOS.Backend.slnx     # expect 1116 green (needs Docker) — see the test-host warning below
+dotnet test GymOS.Backend.slnx     # expect 1123 green (needs Docker) — see the test-host warning below
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
