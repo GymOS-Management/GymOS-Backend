@@ -1233,6 +1233,24 @@ report MRR per currency rather than summed avoided that dependency rather than b
 
 ## Known open items / honest notes
 
+- **Four minor findings were deliberately carried out of M5's reviews**, each judged not worth the
+  change it would cost, and recorded here so the judgement is visible rather than forgotten:
+  - `ADeletedGymLeavesThePopulationButStillCountsAsChurn` asserts that a gym's creation and
+    cancellation share a calendar day. The assertion is what makes the residual UTC-midnight race
+    **self-diagnosing** rather than a mystery flake — but it is still a race. Closing it needs an
+    `IClock` seam in `AuthenticationHost.Create`, which is shared by 15+ test files.
+  - `ActivityEntry.EntityType` coalesces null to `""` while `AuditLogQueries` projects the same
+    column as nullable, so `/dashboard/activity` and `/audit-logs` spell "none" two ways. One line
+    to reconcile, the day the console says which it wants.
+  - Three private copies of the same three-line `AppDbContext` factory exist across the integration
+    tests (`AuthenticationHost.CreateDbContext`, `FeatureCatalogSeedingTests`, `PlatformStatsHost`).
+    Task 0 collapsed the duplication that actually hurt — seven copies of the HTTP fixtures — and
+    these three genuinely differ in what they need.
+  - `IDashboardHealthCheck`'s comments claim it is "the one place" an Application abstraction is
+    implemented in the host. That is **wrong**, not merely imprecise: `HttpCurrentUser`/`ICurrentUser`
+    is the same pattern in the same project. The reasoning the comment gives is sound; only the
+    uniqueness claim is false. Fix the sentence next time the file is opened.
+
 - **An expiry recorded late by `RenewalJob` is lost from `expired_gyms` forever** (M5 whole-branch
   review, deliberately deferred): `DailyStatsCompiler` keys `expired_gyms` on `CurrentPeriodEndUtc` —
   the business date a period targets — not on when the expiry was actually noticed, because nothing on
