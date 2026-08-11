@@ -289,6 +289,92 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("messages", "outbox");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Analytics.DailyPlatformStats", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("ActiveGyms")
+                        .HasColumnType("integer")
+                        .HasColumnName("active_gyms");
+
+                    b.Property<int>("CanceledGyms")
+                        .HasColumnType("integer")
+                        .HasColumnName("canceled_gyms");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<int>("ExpiredGyms")
+                        .HasColumnType("integer")
+                        .HasColumnName("expired_gyms");
+
+                    b.Property<int>("NewGyms")
+                        .HasColumnType("integer")
+                        .HasColumnName("new_gyms");
+
+                    b.Property<int>("ProvisioningGyms")
+                        .HasColumnType("integer")
+                        .HasColumnName("provisioning_gyms");
+
+                    b.Property<DateOnly>("StatDate")
+                        .HasColumnType("date")
+                        .HasColumnName("stat_date");
+
+                    b.Property<int>("SuspendedGyms")
+                        .HasColumnType("integer")
+                        .HasColumnName("suspended_gyms");
+
+                    b.Property<int>("TotalGyms")
+                        .HasColumnType("integer")
+                        .HasColumnName("total_gyms");
+
+                    b.HasKey("Id")
+                        .HasName("pk_daily_platform_stats");
+
+                    b.HasIndex("StatDate")
+                        .IsUnique()
+                        .HasDatabaseName("ux_daily_platform_stats_date");
+
+                    b.ToTable("daily_platform_stats", "platform");
+                });
+
+            modelBuilder.Entity("GymOS.Platform.Domain.Analytics.PlatformMrr", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("StatsId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("stats_id");
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "GymOS.Platform.Domain.Analytics.PlatformMrr.Amount#Money", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.Property<decimal>("Amount")
+                                .HasColumnType("numeric(14,4)")
+                                .HasColumnName("amount_amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("amount_currency");
+                        });
+
+                    b.HasKey("Id")
+                        .HasName("pk_daily_platform_stats_mrr");
+
+                    b.HasIndex("StatsId")
+                        .HasDatabaseName("ix_daily_platform_stats_mrr_stats_id");
+
+                    b.ToTable("daily_platform_stats_mrr", "platform");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Features.Feature", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1352,6 +1438,16 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_deliveries_outbox_message_message_id");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Analytics.PlatformMrr", b =>
+                {
+                    b.HasOne("GymOS.Platform.Domain.Analytics.DailyPlatformStats", null)
+                        .WithMany("Mrr")
+                        .HasForeignKey("StatsId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_daily_platform_stats_mrr_daily_platform_stats_stats_id");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Features.GymFeatureOverride", b =>
                 {
                     b.HasOne("GymOS.Platform.Domain.Features.Feature", null)
@@ -1547,6 +1643,11 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_plan_prices_subscription_plans_plan_id");
+                });
+
+            modelBuilder.Entity("GymOS.Platform.Domain.Analytics.DailyPlatformStats", b =>
+                {
+                    b.Navigation("Mrr");
                 });
 
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.Role", b =>

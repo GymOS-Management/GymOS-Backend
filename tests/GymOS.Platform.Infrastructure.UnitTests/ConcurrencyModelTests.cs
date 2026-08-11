@@ -2,6 +2,7 @@ using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
 using GymOS.BuildingBlocks.Infrastructure.Idempotency;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
+using GymOS.Platform.Domain.Analytics;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Invoices;
 using GymOS.Platform.Domain.Subscriptions;
@@ -79,6 +80,12 @@ public sealed class ConcurrencyModelTests
         // optimistic concurrency, so an xmin token would sit unread: nothing ever loads this
         // entity into a change tracker to compare it against.
         [typeof(IdempotencyRecord)] = "mutated by condition-gated raw SQL, never through SaveChanges",
+
+        // Derived analytics data with exactly one writer, serialised by IJobLock: rows are inserted
+        // once and never updated, so there is no concurrent write to lose. See the aggregate's doc
+        // comment (DailyPlatformStats.cs) for the write-once rule this reflects.
+        [typeof(DailyPlatformStats)] = "one writer serialised by IJobLock; rows are written once and never updated",
+        [typeof(PlatformMrr)] = "owned by DailyPlatformStats and written once with it; same rule, no separate token",
     };
 
     [Fact]
