@@ -33,3 +33,20 @@ public interface IDashboardQueries
 
     Task<IReadOnlyList<ActivityEntry>> GetRecentActivityAsync(int limit, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// A live probe of the platform's health checks (§3.2) — the same report <c>/health/ready</c> runs.
+///
+/// <para>Its own seam, separate from <see cref="IDashboardQueries"/>, because the thing it wraps
+/// (<c>HealthCheckService</c>/<c>HealthReport</c>) ships in the ASP.NET Core shared framework rather
+/// than a package this layer can reference: Application and Infrastructure are plain
+/// <c>Microsoft.NET.Sdk</c> projects, and only the host takes on <c>Microsoft.NET.Sdk.Web</c>. The
+/// implementation therefore lives in <c>GymOS.WebApi</c>, wired in <c>Program.cs</c> — the one place
+/// that boundary is allowed to be crossed — while the query and its handler stay here, so
+/// <c>/dashboard/health</c> goes through the dispatcher exactly like every other endpoint and gets
+/// AD-5's second permission check for free.</para>
+/// </summary>
+public interface IDashboardHealthCheck
+{
+    Task<DashboardHealth> CheckAsync(CancellationToken cancellationToken);
+}

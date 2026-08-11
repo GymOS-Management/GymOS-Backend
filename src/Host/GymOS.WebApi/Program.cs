@@ -5,12 +5,14 @@ using GymOS.BuildingBlocks.Application.Idempotency;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Infrastructure.DependencyInjection;
 using GymOS.BuildingBlocks.Infrastructure.Jobs;
+using GymOS.Platform.Application.Analytics.Abstractions;
 using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Infrastructure.DependencyInjection;
 using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
+using GymOS.WebApi.Analytics;
 using GymOS.WebApi.Auth;
 using GymOS.WebApi.Endpoints;
 using GymOS.WebApi.Extensions;
@@ -80,6 +82,12 @@ try
     builder.Services.AddPlatformSubscriptions();
     builder.Services.AddPlatformFeatures();
     builder.Services.AddPlatformAnalytics();
+
+    // `/dashboard/health` needs `HealthCheckService`, which ships in the ASP.NET Core shared
+    // framework this host references — Application and Infrastructure are plain `Microsoft.NET.Sdk`
+    // projects and cannot see it. Registered here, by hand, rather than folded into
+    // AddPlatformAnalytics for that reason (see IDashboardHealthCheck).
+    builder.Services.AddScoped<IDashboardHealthCheck, DashboardHealthCheckAdapter>();
 
     // The job runner (M3.4). Jobs register below it; Jobs:Enabled=false turns the host off for
     // tests that drive the sweeps by hand.

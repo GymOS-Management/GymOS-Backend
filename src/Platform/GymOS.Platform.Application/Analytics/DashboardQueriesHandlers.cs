@@ -10,6 +10,10 @@ namespace GymOS.Platform.Application.Analytics;
 [RequiresPermission(PlatformPermissions.AnalyticsRead)]
 public sealed record GetDashboardSummaryQuery : IQuery<Result<DashboardSummary>>;
 
+/// <summary>The platform's health checks, projected for a console panel. See <see cref="IDashboardHealthCheck"/>.</summary>
+[RequiresPermission(PlatformPermissions.AnalyticsRead)]
+public sealed record GetDashboardHealthQuery : IQuery<Result<DashboardHealth>>;
+
 /// <summary>
 /// The audit log in a trimmed shape, for the dashboard's activity feed. Gated on
 /// <see cref="PlatformPermissions.AuditRead"/> rather than <see cref="PlatformPermissions.AnalyticsRead"/>
@@ -34,6 +38,23 @@ internal sealed class GetDashboardSummaryQueryHandler
         ArgumentNullException.ThrowIfNull(query);
 
         return Result.Success(await _dashboardQueries.GetSummaryAsync(cancellationToken));
+    }
+}
+
+internal sealed class GetDashboardHealthQueryHandler
+    : IQueryHandler<GetDashboardHealthQuery, Result<DashboardHealth>>
+{
+    private readonly IDashboardHealthCheck _healthCheck;
+
+    public GetDashboardHealthQueryHandler(IDashboardHealthCheck healthCheck) => _healthCheck = healthCheck;
+
+    public async Task<Result<DashboardHealth>> HandleAsync(
+        GetDashboardHealthQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        return Result.Success(await _healthCheck.CheckAsync(cancellationToken));
     }
 }
 

@@ -5,7 +5,6 @@ using GymOS.Platform.Application.Analytics;
 using GymOS.Platform.Application.Analytics.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace GymOS.WebApi.Endpoints;
 
@@ -81,21 +80,12 @@ public static class DashboardEndpoints
         return result.IsSuccess ? TypedResults.Ok(result.Value) : result.ToProblem();
     }
 
-    private static async Task<IResult> HealthAsync(
-        HealthCheckService healthCheckService, CancellationToken cancellationToken)
+    private static async Task<IResult> HealthAsync(IDispatcher dispatcher, CancellationToken cancellationToken)
     {
-        HealthReport report = await healthCheckService.CheckHealthAsync(cancellationToken);
+        Result<DashboardHealth> result =
+            await dispatcher.QueryAsync(new GetDashboardHealthQuery(), cancellationToken);
 
-        // No Exception, no Description projected here: this endpoint is authenticated, but an
-        // exception message can carry a connection string, which is an information disclosure a
-        // console panel has no business exposing.
-        var health = new DashboardHealth(
-            report.Status.ToString(),
-            report.Entries
-                .Select(entry => new HealthCheckStatus(entry.Key, entry.Value.Status.ToString()))
-                .ToList());
-
-        return TypedResults.Ok(health);
+        return result.IsSuccess ? TypedResults.Ok(result.Value) : result.ToProblem();
     }
 
     private static async Task<IResult> ActivityAsync(
