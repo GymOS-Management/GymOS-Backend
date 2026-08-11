@@ -303,6 +303,64 @@
         ],
         "type": "object"
       },
+      "FeatureListItem": {
+        "properties": {
+          "adoptionCount": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "defaultEnabled": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "isPremium": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "overrideCount": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "rowVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "name",
+          "description",
+          "category",
+          "defaultEnabled",
+          "isPremium",
+          "adoptionCount",
+          "overrideCount",
+          "rowVersion"
+        ],
+        "type": "object"
+      },
       "GymBrandingDetail": {
         "properties": {
           "customDomain": {
@@ -1676,6 +1734,39 @@
         ],
         "type": "object"
       },
+      "UpdateFeatureRequest": {
+        "properties": {
+          "category": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "defaultEnabled": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isPremium": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "category",
+          "defaultEnabled",
+          "isPremium"
+        ],
+        "type": "object"
+      },
       "UpdateGymBrandingRequest": {
         "properties": {
           "customDomain": {
@@ -2435,6 +2526,164 @@
         "summary": "Exchange the refresh cookie for a new access token",
         "tags": [
           "Authentication"
+        ]
+      }
+    },
+    "/api/v1/features": {
+      "get": {
+        "description": "Every feature the platform can switch on, with \u0060adoptionCount\u0060 \u2014 how many gyms currently resolve it **on** through the full three-layer rule (override \u2192 plan \u2192 platform default), not merely how many plans include it. \u0060overrideCount\u0060 is how many gyms hold an explicit exception. Ordered by category then name; the catalogue is seeded, so this list is not paged.",
+        "operationId": "ListFeatures",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FeatureListItem"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The feature catalogue",
+        "tags": [
+          "Features"
+        ]
+      }
+    },
+    "/api/v1/features/{featureId}": {
+      "put": {
+        "description": "The **key is not editable** \u2014 code branches on it, and it is what the API returns. \u0060If-Match\u0060 is **required**: this overwrites what you read, and changing \u0060defaultEnabled\u0060 re-answers the feature for every gym that has neither an override nor a plan opinion \u2014 the widest blast radius of any write here. \u0060isPremium\u0060 is informational: what a gym gets is decided by its plan and its overrides.",
+        "operationId": "UpdateFeature",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "featureId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFeatureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureListItem"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "428": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Precondition Required"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Edit a feature\u0027s copy, its platform default, and whether it is sold",
+        "tags": [
+          "Features"
         ]
       }
     },
@@ -5728,6 +5977,9 @@
     },
     {
       "name": "Invoices"
+    },
+    {
+      "name": "Features"
     },
     {
       "name": "Platform users"

@@ -1,7 +1,9 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 
 namespace GymOS.IntegrationTests;
 
@@ -28,6 +30,24 @@ internal sealed class AuthenticationHost : IAsyncDisposable
 
     /// <summary>Exposed so a test can boot a second host against the same database.</summary>
     public string ConnectionString { get; }
+
+    /// <summary>
+    /// A context over the host's own database, for arranging state the API cannot yet express or
+    /// asserting rows the API does not return.
+    ///
+    /// <para>Deliberately narrow: a test that <em>acts</em> through the database rather than the API
+    /// stops testing the API. Use it to set up preconditions and to verify storage, not to perform
+    /// the behaviour under test.</para>
+    /// </summary>
+    public AppDbContext CreateDbContext()
+    {
+        DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(ConnectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSnakeCaseNamingConvention()
+            .Options;
+
+        return new AppDbContext(options);
+    }
 
     public static AuthenticationHost Create(
         string connectionString,

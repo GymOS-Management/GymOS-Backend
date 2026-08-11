@@ -152,7 +152,11 @@ public sealed class ApiEndpointTests : IAsyncLifetime
             ["POST /api/v1/auth/login", "POST /api/v1/auth/refresh"],
             anonymous.Order(StringComparer.Ordinal));
 
-        Assert.Equal(43, secured.Count);
+        // A tripwire, not a specification: this number is expected to change whenever an endpoint
+        // is added, and the point of asserting it is that adding one makes you look at this test
+        // and confirm the new operation landed in `secured` rather than in `anonymous`.
+        // 43 → 45 with M4's two feature-catalogue operations.
+        Assert.Equal(45, secured.Count);
     }
 
     /// <summary>

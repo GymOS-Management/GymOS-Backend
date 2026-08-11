@@ -78,6 +78,7 @@ try
     builder.Services.AddPlatformIdentity(builder.Configuration);
     builder.Services.AddPlatformGyms();
     builder.Services.AddPlatformSubscriptions();
+    builder.Services.AddPlatformFeatures();
 
     // The job runner (M3.4). Jobs register below it; Jobs:Enabled=false turns the host off for
     // tests that drive the sweeps by hand.
@@ -230,6 +231,7 @@ try
     app.MapPlanEndpoints();
     app.MapSubscriptionEndpoints();
     app.MapInvoiceEndpoints();
+    app.MapFeatureEndpoints();
     app.MapUserEndpoints();
     app.MapRoleEndpoints();
     app.MapAuditLogEndpoints();
