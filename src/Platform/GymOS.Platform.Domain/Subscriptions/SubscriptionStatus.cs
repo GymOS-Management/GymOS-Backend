@@ -82,6 +82,26 @@ public static class SubscriptionStatusTransitions
 
     public static bool IsLive(SubscriptionStatus status) => Live.Contains(status);
 
+    /// <summary>
+    /// Statuses that contribute revenue — <see cref="Live"/> minus trials.
+    ///
+    /// <para>Deliberately its own set rather than <c>Live.Except(Trialing)</c> at the call site.
+    /// The two answer different questions: <see cref="Live"/> is "does the one-live-subscription
+    /// rule apply to this row", <c>Billing</c> is "does this money count". Writing the second as an
+    /// adjustment of the first is how they end up conflated the next time one of them changes.</para>
+    ///
+    /// <para>PastDue is here because the money is genuinely owed and service is still running
+    /// (M3.4: billing state never withholds service). Dropping it would turn a card that failed on
+    /// Tuesday into a revenue dip that reverses itself on Thursday.</para>
+    /// </summary>
+    public static readonly SubscriptionStatus[] Billing =
+    [
+        SubscriptionStatus.Active,
+        SubscriptionStatus.PastDue,
+    ];
+
+    public static bool IsBilling(SubscriptionStatus status) => Billing.Contains(status);
+
     public static bool IsAllowed(SubscriptionStatus from, SubscriptionStatus to) =>
         Allowed.Contains((from, to));
 
