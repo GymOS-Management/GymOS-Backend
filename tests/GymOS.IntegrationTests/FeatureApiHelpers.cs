@@ -60,6 +60,43 @@ internal static class FeatureApiHelpers
         return await context.Set<GymFeatureOverride>().CountAsync(over => over.GymId == gymId);
     }
 
+    /// <summary>
+    /// Flips the platform default for one feature through <c>PUT /api/v1/features/{id}</c>, the
+    /// write with a platform-wide blast radius — <c>If-Match</c> and all, exactly as
+    /// <c>FeatureCatalogueApiTests</c> exercises it. Reads the current catalogue first for the
+    /// feature's id, current field values (so only <paramref name="defaultEnabled"/> moves), and
+    /// the row version the precondition needs.
+    /// </summary>
+    public static async Task SetFeatureDefaultAsync(
+        HttpClient client, string featureKey, bool defaultEnabled)
+    {
+        using HttpResponseMessage catalogue = await client.GetAsync(
+            new Uri("/api/v1/features", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, catalogue.StatusCode);
+        JsonElement feature = Feature(
+            await catalogue.Content.ReadFromJsonAsync<JsonElement>(), featureKey);
+
+        Guid featureId = feature.GetProperty("id").GetGuid();
+        string rowVersion = feature.GetProperty("rowVersion").GetString()!;
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, new Uri($"/api/v1/features/{featureId}", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new
+            {
+                name = feature.GetProperty("name").GetString(),
+                description = feature.GetProperty("description").GetString(),
+                category = feature.GetProperty("category").GetString(),
+                defaultEnabled,
+                isPremium = feature.GetProperty("isPremium").GetBoolean(),
+            }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
+
+        using HttpResponseMessage response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     public static async Task SetPlanFeatureAsync(HttpClient client, Guid planId, string featureKey, bool isEnabled)
     {
         using HttpResponseMessage plan = await client.GetAsync(

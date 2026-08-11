@@ -1,5 +1,7 @@
+using GymOS.BuildingBlocks.Infrastructure.Jobs;
 using GymOS.Platform.Application.Features;
 using GymOS.Platform.Application.Features.Abstractions;
+using GymOS.Platform.Infrastructure.Jobs;
 using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.Platform.Infrastructure.Persistence.Repositories;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +23,7 @@ public static class PlatformFeaturesServiceCollectionExtensions
         services.TryAddScoped<IFeatureRepository, FeatureRepository>();
         services.TryAddScoped<IFeatureQueries, FeatureQueries>();
         services.TryAddScoped<IFeatureExceptionMaintainer, FeatureExceptionMaintainer>();
+        services.AddScheduledJob<FeatureOverrideSweepJob>();
 
         return services;
     }
