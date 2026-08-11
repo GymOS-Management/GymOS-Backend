@@ -25,6 +25,72 @@
 
 ---
 
+### Task 0: Extract the shared integration-test helpers
+
+**Added after the pre-flight scan, by the owner's ruling.** Tasks 3–5 would otherwise copy test helpers verbatim, which the review rubric treats as a defect. A census found the duplication is already wide:
+
+| Helper | Copies today |
+|---|---|
+| `SignedInAsync`, `RoleIdAsync`, `FindUserIdAsync`, `SetRolesAsync` | **7 files** |
+| `CreateGymAsync`, `CreatePlanAsync` | **4 files** |
+| `AssignAsync` | **3 files** |
+
+Extracting while leaving the existing copies in place would make it eight copies, so this task **migrates every caller**. This is a pure refactor: no test's behaviour, name, or assertion changes, and the suite total stays exactly **1267**.
+
+**Files:**
+- Create: `tests/GymOS.IntegrationTests/PlatformApiHelpers.cs`
+- Modify: `AuditCaptureTests.cs`, `FeatureCatalogueApiTests.cs`, `GymApiTests.cs`, `GymFeatureApiTests.cs`, `InvoiceApiTests.cs`, `PlanApiTests.cs`, `PlatformAdminApiTests.cs`, `SubscriptionApiTests.cs` (all in `tests/GymOS.IntegrationTests/`)
+
+**Interfaces:**
+- Consumes: `AuthenticationHost`, `AuthApi` (existing test infrastructure).
+- Produces: `PlatformApiHelpers` — the shared surface Tasks 3, 4 and 5 use instead of copying. **You choose the exact signatures**; they must cover every existing caller's needs without a caller passing a value it does not care about. Record the final signatures in your report file, because later tasks are dispatched against them.
+
+- [ ] **Step 1: Read every caller before designing the surface**
+
+Read all seven files' copies of each helper. **They are not identical** — `CreatePlanAsync` differs in plan code, price and trial days between files, and some callers need the created plan's id while others need its row version. The shared helper must serve every existing call site without forcing a caller to invent an argument it does not care about; default parameters are the natural tool.
+
+Do **not** design the surface from this plan's description alone. The variations are the whole difficulty of this task.
+
+- [ ] **Step 2: Establish the baseline**
+
+```
+dotnet test tests/GymOS.IntegrationTests
+```
+
+Expected: **235 passed**, no `Aborted`. Write the number down; it is the thing this task must not change.
+
+- [ ] **Step 3: Write `PlatformApiHelpers`**
+
+A `static class` (or an instance type taking the host, if that serves the call sites better) in `tests/GymOS.IntegrationTests/`, with XML doc comments explaining what each helper does — these are read by every future test author. Keep the helpers thin: they are HTTP calls with `Assert.Equal(HttpStatusCode.…, response.StatusCode)` on the result, not a second test framework.
+
+- [ ] **Step 4: Migrate the callers one file at a time**
+
+After **each** file, run that file's tests:
+
+```
+dotnet test tests/GymOS.IntegrationTests --filter "FullyQualifiedName~<TestClassName>"
+```
+
+One file at a time, because a broken shared helper otherwise fails seven suites at once and the cause is no longer obvious.
+
+- [ ] **Step 5: Confirm nothing moved**
+
+```
+dotnet build GymOS.Backend.slnx
+dotnet test tests/GymOS.IntegrationTests
+```
+
+Expected: **0 warnings**, **235 passed**, no `Aborted` — the identical number from Step 2. A different total means a test was lost or renamed, which this task must not do.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tests/GymOS.IntegrationTests
+git commit -m "test: one copy of the integration helpers, not seven"
+```
+
+---
+
 ### Task 1: The MRR calculator and the `Billing` status set
 
 Pure domain arithmetic, no database. This lands first because both the job (Task 3) and the live dashboard (Task 4) depend on it, and it is the piece most worth getting exhaustively tested while it has no dependencies.
@@ -1000,7 +1066,7 @@ Create `tests/GymOS.IntegrationTests/PlatformStatsJobTests.cs`. Mirror `Retentio
     }
 ```
 
-Write the `SeedGymOnMonthlyPlanAsync`, `SeedGymOnTrialAsync`, `SeedDeletedGymAsync`, `CompileAsync` and `ReadAsync` helpers using the HTTP endpoints where they exist (gyms, plans, prices, subscription assignment — copy the helper bodies from `GymFeatureApiTests.cs`, which already has all four) and `_host.CreateDbContext()` for reads. `CompileAsync` resolves `DailyStatsCompiler` from a scope and calls it with a fixed `now`.
+Write the `SeedGymOnMonthlyPlanAsync`, `SeedGymOnTrialAsync`, `SeedDeletedGymAsync`, `ScheduleCancellationAsync`, `CompileAsync` and `ReadAsync` helpers on top of **`PlatformApiHelpers`** (Task 0) — do not copy helper bodies from another test file; the shared surface exists precisely so this task does not. Its signatures are in Task 0's report file. Reads use `_host.CreateDbContext()`; `CompileAsync` resolves `DailyStatsCompiler` from a scope and calls it with a fixed `now`.
 
 - [ ] **Step 5: Run them**
 
@@ -1073,7 +1139,7 @@ In `SystemRoles.cs`, add `PlatformPermissions.AnalyticsRead` to **SuperAdmin, Pl
 
 - [ ] **Step 2: Write the failing permission test**
 
-Add to a new `tests/GymOS.IntegrationTests/DashboardApiTests.cs` (mirror `FeatureCatalogueApiTests.cs`'s fixture and its `SignedInAsync(roleName, email)` helper — copy it verbatim, it is 25 lines):
+Add to a new `tests/GymOS.IntegrationTests/DashboardApiTests.cs`. Mirror `FeatureCatalogueApiTests.cs`'s **fixture** (the `IAsyncLifetime` + isolated-database setup), and use **`PlatformApiHelpers`** (Task 0) for `SignedInAsync`, `CreateGymAsync`, `CreatePlanAsync` and `AssignAsync` — its signatures are in Task 0's report file. Do not copy helper bodies:
 
 ```csharp
     [Fact]
