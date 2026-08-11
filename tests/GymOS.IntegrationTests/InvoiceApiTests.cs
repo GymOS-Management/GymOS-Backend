@@ -14,8 +14,6 @@ namespace GymOS.IntegrationTests;
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class InvoiceApiTests : IAsyncLifetime
 {
-    private static readonly Uri Gyms = new("/api/v1/gyms", UriKind.Relative);
-    private static readonly Uri Plans = new("/api/v1/plans", UriKind.Relative);
     private static readonly Uri Invoices = new("/api/v1/invoices", UriKind.Relative);
 
     private readonly PostgresFixture _postgres;
@@ -47,9 +45,9 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     [Fact]
     public async Task AssigningWithoutATrial_IssuesTheFirstPeriodInvoice()
     {
-        Guid gymId = await CreateGymAsync("invoice-gym");
-        Guid planId = await CreatePlanAsync("INVOICED", trialDays: 0, amount: 49.99m);
-        await AssignAsync(gymId, planId);
+        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "invoice-gym");
+        Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "INVOICED", trialDays: 0, amount: 49.99m)).Id;
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         JsonElement list = await GymInvoicesAsync(gymId);
 
@@ -71,9 +69,9 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     [Fact]
     public async Task ATrialBillsNothingUntilItConverts()
     {
-        Guid gymId = await CreateGymAsync("trial-invoice-gym");
-        Guid planId = await CreatePlanAsync("TRIALINV", trialDays: 14, amount: 29.99m);
-        await AssignAsync(gymId, planId);
+        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "trial-invoice-gym");
+        Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "TRIALINV", trialDays: 14, amount: 29.99m)).Id;
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         Assert.Equal(0, (await GymInvoicesAsync(gymId)).GetArrayLength());
 
@@ -89,12 +87,12 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     [Fact]
     public async Task UpgradingIssuesATwoLineProrationInvoice()
     {
-        Guid gymId = await CreateGymAsync("upgrade-invoice-gym");
-        Guid basic = await CreatePlanAsync("BASICINV", trialDays: 0, amount: 10m);
-        Guid pro = await CreatePlanAsync("PROINV", trialDays: 0, amount: 20m);
-        await AssignAsync(gymId, basic);
+        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "upgrade-invoice-gym");
+        Guid basic = (await PlatformApiHelpers.CreatePlanAsync(_client, "BASICINV", trialDays: 0, amount: 10m)).Id;
+        Guid pro = (await PlatformApiHelpers.CreatePlanAsync(_client, "PROINV", trialDays: 0, amount: 20m)).Id;
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, basic);
 
-        using HttpResponseMessage changed = await AssignAsync(gymId, pro);
+        using HttpResponseMessage changed = await PlatformApiHelpers.AssignAsync(_client, gymId, pro);
         Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
 
         JsonElement list = await GymInvoicesAsync(gymId);
@@ -111,12 +109,12 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     [Fact]
     public async Task DowngradingSchedulesInsteadOfBilling_AndAskingForTheCurrentPlanClearsIt()
     {
-        Guid gymId = await CreateGymAsync("downgrade-invoice-gym");
-        Guid pro = await CreatePlanAsync("PRODOWN", trialDays: 0, amount: 20m);
-        Guid basic = await CreatePlanAsync("BASICDOWN", trialDays: 0, amount: 10m);
-        await AssignAsync(gymId, pro);
+        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "downgrade-invoice-gym");
+        Guid pro = (await PlatformApiHelpers.CreatePlanAsync(_client, "PRODOWN", trialDays: 0, amount: 20m)).Id;
+        Guid basic = (await PlatformApiHelpers.CreatePlanAsync(_client, "BASICDOWN", trialDays: 0, amount: 10m)).Id;
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, pro);
 
-        using HttpResponseMessage downgraded = await AssignAsync(gymId, basic);
+        using HttpResponseMessage downgraded = await PlatformApiHelpers.AssignAsync(_client, gymId, basic);
         Assert.Equal(HttpStatusCode.OK, downgraded.StatusCode);
         JsonElement body = await downgraded.Content.ReadFromJsonAsync<JsonElement>();
 
@@ -133,7 +131,7 @@ public sealed class InvoiceApiTests : IAsyncLifetime
         Assert.Equal(1, (await GymInvoicesAsync(gymId)).GetArrayLength());
 
         // Requesting the current plan again is the cancellation gesture.
-        using HttpResponseMessage cleared = await AssignAsync(gymId, pro);
+        using HttpResponseMessage cleared = await PlatformApiHelpers.AssignAsync(_client, gymId, pro);
         Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
         JsonElement clearedBody = await cleared.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(JsonValueKind.Null, clearedBody.GetProperty("pendingChange").ValueKind);
@@ -142,9 +140,9 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     [Fact]
     public async Task TheListFiltersByStatusAndRefusesAnUnknownOne()
     {
-        Guid gymId = await CreateGymAsync("list-invoice-gym");
-        Guid planId = await CreatePlanAsync("LISTED", trialDays: 0, amount: 15m);
-        await AssignAsync(gymId, planId);
+        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "list-invoice-gym");
+        Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "LISTED", trialDays: 0, amount: 15m)).Id;
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
 
         JsonElement invoice = (await GymInvoicesAsync(gymId))[0];
         using HttpResponseMessage paid = await MarkPaidAsync(
@@ -179,9 +177,9 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     [Fact]
     public async Task MarkPaidIsIdempotentEndToEnd()
     {
-        Guid gymId = await CreateGymAsync("idempotent-gym");
-        Guid planId = await CreatePlanAsync("IDEMINV", trialDays: 0, amount: 49.99m);
-        await AssignAsync(gymId, planId);
+        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "idempotent-gym");
+        Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "IDEMINV", trialDays: 0, amount: 49.99m)).Id;
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         Guid invoiceId = (await GymInvoicesAsync(gymId))[0].GetProperty("id").GetGuid();
         string key = Guid.NewGuid().ToString();
 
@@ -224,9 +222,9 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     [Fact]
     public async Task VoidingIsConfirmationGated()
     {
-        Guid gymId = await CreateGymAsync("void-gym");
-        Guid planId = await CreatePlanAsync("VOIDINV", trialDays: 0, amount: 25m);
-        await AssignAsync(gymId, planId);
+        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "void-gym");
+        Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "VOIDINV", trialDays: 0, amount: 25m)).Id;
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         JsonElement invoice = (await GymInvoicesAsync(gymId))[0];
         Guid invoiceId = invoice.GetProperty("id").GetGuid();
         string number = invoice.GetProperty("invoiceNumber").GetString()!;
@@ -247,9 +245,9 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     [Fact]
     public async Task APaidInvoiceCannotBeVoided()
     {
-        Guid gymId = await CreateGymAsync("paid-void-gym");
-        Guid planId = await CreatePlanAsync("PAIDVOID", trialDays: 0, amount: 25m);
-        await AssignAsync(gymId, planId);
+        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "paid-void-gym");
+        Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "PAIDVOID", trialDays: 0, amount: 25m)).Id;
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         JsonElement invoice = (await GymInvoicesAsync(gymId))[0];
         Guid invoiceId = invoice.GetProperty("id").GetGuid();
 
@@ -265,12 +263,13 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     [Fact]
     public async Task BillingReadCanSeeInvoicesButNotPayThem()
     {
-        Guid gymId = await CreateGymAsync("scoped-invoice-gym");
-        Guid planId = await CreatePlanAsync("SCOPEDINV", trialDays: 0, amount: 25m);
-        await AssignAsync(gymId, planId);
+        Guid gymId = await PlatformApiHelpers.CreateGymAsync(_client, "scoped-invoice-gym");
+        Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "SCOPEDINV", trialDays: 0, amount: 25m)).Id;
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gymId, planId);
         Guid invoiceId = (await GymInvoicesAsync(gymId))[0].GetProperty("id").GetGuid();
 
-        HttpClient supportAgent = await SignedInAsync("SupportAgent", "support.invoices@gymos.test");
+        HttpClient supportAgent = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, "SupportAgent", "support.invoices@gymos.test");
 
         using HttpResponseMessage read = await supportAgent.GetAsync(Invoices);
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
@@ -288,83 +287,6 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
-
-    private async Task<Guid> CreateGymAsync(string slug)
-    {
-        using HttpResponseMessage created = await _client.PostAsJsonAsync(Gyms, new
-        {
-            slug,
-            name = $"Gym {slug}",
-            ownerName = "Ada Owner",
-            ownerEmail = "ada@acme.test",
-            phone = (string?)null,
-            countryCode = "CY",
-            timeZoneId = "Asia/Nicosia",
-            currency = "EUR",
-        });
-
-        Assert.True(
-            created.StatusCode == HttpStatusCode.Created,
-            $"Expected 201 creating gym {slug}, got {(int)created.StatusCode}: " +
-            await created.Content.ReadAsStringAsync());
-
-        return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
-    }
-
-    private async Task<Guid> CreatePlanAsync(string code, int trialDays, decimal amount)
-    {
-        using HttpResponseMessage created = await _client.PostAsJsonAsync(Plans, new
-        {
-            code,
-            name = $"Plan {code}",
-            description = "Created by the invoice suite",
-            trialDays,
-            maxMembers = (int?)null,
-            maxTrainers = (int?)null,
-            maxStaff = (int?)null,
-            storageLimitMb = (long?)null,
-            sortOrder = 1,
-        });
-
-        Assert.True(
-            created.StatusCode == HttpStatusCode.Created,
-            $"Expected 201 creating plan {code}, got {(int)created.StatusCode}: " +
-            await created.Content.ReadAsStringAsync());
-
-        Guid planId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
-
-        // If-Match required on the price upsert — it overwrites a price the caller read.
-        using HttpResponseMessage plan = await _client.GetAsync(
-            new Uri($"/api/v1/plans/{planId}", UriKind.Relative));
-        string rowVersion = (await plan.Content.ReadFromJsonAsync<JsonElement>())
-            .GetProperty("rowVersion").GetString()!;
-
-        using var priceRequest = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { billingCycle = "Monthly", currency = "EUR", amount }),
-        };
-        priceRequest.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
-
-        using HttpResponseMessage priced = await _client.SendAsync(priceRequest);
-        Assert.Equal(HttpStatusCode.OK, priced.StatusCode);
-
-        return planId;
-    }
-
-    private async Task<HttpResponseMessage> AssignAsync(Guid gymId, Guid planId)
-    {
-        HttpResponseMessage response = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/gyms/{gymId}/subscription", UriKind.Relative),
-            new { planId, billingCycle = "Monthly", currency = "EUR" });
-
-        Assert.True(
-            response.StatusCode == HttpStatusCode.OK,
-            $"Expected 200 assigning plan, got {(int)response.StatusCode}: " +
-            await response.Content.ReadAsStringAsync());
-
-        return response;
-    }
 
     private async Task<JsonElement> GymInvoicesAsync(Guid gymId)
     {
@@ -420,70 +342,4 @@ public sealed class InvoiceApiTests : IAsyncLifetime
         return await _client.SendAsync(request);
     }
 
-    private async Task<HttpClient> SignedInAsync(string roleName, string email)
-    {
-        const string Password = "role-holder-integration-password";
-
-        await using AuthenticationHost seedHost = AuthenticationHost.Create(
-            _host.ConnectionString,
-            settings =>
-            {
-                settings["Seed:SuperAdmin:Email"] = email;
-                settings["Seed:SuperAdmin:Password"] = Password;
-            });
-
-        using HttpClient seedClient = seedHost.CreateClient();
-        using HttpResponseMessage ready = await seedClient.GetAsync(new Uri("/health/ready", UriKind.Relative));
-        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
-
-        Guid userId = await FindUserIdAsync(email);
-        await SetRolesAsync(userId, await RoleIdAsync(roleName));
-
-        HttpClient client = _host.CreateClient();
-        using HttpResponseMessage signIn = await AuthApi.LoginAsync(client, email, Password);
-        Assert.Equal(HttpStatusCode.OK, signIn.StatusCode);
-        AuthApi.Authorize(client, await AuthApi.ReadAccessTokenAsync(signIn));
-
-        return client;
-    }
-
-    private async Task<Guid> RoleIdAsync(string roleName)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(
-            new Uri("/api/v1/roles", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.EnumerateArray()
-            .Single(role => role.GetProperty("name").GetString() == roleName)
-            .GetProperty("id").GetGuid();
-    }
-
-    private async Task<Guid> FindUserIdAsync(string email)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(
-            new Uri($"/api/v1/users?search={Uri.EscapeDataString(email)}", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.GetProperty("items").EnumerateArray()
-            .Single(user => user.GetProperty("email").GetString() == email)
-            .GetProperty("id").GetGuid();
-    }
-
-    private async Task SetRolesAsync(Guid userId, params Guid[] roleIds)
-    {
-        using HttpResponseMessage current = await _client.GetAsync(
-            new Uri($"/api/v1/users/{userId}", UriKind.Relative));
-        using JsonDocument currentBody = JsonDocument.Parse(await current.Content.ReadAsStringAsync());
-        string rowVersion = currentBody.RootElement.GetProperty("rowVersion").GetString()!;
-
-        using var request = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/users/{userId}/roles", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { roleIds }),
-        };
-        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
-
-        using HttpResponseMessage response = await _client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    }
 }

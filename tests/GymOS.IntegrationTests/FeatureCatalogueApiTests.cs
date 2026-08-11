@@ -15,8 +15,6 @@ namespace GymOS.IntegrationTests;
 public sealed class FeatureCatalogueApiTests : IAsyncLifetime
 {
     private static readonly Uri Features = new("/api/v1/features", UriKind.Relative);
-    private static readonly Uri Gyms = new("/api/v1/gyms", UriKind.Relative);
-    private static readonly Uri Plans = new("/api/v1/plans", UriKind.Relative);
 
     private readonly PostgresFixture _postgres;
     private AuthenticationHost _host = null!;
@@ -72,15 +70,16 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
         Assert.Equal(0, before.GetProperty("adoptionCount").GetInt32());
 
         // Layer 3 stays silent: a gym with no subscription resolves CRM to the platform default (off).
-        Guid defaultsGym = await CreateGymAsync("defaults-gym");
+        Guid defaultsGym = await PlatformApiHelpers.CreateGymAsync(_client, "defaults-gym");
         Assert.Equal(0, FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm)
             .GetProperty("adoptionCount").GetInt32());
 
         // Layer 2: a plan that includes CRM, and a gym subscribed to it.
-        Guid planId = await CreatePlanAsync("WITHCRM");
+        Guid planId = (await PlatformApiHelpers.CreatePlanAsync(_client, "WITHCRM")).Id;
         await SetPlanFeatureAsync(planId, PlatformFeatures.Crm, enabled: true);
-        Guid planGym = await CreateGymAsync("plan-gym");
-        await AssignAsync(planGym, planId);
+        Guid planGym = await PlatformApiHelpers.CreateGymAsync(_client, "plan-gym");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, planGym, planId);
+        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
 
         Assert.Equal(1, FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm)
             .GetProperty("adoptionCount").GetInt32());
@@ -107,7 +106,7 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
         // Both figures sit in the same catalogue row, so they have to describe the same population.
         // Adoption already excluded deleted gyms; overrideCount counted every row, which meant
         // "3 gyms hold an exception" could include tenants that no longer exist.
-        Guid gym = await CreateGymAsync("counted-then-deleted");
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "counted-then-deleted");
         await SetGymFeatureAsync(gym, PlatformFeatures.Crm, enabled: true, "Goodwill trial.");
 
         JsonElement live = FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm);
@@ -125,8 +124,8 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
     public async Task A_default_on_feature_counts_every_gym_that_never_decided()
     {
         // POS ships on. Two gyms, neither with a plan or an override: both adopt it by default.
-        await CreateGymAsync("pos-gym-one");
-        await CreateGymAsync("pos-gym-two");
+        await PlatformApiHelpers.CreateGymAsync(_client, "pos-gym-one");
+        await PlatformApiHelpers.CreateGymAsync(_client, "pos-gym-two");
 
         Assert.Equal(2, FeatureByKey(await CatalogueAsync(), PlatformFeatures.Pos)
             .GetProperty("adoptionCount").GetInt32());
@@ -165,7 +164,7 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
     [Fact]
     public async Task Turning_a_default_on_adopts_every_undecided_gym_at_once()
     {
-        Guid gym = await CreateGymAsync("undecided-gym");
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "undecided-gym");
 
         JsonElement crm = FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm);
         Assert.Equal(0, crm.GetProperty("adoptionCount").GetInt32());
@@ -197,7 +196,8 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
     {
         // SupportAgent holds features.read only — it answers "why is this off?" without being able
         // to change what the platform ships.
-        HttpClient supportAgent = await SignedInAsync("SupportAgent", "support.features@gymos.test");
+        HttpClient supportAgent = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, "SupportAgent", "support.features@gymos.test");
 
         using HttpResponseMessage read = await supportAgent.GetAsync(Features);
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
@@ -257,68 +257,6 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
         return await _client.SendAsync(request);
     }
 
-    private async Task<Guid> CreateGymAsync(string slug)
-    {
-        using HttpResponseMessage created = await _client.PostAsJsonAsync(Gyms, new
-        {
-            slug,
-            name = $"Gym {slug}",
-            ownerName = "Ada Owner",
-            ownerEmail = "ada@acme.test",
-            phone = (string?)null,
-            countryCode = "CY",
-            timeZoneId = "Asia/Nicosia",
-            currency = "EUR",
-        });
-
-        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
-    }
-
-    private async Task<Guid> CreatePlanAsync(string code)
-    {
-        using HttpResponseMessage created = await _client.PostAsJsonAsync(Plans, new
-        {
-            code,
-            name = $"Plan {code}",
-            description = "Created by the feature suite",
-            trialDays = 0,
-            maxMembers = (int?)null,
-            maxTrainers = (int?)null,
-            maxStaff = (int?)null,
-            storageLimitMb = (long?)null,
-            sortOrder = 1,
-        });
-
-        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        Guid planId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
-
-        using HttpResponseMessage plan = await _client.GetAsync(
-            new Uri($"/api/v1/plans/{planId}", UriKind.Relative));
-        string rowVersion = (await plan.Content.ReadFromJsonAsync<JsonElement>())
-            .GetProperty("rowVersion").GetString()!;
-
-        using var priceRequest = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { billingCycle = "Monthly", currency = "EUR", amount = 49.99m }),
-        };
-        priceRequest.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
-        using HttpResponseMessage priced = await _client.SendAsync(priceRequest);
-        Assert.Equal(HttpStatusCode.OK, priced.StatusCode);
-
-        return planId;
-    }
-
-    private async Task AssignAsync(Guid gymId, Guid planId)
-    {
-        using HttpResponseMessage assigned = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/gyms/{gymId}/subscription", UriKind.Relative),
-            new { planId, billingCycle = "Monthly", currency = "EUR" });
-
-        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
-    }
-
     /// <summary>
     /// Sets one plan feature through the real endpoint. This drove the state through raw SQL until
     /// task 4 shipped <c>PUT /plans/{id}/features</c> — going through HTTP now means the adoption
@@ -372,69 +310,4 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    private async Task<HttpClient> SignedInAsync(string roleName, string email)
-    {
-        const string Password = "role-holder-integration-password";
-
-        await using AuthenticationHost seedHost = AuthenticationHost.Create(
-            _host.ConnectionString,
-            settings =>
-            {
-                settings["Seed:SuperAdmin:Email"] = email;
-                settings["Seed:SuperAdmin:Password"] = Password;
-            });
-
-        using HttpClient seedClient = seedHost.CreateClient();
-        using HttpResponseMessage ready = await seedClient.GetAsync(new Uri("/health/ready", UriKind.Relative));
-        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
-
-        Guid userId = await FindUserIdAsync(email);
-        await SetRolesAsync(userId, await RoleIdAsync(roleName));
-
-        HttpClient client = _host.CreateClient();
-        using HttpResponseMessage signIn = await AuthApi.LoginAsync(client, email, Password);
-        Assert.Equal(HttpStatusCode.OK, signIn.StatusCode);
-        AuthApi.Authorize(client, await AuthApi.ReadAccessTokenAsync(signIn));
-
-        return client;
-    }
-
-    private async Task<Guid> RoleIdAsync(string roleName)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(new Uri("/api/v1/roles", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.EnumerateArray()
-            .Single(role => role.GetProperty("name").GetString() == roleName)
-            .GetProperty("id").GetGuid();
-    }
-
-    private async Task<Guid> FindUserIdAsync(string email)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(
-            new Uri($"/api/v1/users?search={Uri.EscapeDataString(email)}", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.GetProperty("items").EnumerateArray()
-            .Single(user => user.GetProperty("email").GetString() == email)
-            .GetProperty("id").GetGuid();
-    }
-
-    private async Task SetRolesAsync(Guid userId, params Guid[] roleIds)
-    {
-        using HttpResponseMessage current = await _client.GetAsync(
-            new Uri($"/api/v1/users/{userId}", UriKind.Relative));
-        using JsonDocument currentBody = JsonDocument.Parse(await current.Content.ReadAsStringAsync());
-        string rowVersion = currentBody.RootElement.GetProperty("rowVersion").GetString()!;
-
-        using var request = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/users/{userId}/roles", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { roleIds }),
-        };
-        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
-
-        using HttpResponseMessage response = await _client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    }
 }

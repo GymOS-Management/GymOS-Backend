@@ -17,9 +17,6 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
 {
     private const string Reason = "Contractually promised during migration.";
 
-    private static readonly Uri Gyms = new("/api/v1/gyms", UriKind.Relative);
-    private static readonly Uri Plans = new("/api/v1/plans", UriKind.Relative);
-
     private readonly PostgresFixture _postgres;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
@@ -49,7 +46,7 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task A_gym_with_no_plan_resolves_every_feature_against_the_platform_default()
     {
-        Guid gym = await CreateGymAsync("plain-gym");
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "plain-gym");
 
         JsonElement features = await ReadFeaturesAsync(gym);
 
@@ -66,9 +63,10 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task An_override_beats_the_plan_and_says_so()
     {
-        Guid plan = await CreatePlanAsync("BASIC");
-        Guid gym = await CreateGymAsync("override-gym");
-        await AssignAsync(gym, plan);
+        Guid plan = (await PlatformApiHelpers.CreatePlanAsync(_client, "BASIC")).Id;
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "override-gym");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gym, plan);
+        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
 
         // The plan excludes CRM outright — not merely silent about it.
         await SetPlanFeatureAsync(plan, PlatformFeatures.Crm, isEnabled: false);
@@ -92,9 +90,10 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task Asking_for_what_the_plan_gives_deletes_the_override_row()
     {
-        Guid plan = await CreatePlanAsync("PRO");
-        Guid gym = await CreateGymAsync("selfcleaning-gym");
-        await AssignAsync(gym, plan);
+        Guid plan = (await PlatformApiHelpers.CreatePlanAsync(_client, "PRO")).Id;
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "selfcleaning-gym");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gym, plan);
+        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
 
         await SetGymFeaturesAsync(gym, (PlatformFeatures.Crm, true, Reason));
         Assert.Equal(1, await CountOverridesAsync(gym));
@@ -117,9 +116,10 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task A_withdrawn_override_stops_shadowing_later_plan_changes()
     {
-        Guid plan = await CreatePlanAsync("PRO");
-        Guid gym = await CreateGymAsync("follows-plan-gym");
-        await AssignAsync(gym, plan);
+        Guid plan = (await PlatformApiHelpers.CreatePlanAsync(_client, "PRO")).Id;
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "follows-plan-gym");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gym, plan);
+        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
 
         await SetGymFeaturesAsync(gym, (PlatformFeatures.Crm, true, Reason));
         await SetPlanFeatureAsync(plan, PlatformFeatures.Crm, isEnabled: true);
@@ -136,7 +136,7 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task An_override_without_a_reason_is_refused_and_nothing_is_written()
     {
-        Guid gym = await CreateGymAsync("reasonless-gym");
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "reasonless-gym");
 
         using HttpResponseMessage response = await _client.PutAsJsonAsync(
             FeaturesUri(gym),
@@ -160,7 +160,7 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task An_unknown_key_rejects_the_whole_request()
     {
-        Guid gym = await CreateGymAsync("unknown-key-gym");
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "unknown-key-gym");
 
         using HttpResponseMessage response = await _client.PutAsJsonAsync(
             FeaturesUri(gym),
@@ -181,7 +181,7 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task Only_the_keys_sent_are_touched()
     {
-        Guid gym = await CreateGymAsync("partial-gym");
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "partial-gym");
 
         await SetGymFeaturesAsync(
             gym,
@@ -199,7 +199,7 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task The_gym_detail_carries_the_same_resolution()
     {
-        Guid gym = await CreateGymAsync("detail-gym");
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "detail-gym");
         await SetGymFeaturesAsync(gym, (PlatformFeatures.Crm, true, Reason));
 
         using HttpResponseMessage detail = await _client.GetAsync(
@@ -220,16 +220,17 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task Two_gyms_resolve_the_same_feature_differently_for_different_reasons()
     {
-        Guid plan = await CreatePlanAsync("WITHCRM");
+        Guid plan = (await PlatformApiHelpers.CreatePlanAsync(_client, "WITHCRM")).Id;
         await SetPlanFeatureAsync(plan, PlatformFeatures.Crm, isEnabled: true);
 
-        Guid byPlan = await CreateGymAsync("by-plan-gym");
-        await AssignAsync(byPlan, plan);
+        Guid byPlan = await PlatformApiHelpers.CreateGymAsync(_client, "by-plan-gym");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, byPlan, plan);
+        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
 
-        Guid byOverride = await CreateGymAsync("by-override-gym");
+        Guid byOverride = await PlatformApiHelpers.CreateGymAsync(_client, "by-override-gym");
         await SetGymFeaturesAsync(byOverride, (PlatformFeatures.Crm, true, Reason));
 
-        Guid byDefault = await CreateGymAsync("by-default-gym");
+        Guid byDefault = await PlatformApiHelpers.CreateGymAsync(_client, "by-default-gym");
 
         // All three answers are visible at once, and only `source` explains which lever changes each:
         // edit the plan, withdraw the exception, or move the platform default.
@@ -246,7 +247,7 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task A_deleted_gym_cannot_be_granted_anything()
     {
-        Guid gym = await CreateGymAsync("doomed-gym");
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "doomed-gym");
 
         using HttpResponseMessage read = await _client.GetAsync(
             new Uri($"/api/v1/gyms/{gym}", UriKind.Relative));
@@ -290,11 +291,12 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task Reading_needs_features_read_and_granting_needs_features_manage()
     {
-        Guid gym = await CreateGymAsync("permission-gym");
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "permission-gym");
 
         // SupportAgent holds features.read: it can explain why a gym cannot do something without
         // holding the authority to hand out the capability.
-        using HttpClient supportAgent = await SignedInAsync("SupportAgent", "support.gymfeatures@gymos.test");
+        using HttpClient supportAgent = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, "SupportAgent", "support.gymfeatures@gymos.test");
 
         using HttpResponseMessage read = await supportAgent.GetAsync(FeaturesUri(gym));
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
@@ -371,55 +373,6 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
             .SingleAsync();
     }
 
-    private async Task<Guid> CreateGymAsync(string slug)
-    {
-        using HttpResponseMessage created = await _client.PostAsJsonAsync(Gyms, new
-        {
-            slug,
-            name = $"Gym {slug}",
-            ownerName = "Ada Owner",
-            ownerEmail = "ada@acme.test",
-            phone = (string?)null,
-            countryCode = "CY",
-            timeZoneId = "Asia/Nicosia",
-            currency = "EUR",
-        });
-
-        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
-    }
-
-    private async Task<Guid> CreatePlanAsync(string code)
-    {
-        using HttpResponseMessage created = await _client.PostAsJsonAsync(Plans, new
-        {
-            code,
-            name = $"Plan {code}",
-            description = "Created by the gym-feature suite",
-            trialDays = 0,
-            maxMembers = (int?)null,
-            maxTrainers = (int?)null,
-            maxStaff = (int?)null,
-            storageLimitMb = (long?)null,
-            sortOrder = 1,
-        });
-
-        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        Guid planId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
-
-        using var priceRequest = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/prices", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { billingCycle = "Monthly", currency = "EUR", amount = 49.99m }),
-        };
-        priceRequest.Headers.TryAddWithoutValidation("If-Match", $"\"{await PlanVersionAsync(planId)}\"");
-
-        using HttpResponseMessage priced = await _client.SendAsync(priceRequest);
-        Assert.Equal(HttpStatusCode.OK, priced.StatusCode);
-
-        return planId;
-    }
-
     private async Task SetPlanFeatureAsync(Guid planId, string featureKey, bool isEnabled)
     {
         using var request = new HttpRequestMessage(
@@ -443,78 +396,4 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
             .GetProperty("rowVersion").GetString()!;
     }
 
-    private async Task AssignAsync(Guid gymId, Guid planId)
-    {
-        using HttpResponseMessage assigned = await _client.PutAsJsonAsync(
-            new Uri($"/api/v1/gyms/{gymId}/subscription", UriKind.Relative),
-            new { planId, billingCycle = "Monthly", currency = "EUR" });
-
-        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
-    }
-
-    private async Task<HttpClient> SignedInAsync(string roleName, string email)
-    {
-        const string Password = "role-holder-integration-password";
-
-        await using AuthenticationHost seedHost = AuthenticationHost.Create(
-            _host.ConnectionString,
-            settings =>
-            {
-                settings["Seed:SuperAdmin:Email"] = email;
-                settings["Seed:SuperAdmin:Password"] = Password;
-            });
-
-        using HttpClient seedClient = seedHost.CreateClient();
-        using HttpResponseMessage ready = await seedClient.GetAsync(new Uri("/health/ready", UriKind.Relative));
-        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
-
-        Guid userId = await FindUserIdAsync(email);
-        await SetRolesAsync(userId, await RoleIdAsync(roleName));
-
-        HttpClient client = _host.CreateClient();
-        using HttpResponseMessage signIn = await AuthApi.LoginAsync(client, email, Password);
-        Assert.Equal(HttpStatusCode.OK, signIn.StatusCode);
-        AuthApi.Authorize(client, await AuthApi.ReadAccessTokenAsync(signIn));
-
-        return client;
-    }
-
-    private async Task<Guid> RoleIdAsync(string roleName)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(new Uri("/api/v1/roles", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.EnumerateArray()
-            .Single(role => role.GetProperty("name").GetString() == roleName)
-            .GetProperty("id").GetGuid();
-    }
-
-    private async Task<Guid> FindUserIdAsync(string email)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(
-            new Uri($"/api/v1/users?search={Uri.EscapeDataString(email)}", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.GetProperty("items").EnumerateArray()
-            .Single(user => user.GetProperty("email").GetString() == email)
-            .GetProperty("id").GetGuid();
-    }
-
-    private async Task SetRolesAsync(Guid userId, params Guid[] roleIds)
-    {
-        using HttpResponseMessage current = await _client.GetAsync(
-            new Uri($"/api/v1/users/{userId}", UriKind.Relative));
-        using JsonDocument currentBody = JsonDocument.Parse(await current.Content.ReadAsStringAsync());
-        string rowVersion = currentBody.RootElement.GetProperty("rowVersion").GetString()!;
-
-        using var request = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/users/{userId}/roles", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { roleIds }),
-        };
-        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
-
-        using HttpResponseMessage response = await _client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    }
 }

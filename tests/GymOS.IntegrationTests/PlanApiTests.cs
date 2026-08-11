@@ -15,7 +15,6 @@ namespace GymOS.IntegrationTests;
 public sealed class PlanApiTests : IAsyncLifetime
 {
     private static readonly Uri Plans = new("/api/v1/plans", UriKind.Relative);
-    private static readonly Uri Roles = new("/api/v1/roles", UriKind.Relative);
 
     private readonly PostgresFixture _postgres;
     private AuthenticationHost _host = null!;
@@ -320,8 +319,10 @@ public sealed class PlanApiTests : IAsyncLifetime
     {
         Guid planId = await CreateAsync("SCOPED");
 
-        HttpClient billingAdmin = await SignedInAsync(SystemRoles.BillingAdmin, "billing.plans@gymos.test");
-        HttpClient supportAgent = await SignedInAsync(SystemRoles.SupportAgent, "support.plans@gymos.test");
+        HttpClient billingAdmin = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, SystemRoles.BillingAdmin, "billing.plans@gymos.test");
+        HttpClient supportAgent = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, SystemRoles.SupportAgent, "support.plans@gymos.test");
 
         using HttpResponseMessage adminRead = await billingAdmin.GetAsync(Plans);
         using HttpResponseMessage adminWrite = await billingAdmin.PostAsJsonAsync(Plans, NewPlan("BILLING_OK"));
@@ -539,78 +540,4 @@ public sealed class PlanApiTests : IAsyncLifetime
             .ToList();
     }
 
-    /// <summary>
-    /// An administrator in the named role with a usable password, signed in — the same approach as
-    /// <c>PlatformAdminApiTests</c>, because the API deliberately offers no way for one administrator to
-    /// set another's password.
-    /// </summary>
-    private async Task<HttpClient> SignedInAsync(string roleName, string email)
-    {
-        const string Password = "role-holder-integration-password";
-
-        await using AuthenticationHost seedHost = AuthenticationHost.Create(
-            _host.ConnectionString,
-            settings =>
-            {
-                settings["Seed:SuperAdmin:Email"] = email;
-                settings["Seed:SuperAdmin:Password"] = Password;
-            });
-
-        using HttpClient seedClient = seedHost.CreateClient();
-        using HttpResponseMessage ready = await seedClient.GetAsync(new Uri("/health/ready", UriKind.Relative));
-        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
-
-        Guid userId = await FindUserIdAsync(email);
-        await SetRolesAsync(userId, await RoleIdAsync(roleName));
-
-        HttpClient client = _host.CreateClient();
-        using HttpResponseMessage signIn = await AuthApi.LoginAsync(client, email, Password);
-        Assert.Equal(HttpStatusCode.OK, signIn.StatusCode);
-        AuthApi.Authorize(client, await AuthApi.ReadAccessTokenAsync(signIn));
-
-        return client;
-    }
-
-    private async Task<Guid> RoleIdAsync(string roleName)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(Roles);
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.EnumerateArray()
-            .Single(role => role.GetProperty("name").GetString() == roleName)
-            .GetProperty("id").GetGuid();
-    }
-
-    private async Task<Guid> FindUserIdAsync(string email)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(
-            new Uri($"/api/v1/users?search={Uri.EscapeDataString(email)}", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.GetProperty("items").EnumerateArray()
-            .Single(user => user.GetProperty("email").GetString() == email)
-            .GetProperty("id").GetGuid();
-    }
-
-    private async Task SetRolesAsync(Guid userId, params Guid[] roleIds)
-    {
-        using HttpResponseMessage current = await _client.GetAsync(
-            new Uri($"/api/v1/users/{userId}", UriKind.Relative));
-        using JsonDocument currentBody = JsonDocument.Parse(await current.Content.ReadAsStringAsync());
-        string rowVersion = currentBody.RootElement.GetProperty("rowVersion").GetString()!;
-
-        using var request = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/users/{userId}/roles", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { roleIds }),
-        };
-        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
-
-        using HttpResponseMessage response = await _client.SendAsync(request);
-
-        Assert.True(
-            response.StatusCode == HttpStatusCode.OK,
-            $"Expected 200 setting roles, got {(int)response.StatusCode}: " +
-            await response.Content.ReadAsStringAsync());
-    }
 }

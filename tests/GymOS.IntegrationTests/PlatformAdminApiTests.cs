@@ -134,7 +134,8 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
     [Fact]
     public async Task AnAdministratorWithoutRolesRead_CannotReadRoles()
     {
-        HttpClient billingAdmin = await SignedInAsync(SystemRoles.BillingAdmin, "billing@gymos.test");
+        HttpClient billingAdmin = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, SystemRoles.BillingAdmin, "billing@gymos.test");
 
         // BillingAdmin currently holds only users.read (billing permissions arrive with M3).
         using HttpResponseMessage response = await billingAdmin.GetAsync(Roles);
@@ -166,15 +167,16 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
     {
         Guid invitedId = await InviteAsync("to.suspend@gymos.test");
         Guid roleId = await SupportAgentRoleIdAsync();
-        await SetRolesAsync(invitedId, roleId);
+        await PlatformApiHelpers.SetRolesAsync(_client, invitedId, roleId);
 
         // Give the invited account a password so it can actually hold a session.
-        HttpClient victim = await SignedInAsync(SystemRoles.SupportAgent, "session.victim@gymos.test");
+        HttpClient victim = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, SystemRoles.SupportAgent, "session.victim@gymos.test");
         using HttpResponseMessage beforeSuspension = await victim.GetAsync(
             new Uri("/api/v1/auth/me", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, beforeSuspension.StatusCode);
 
-        Guid victimId = await FindUserIdAsync("session.victim@gymos.test");
+        Guid victimId = await PlatformApiHelpers.FindUserIdAsync(_client, "session.victim@gymos.test");
         using HttpResponseMessage suspended = await _client.PostAsJsonAsync(
             new Uri($"/api/v1/users/{victimId}/suspend", UriKind.Relative),
             new { reason = "Compromised credentials" });
@@ -192,7 +194,7 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
     [Fact]
     public async Task TheLastSuperAdminCannotBeSuspended()
     {
-        Guid superAdminId = await FindUserIdAsync(AuthenticationHost.SuperAdminEmail);
+        Guid superAdminId = await PlatformApiHelpers.FindUserIdAsync(_client, AuthenticationHost.SuperAdminEmail);
 
         using HttpResponseMessage response = await _client.PostAsJsonAsync(
             new Uri($"/api/v1/users/{superAdminId}/suspend", UriKind.Relative),
@@ -273,7 +275,7 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
     public async Task OutboxMessagesNowRecordTheActingUser()
     {
         Guid invitedId = await InviteAsync("outbox.attributed@gymos.test");
-        Guid superAdminId = await FindUserIdAsync(AuthenticationHost.SuperAdminEmail);
+        Guid superAdminId = await PlatformApiHelpers.FindUserIdAsync(_client, AuthenticationHost.SuperAdminEmail);
 
         using HttpResponseMessage response = await _client.GetAsync(
             new Uri($"/api/v1/audit-logs?entityId={invitedId}", UriKind.Relative));
@@ -307,16 +309,6 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
             .GetProperty("id").GetGuid();
     }
 
-    private async Task<Guid> RoleIdAsync(string roleName)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(Roles);
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.EnumerateArray()
-            .Single(role => role.GetProperty("name").GetString() == roleName)
-            .GetProperty("id").GetGuid();
-    }
-
     private async Task<Guid> InviteAsync(string email)
     {
         using HttpResponseMessage created = await _client.PostAsJsonAsync(Users, new
@@ -335,84 +327,6 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
         return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
     }
 
-    private async Task SetRolesAsync(Guid userId, params Guid[] roleIds)
-    {
-        // Read first for the version: the endpoint requires If-Match, which is the point.
-        string rowVersion = await CurrentRowVersionAsync(userId);
-
-        using var request = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/users/{userId}/roles", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { roleIds }),
-        };
-        request.Headers.TryAddWithoutValidation("If-Match", $"\"{rowVersion}\"");
-
-        using HttpResponseMessage response = await _client.SendAsync(request);
-
-        // Body included in the message: a helper that fails with a bare status code sends the
-        // reader hunting through logs for the reason.
-        Assert.True(
-            response.StatusCode == HttpStatusCode.OK,
-            $"Expected 200 setting roles, got {(int)response.StatusCode}: " +
-            await response.Content.ReadAsStringAsync());
-    }
-
-    private async Task<string> CurrentRowVersionAsync(Guid userId)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(
-            new Uri($"/api/v1/users/{userId}", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.GetProperty("rowVersion").GetString()!;
-    }
-
-    private async Task<Guid> FindUserIdAsync(string email)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(
-            new Uri($"/api/v1/users?search={Uri.EscapeDataString(email)}", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.GetProperty("items").EnumerateArray()
-            .Single(user => user.GetProperty("email").GetString() == email)
-            .GetProperty("id").GetGuid();
-    }
-
     private Task<HttpClient> SignedInSupportAgentAsync() =>
-        SignedInAsync(SystemRoles.SupportAgent, "support@gymos.test");
-
-    /// <summary>
-    /// Creates an administrator in the named role with a usable password and returns a client
-    /// signed in as them.
-    ///
-    /// The password is set by seeding a second host whose SuperAdmin seed targets this
-    /// address — the API deliberately offers no way for one administrator to set another's
-    /// password, and a test must not invent one.
-    /// </summary>
-    private async Task<HttpClient> SignedInAsync(string roleName, string email)
-    {
-        const string Password = "role-holder-integration-password";
-
-        await using AuthenticationHost seedHost = AuthenticationHost.Create(
-            _host.ConnectionString,
-            settings =>
-            {
-                settings["Seed:SuperAdmin:Email"] = email;
-                settings["Seed:SuperAdmin:Password"] = Password;
-            });
-
-        using HttpClient seedClient = seedHost.CreateClient();
-        using HttpResponseMessage ready = await seedClient.GetAsync(new Uri("/health/ready", UriKind.Relative));
-        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
-
-        // Seeded as SuperAdmin, then narrowed to the role under test.
-        Guid userId = await FindUserIdAsync(email);
-        await SetRolesAsync(userId, await RoleIdAsync(roleName));
-
-        HttpClient client = _host.CreateClient();
-        using HttpResponseMessage signIn = await AuthApi.LoginAsync(client, email, Password);
-        Assert.Equal(HttpStatusCode.OK, signIn.StatusCode);
-        AuthApi.Authorize(client, await AuthApi.ReadAccessTokenAsync(signIn));
-
-        return client;
-    }
+        PlatformApiHelpers.SignedInAsync(_host, _client, SystemRoles.SupportAgent, "support@gymos.test");
 }

@@ -97,7 +97,7 @@ public sealed class AuditCaptureTests : IAsyncLifetime
     public async Task RoleAssignmentsAreAuditedAsTheirOwnEntity()
     {
         Guid userId = await InviteAsync("role.audited@gymos.test");
-        Guid roleId = await RoleIdAsync(SystemRoles.SupportAgent);
+        Guid roleId = await PlatformApiHelpers.RoleIdAsync(_client, SystemRoles.SupportAgent);
 
         using HttpResponseMessage granted = await PutAsync(
             $"/api/v1/users/{userId}/roles",
@@ -219,16 +219,6 @@ public sealed class AuditCaptureTests : IAsyncLifetime
         using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         return body.RootElement.GetProperty("rowVersion").GetString()!;
-    }
-
-    private async Task<Guid> RoleIdAsync(string roleName)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(new Uri("/api/v1/roles", UriKind.Relative));
-        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return body.RootElement.EnumerateArray()
-            .Single(role => role.GetProperty("name").GetString() == roleName)
-            .GetProperty("id").GetGuid();
     }
 
     private async Task<AuditRow> LatestAsync(string action, Guid entityId)
