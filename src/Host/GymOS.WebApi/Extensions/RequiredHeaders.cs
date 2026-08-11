@@ -81,7 +81,29 @@ public static class RequiredHeaders
     /// <summary>Turns whatever markers the endpoint carries into declared header parameters.</summary>
     internal static void Declare(OpenApiOperation operation, IEnumerable<object> endpointMetadata)
     {
+        // Deduplicated by header name so a route that chains both `.RequiresIfMatch()` and
+        // `.HonoursIfMatch()` — a mistake, not a supported combination — declares that header once
+        // rather than twice with contradictory `Required` values. `endpointMetadata` preserves call
+        // order; the later marker in the chain wins (the same last-registration-wins rule ASP.NET
+        // Core applies when a later convention call overrides an earlier one), but the header keeps
+        // the *first* call's position in the list — so a route with no duplicate markers, which is
+        // every route today, gets exactly the parameter list and order it always did.
+        List<RequiredHeader> ordered = [];
+        Dictionary<string, int> indexByName = [];
         foreach (RequiredHeader header in endpointMetadata.OfType<RequiredHeader>())
+        {
+            if (indexByName.TryGetValue(header.Name, out int existingIndex))
+            {
+                ordered[existingIndex] = header;
+            }
+            else
+            {
+                indexByName[header.Name] = ordered.Count;
+                ordered.Add(header);
+            }
+        }
+
+        foreach (RequiredHeader header in ordered)
         {
             operation.Parameters ??= [];
 
