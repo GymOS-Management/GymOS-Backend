@@ -158,7 +158,8 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         // 43 → 49 across M4: two feature-catalogue operations, two plan-feature operations, two
         // gym-feature operations.
         // 49 → 52 in M5 task 4: the three dashboard operations (summary, health, activity).
-        Assert.Equal(52, secured.Count);
+        // 52 → 55 in M5 task 5: the three analytics series operations (revenue, gyms-growth, churn).
+        Assert.Equal(55, secured.Count);
     }
 
     /// <summary>

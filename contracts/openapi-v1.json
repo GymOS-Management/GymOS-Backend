@@ -208,6 +208,45 @@
         ],
         "type": "object"
       },
+      "ChurnPoint": {
+        "properties": {
+          "canceled": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "expired": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "total": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "date",
+          "canceled",
+          "expired",
+          "total"
+        ],
+        "type": "object"
+      },
       "CreatePlanRequest": {
         "properties": {
           "code": {
@@ -462,6 +501,63 @@
           "adoptionCount",
           "overrideCount",
           "rowVersion"
+        ],
+        "type": "object"
+      },
+      "GrowthPoint": {
+        "properties": {
+          "activeGyms": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "newGyms": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "provisioningGyms": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "suspendedGyms": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "totalGyms": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "date",
+          "totalGyms",
+          "activeGyms",
+          "suspendedGyms",
+          "provisioningGyms",
+          "newGyms"
         ],
         "type": "object"
       },
@@ -1731,6 +1827,25 @@
         ],
         "type": "object"
       },
+      "RevenuePoint": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "mrr": {
+            "items": {
+              "$ref": "#/components/schemas/MoneyDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "date",
+          "mrr"
+        ],
+        "type": "object"
+      },
       "RoleDetail": {
         "properties": {
           "assignedUserCount": {
@@ -2390,6 +2505,246 @@
   },
   "openapi": "3.1.1",
   "paths": {
+    "/api/v1/analytics/churn": {
+      "get": {
+        "description": "Cancellations and expiries are reported separately and deliberately never merged before the caller sees them: a cancellation is a decision the customer made, an expiry is a payment that failed, and they are different problems \u2014 \u0060total\u0060 is offered so no caller has to add the two, not so anyone has to choose between them. A day with no row is omitted, not zero-filled. \u0060from\u0060 and \u0060to\u0060 are both required and inclusive, and the range covers at most 366 days.",
+        "operationId": "GetChurn",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ChurnPoint"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Daily churn, canceled and expired kept apart",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/gyms-growth": {
+      "get": {
+        "description": "One point per recorded day: total, active, suspended, provisioning, and new gyms. A day with no row is omitted, not zero-filled \u2014 see the endpoint group\u0027s remarks. \u0060from\u0060 and \u0060to\u0060 are both required and inclusive, and the range covers at most 366 days.",
+        "operationId": "GetGymsGrowth",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GrowthPoint"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Daily gym counts, recorded days only",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/revenue": {
+      "get": {
+        "description": "One point per day the nightly job actually recorded, each carrying MRR per currency \u2014 amounts in different currencies are never summed or converted. A day with no row is omitted, not zero-filled: a missing day drawn as zero reads as \u0022we lost every gym that night\u0022, which a gap does not. \u0060from\u0060 and \u0060to\u0060 are both required and inclusive, and the range covers at most 366 days.",
+        "operationId": "GetRevenue",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RevenuePoint"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Daily MRR, recorded days only",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
     "/api/v1/audit-logs": {
       "get": {
         "description": "Newest first. \u0060action\u0060 matches by prefix, so \u0060user.\u0060 returns every action on users. Filter by acting user, entity, or time range. Sensitive values are masked at write time and never present to be returned.",
@@ -6812,6 +7167,9 @@
     },
     {
       "name": "Dashboard"
+    },
+    {
+      "name": "Analytics"
     },
     {
       "name": "Platform users"

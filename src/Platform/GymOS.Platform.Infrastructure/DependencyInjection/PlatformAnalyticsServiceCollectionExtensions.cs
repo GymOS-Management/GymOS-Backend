@@ -18,6 +18,7 @@ public static class PlatformAnalyticsServiceCollectionExtensions
 
         services.TryAddScoped<IPlatformStatsRepository, PlatformStatsRepository>();
         services.TryAddScoped<IDashboardQueries, DashboardQueries>();
+        services.TryAddScoped<IAnalyticsQueries, AnalyticsQueries>();
 
         services.TryAddScoped<DailyStatsCompiler>();
         services.AddScheduledJob<PlatformStatsJob>();

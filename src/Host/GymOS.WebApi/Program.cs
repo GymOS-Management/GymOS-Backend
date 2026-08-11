@@ -242,6 +242,7 @@ try
     app.MapInvoiceEndpoints();
     app.MapFeatureEndpoints();
     app.MapDashboardEndpoints();
+    app.MapAnalyticsEndpoints();
     app.MapUserEndpoints();
     app.MapRoleEndpoints();
     app.MapAuditLogEndpoints();
