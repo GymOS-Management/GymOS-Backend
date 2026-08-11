@@ -13,11 +13,15 @@ internal sealed class FakeFeatureExceptionMaintainer : IFeatureExceptionMaintain
 {
     public List<Guid> CalledForGymIds { get; } = [];
 
+    public List<Guid?> CalledWithLivePlanIds { get; } = [];
+
     public int ReturnValue { get; set; }
 
-    public Task<int> WithdrawRedundantAsync(Guid gymId, CancellationToken cancellationToken)
+    public Task<int> WithdrawRedundantAsync(
+        Guid gymId, Guid? livePlanIdAfterChange, CancellationToken cancellationToken)
     {
         CalledForGymIds.Add(gymId);
+        CalledWithLivePlanIds.Add(livePlanIdAfterChange);
         return Task.FromResult(ReturnValue);
     }
 }

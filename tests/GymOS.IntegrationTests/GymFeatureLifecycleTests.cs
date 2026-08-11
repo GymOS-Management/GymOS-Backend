@@ -160,6 +160,64 @@ public sealed class GymFeatureLifecycleTests : IAsyncLifetime
         Assert.Equal("Plan", crm.GetProperty("source").GetString());
     }
 
+    [Fact]
+    public async Task An_override_granted_before_any_subscription_is_withdrawn_by_the_first_assignment()
+    {
+        // The maintainer must see the plan the gym is about to have, not the plan a database query
+        // says it has: a brand-new assignment is an unsaved Add, invisible to any query run before
+        // the transaction commits.
+        Guid pro = await CreatePlanAsync("PRO");
+        await SetPlanFeatureAsync(pro, PlatformFeatures.Crm, isEnabled: true);
+
+        Guid gym = await CreateGymAsync("no-subscription-yet-gym");
+
+        // Granted while the gym has no subscription at all — judged against the platform default
+        // (CRM off), so the override is needed and stored.
+        await SetGymFeaturesAsync(gym, (PlatformFeatures.Crm, true, TrialReason));
+        Assert.Equal(1, await CountOverridesAsync(gym));
+
+        // The gym's very first assignment — onto a plan that already grants what the exception
+        // granted.
+        await AssignAsync(gym, pro);
+
+        Assert.Equal(0, await CountOverridesAsync(gym));
+
+        JsonElement crm = Feature(await ReadFeaturesAsync(gym), PlatformFeatures.Crm);
+        Assert.True(crm.GetProperty("enabled").GetBoolean());
+        Assert.Equal("Plan", crm.GetProperty("source").GetString());
+    }
+
+    [Fact]
+    public async Task An_override_that_becomes_redundant_because_the_subscription_ended_is_withdrawn_on_expiry()
+    {
+        // Reports ships on by default; the plan explicitly withholds it, so the override granting it
+        // back differs from the plan and is needed. Once the subscription ends there is no live plan
+        // opinion left to differ from — only the platform default, which already agrees with the
+        // override — so it must go. The maintainer must see "no live plan" here, not the plan that is
+        // in the middle of ending: CancelNow/Expire only set Status in memory, so a query run before
+        // the save still matches the not-yet-saved row as live.
+        Guid basic = await CreatePlanAsync("BASIC");
+        await SetPlanFeatureAsync(basic, PlatformFeatures.Reports, isEnabled: false);
+
+        Guid gym = await CreateGymAsync("expiring-gym");
+
+        // Seeded directly and backdated with auto-renew off, so the renewal step expires it without
+        // waiting for real time to pass — the same backdating the pending-change test above uses.
+        Guid subscriptionId = await SeedExpiringSubscriptionAsync(gym, basic);
+
+        await SetGymFeaturesAsync(gym, (PlatformFeatures.Reports, true, "Needed reports during a dispute."));
+        Assert.Equal(1, await CountOverridesAsync(gym));
+
+        RenewalAction action = await ProcessRenewalAsync(subscriptionId);
+        Assert.Equal(RenewalAction.Expired, action);
+
+        Assert.Equal(0, await CountOverridesAsync(gym));
+
+        JsonElement reports = Feature(await ReadFeaturesAsync(gym), PlatformFeatures.Reports);
+        Assert.True(reports.GetProperty("enabled").GetBoolean());
+        Assert.Equal("Default", reports.GetProperty("source").GetString());
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
     // Thin wrappers binding the shared PlatformApiHelpers / FeatureApiHelpers to this fixture's
     // client/host — see GymFeatureApiTests for the same pattern and why the five feature helpers
@@ -225,6 +283,29 @@ public sealed class GymFeatureLifecycleTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// Seeds a live subscription on <paramref name="planId"/>, assigned five weeks ago with
+    /// auto-renew off, so the renewal step expires it without waiting for real time to pass.
+    /// </summary>
+    private async Task<Guid> SeedExpiringSubscriptionAsync(Guid gymId, Guid planId)
+    {
+        await using AppDbContext context = _host.CreateDbContext();
+        var plans = new PlanRepository(context);
+
+        SubscriptionPlan plan = await plans.FindByIdAsync(planId, CancellationToken.None)
+            ?? throw new InvalidOperationException("Seeded plan not found.");
+
+        DateTimeOffset assignedAt = Clock.UtcNow.AddDays(-35);
+        GymSubscription subscription = GymSubscription.Assign(
+            gymId, plan, SubscriptionTerms.From(plan.Prices.Single()), assignedAt);
+        subscription.DisableAutoRenew();
+
+        context.Add(subscription);
+        await context.SaveChangesAsync();
+
+        return subscription.Id;
+    }
+
+    /// <summary>
     /// Drives one renewal-sweep step directly over a fresh <see cref="AppDbContext"/> — the same
     /// construction <c>RenewalSweepTests.Service</c> uses, so this test exercises the real
     /// production wiring (including the real <see cref="FeatureExceptionMaintainer"/>) rather than
@@ -238,8 +319,7 @@ public sealed class GymFeatureLifecycleTests : IAsyncLifetime
             new SubscriptionRepository(context),
             new PlanRepository(context),
             new InvoiceIssuer(new InvoiceRepository(context), new InvoiceNumberGenerator(context), Clock),
-            new FeatureExceptionMaintainer(
-                new FeatureRepository(context), new PlanRepository(context), new SubscriptionRepository(context)),
+            new FeatureExceptionMaintainer(new FeatureRepository(context), new PlanRepository(context)),
             new UnitOfWork(context));
 
         return await service.ProcessAsync(subscriptionId, Clock.UtcNow, CancellationToken.None);

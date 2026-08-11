@@ -20,17 +20,13 @@ public sealed class FeatureExceptionMaintainerTests
 
         public FakePlanRepository Plans { get; } = new();
 
-        public FakeSubscriptionRepository Subscriptions { get; } = new();
-
-        public FakeUnitOfWork UnitOfWork { get; } = new();
-
         public Guid GymId { get; } = Guid.NewGuid();
 
-        public FeatureExceptionMaintainer Maintainer =>
-            new(Features, Plans, Subscriptions);
+        public FeatureExceptionMaintainer Maintainer => new(Features, Plans);
 
         /// <summary>
-        /// A gym with no live subscription and an override that already says exactly what the
+        /// A gym with no live plan (the caller passes <see langword="null"/> for
+        /// <c>livePlanIdAfterChange</c>) and an override that already says exactly what the
         /// platform default says — redundant from the moment it is checked, regardless of what
         /// caused it (a goodwill trial the gym has since started paying for, in the scenario this
         /// whole increment exists to fix).
@@ -57,13 +53,18 @@ public sealed class FeatureExceptionMaintainerTests
         // If it saved, the withdrawal would commit even when the subscription change that caused it
         // fails — leaving a gym stripped of an exception for a plan change that never happened.
         // Integration tests cannot see this: there, both halves commit either way.
+        //
+        // Not asserted with a SaveCount check against a fake IUnitOfWork: the maintainer's
+        // constructor below takes no IUnitOfWork at all, which is the actual guarantee — a fake
+        // wired in but never reachable from the method under test would pass this assertion for
+        // any implementation that merely compiles, which is worse than not asserting it.
         var context = new Context();
         context.GiveGymARedundantOverride();
 
-        int withdrawn = await context.Maintainer.WithdrawRedundantAsync(context.GymId, default);
+        int withdrawn = await context.Maintainer.WithdrawRedundantAsync(
+            context.GymId, livePlanIdAfterChange: null, default);
 
         Assert.Equal(1, withdrawn);
-        Assert.Equal(0, context.UnitOfWork.SaveCount);
         Assert.Empty(context.Features.Overrides);
     }
 }

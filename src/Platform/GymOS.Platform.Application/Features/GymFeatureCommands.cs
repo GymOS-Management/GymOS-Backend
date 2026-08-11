@@ -219,8 +219,8 @@ internal sealed class SetGymFeaturesCommandHandler
 
         // What the layers beneath the override currently say, so each request can be judged against
         // the answer the gym would get without one.
-        IReadOnlyList<PlanFeature> planFeatures = await PlanFeatureLoader.LoadPlanFeaturesAsync(
-            _plans, _subscriptions, command.GymId, cancellationToken);
+        IReadOnlyList<PlanFeature> planFeatures = await LoadPlanFeaturesAsync(
+            command.GymId, cancellationToken);
         IReadOnlyList<GymFeatureOverride> existing = await _features.ListOverridesForGymAsync(
             command.GymId, cancellationToken);
 
@@ -268,5 +268,33 @@ internal sealed class SetGymFeaturesCommandHandler
         }
 
         return Result.Success(planned);
+    }
+
+    /// <summary>
+    /// The feature opinions of the gym's live plan, or none when it has no live subscription — in
+    /// which case every feature resolves against the platform default, which is what
+    /// <see cref="IFeatureQueries.ResolveForGymAsync"/> does too. The two must agree, or a write
+    /// would decide "no override needed" against one rule and be read back under another.
+    ///
+    /// <para>Not shared with <see cref="FeatureExceptionMaintainer"/>: that class was given exactly
+    /// this method once (M4.1 task 2), and the sharing was the defect — the read here is correct
+    /// because it answers "what does the database say right now", which is exactly the question a
+    /// fresh <c>PUT</c> request should ask, and exactly the question the maintainer must
+    /// <em>not</em> ask when it is reacting to a change its own caller has not saved yet. See
+    /// <see cref="IFeatureExceptionMaintainer.WithdrawRedundantAsync"/>.</para>
+    /// </summary>
+    private async Task<IReadOnlyList<PlanFeature>> LoadPlanFeaturesAsync(
+        Guid gymId,
+        CancellationToken cancellationToken)
+    {
+        GymSubscription? subscription = await _subscriptions.FindLiveByGymAsync(gymId, cancellationToken);
+        if (subscription is null)
+        {
+            return [];
+        }
+
+        SubscriptionPlan? plan = await _plans.FindByIdAsync(subscription.PlanId, cancellationToken);
+
+        return plan is null ? [] : [.. plan.Features];
     }
 }

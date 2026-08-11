@@ -171,7 +171,14 @@ public sealed class SubscriptionRenewalService
         // mutation and before the one save that commits it, means a future fifth or sixth branch is
         // covered by construction instead of by remembering to add another call inside it — which
         // is exactly the enumeration mistake that left this branch uncovered the first time.
-        await _featureExceptions.WithdrawRedundantAsync(subscription.GymId, cancellationToken);
+        //
+        // Passed the in-memory subscription's own liveness and plan id, not looked up: CancelNow
+        // and Expire only set Status in memory, so a query run before the save below would still
+        // match the not-yet-saved row as live and hand back the plan that is ending.
+        await _featureExceptions.WithdrawRedundantAsync(
+            subscription.GymId,
+            subscription.IsLive ? subscription.PlanId : null,
+            cancellationToken);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
