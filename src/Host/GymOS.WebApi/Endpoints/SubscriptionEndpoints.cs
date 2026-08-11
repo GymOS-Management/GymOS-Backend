@@ -5,6 +5,7 @@ using GymOS.Platform.Application.Subscriptions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
+using GymOS.WebApi.Extensions;
 
 namespace GymOS.WebApi.Endpoints;
 
@@ -54,6 +55,7 @@ public static class SubscriptionEndpoints
 
         group.MapPut("/", AssignAsync)
             .RequireAuthorization(PlatformPermissions.SubscriptionsManage)
+            .HonoursIfMatch()
             .WithName("AssignGymSubscription")
             .WithSummary("Put the gym on a plan, or move it to another")
             .WithDescription(
@@ -73,6 +75,7 @@ public static class SubscriptionEndpoints
 
         group.MapPost("/cancel", CancelAsync)
             .RequireAuthorization(PlatformPermissions.SubscriptionsManage)
+            .HonoursIfMatch()
             .WithName("CancelGymSubscription")
             .WithSummary("Cancel the subscription")
             .WithDescription(
@@ -88,6 +91,7 @@ public static class SubscriptionEndpoints
 
         group.MapPost("/resume", ResumeAsync)
             .RequireAuthorization(PlatformPermissions.SubscriptionsManage)
+            .HonoursIfMatch()
             .WithName("ResumeGymSubscription")
             .WithSummary("Withdraw a scheduled cancellation")
             .WithDescription(
@@ -100,6 +104,7 @@ public static class SubscriptionEndpoints
 
         group.MapPost("/convert-trial", ConvertTrialAsync)
             .RequireAuthorization(PlatformPermissions.SubscriptionsManage)
+            .HonoursIfMatch()
             .WithName("ConvertGymTrial")
             .WithSummary("End the trial and start billing")
             .WithDescription(
@@ -113,6 +118,7 @@ public static class SubscriptionEndpoints
 
         group.MapPost("/payment-state", SetPaymentStateAsync)
             .RequireAuthorization(PlatformPermissions.SubscriptionsManage)
+            .HonoursIfMatch()
             .WithName("SetGymSubscriptionPaymentState")
             .WithSummary("Record that payment is late, or has arrived")
             .WithDescription(

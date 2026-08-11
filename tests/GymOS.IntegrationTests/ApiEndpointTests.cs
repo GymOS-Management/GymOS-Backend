@@ -155,6 +155,48 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         Assert.Equal(43, secured.Count);
     }
 
+    /// <summary>
+    /// The contract must declare the headers the pipeline reads, with the same requiredness the
+    /// pipeline actually applies. <c>versionRequired</c> on the command's <c>ApplyExpectedVersion</c>
+    /// call is the source of truth for <c>If-Match</c>, and it deliberately varies: a <c>PUT</c> that
+    /// overwrites the whole resource requires it (a lost update silently overwrites a concurrent
+    /// edit), while an action endpoint like mark-paid, void, or a lifecycle transition only honours
+    /// it when supplied — the operation is narrow enough, or already guarded by its own state
+    /// machine, that a missing precondition is not a correctness problem. Declaring an honoured
+    /// header as required would overstate enforcement — the same defect this task removes, just
+    /// inverted — so this theory pins both directions rather than only the required one.
+    /// <c>Idempotency-Key</c> and <c>X-Confirm-Action</c> are always required: the idempotency
+    /// middleware rejects a missing key outright (<c>MarkInvoicePaidCommand.KeyRequired</c> is
+    /// unconditionally <see langword="true"/>), and the confirmation comparison never matches a
+    /// <see langword="null"/> value, so both are enforced on every call regardless of state.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/v1/invoices/{invoiceId}/mark-paid", "post", "Idempotency-Key", true)]
+    [InlineData("/api/v1/invoices/{invoiceId}/mark-paid", "post", "If-Match", false)]
+    [InlineData("/api/v1/invoices/{invoiceId}/void", "post", "X-Confirm-Action", true)]
+    [InlineData("/api/v1/invoices/{invoiceId}/void", "post", "If-Match", false)]
+    [InlineData("/api/v1/plans/{planId}", "put", "If-Match", true)]
+    [InlineData("/api/v1/gyms/{gymId}", "delete", "X-Confirm-Action", true)]
+    [InlineData("/api/v1/plans/{planId}/activate", "post", "If-Match", false)]
+    public async Task EnforcedHeaders_AreDeclared_WithTheRequirednessThePipelineActuallyApplies(
+        string path, string method, string header, bool expectedRequired)
+    {
+        JsonElement document = await GetOpenApiDocumentAsync();
+
+        JsonElement operation = document.GetProperty("paths").GetProperty(path).GetProperty(method);
+
+        JsonElement parameter = operation.GetProperty("parameters").EnumerateArray().Single(
+            candidate =>
+                candidate.GetProperty("in").GetString() == "header" &&
+                candidate.GetProperty("name").GetString() == header);
+
+        // `required` is false by default in OpenAPI, so the serializer omits the field rather than
+        // writing `false` — an absent property means "not required", not "unspecified".
+        bool actualRequired = parameter.TryGetProperty("required", out JsonElement requiredElement)
+            && requiredElement.GetBoolean();
+        Assert.Equal(expectedRequired, actualRequired);
+    }
+
     private static bool DeclaresBearerAuth(JsonElement operation) =>
         operation.TryGetProperty("security", out JsonElement security) &&
         security.EnumerateArray().Any(requirement =>

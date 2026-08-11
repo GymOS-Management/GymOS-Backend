@@ -6,6 +6,7 @@ using GymOS.Platform.Application.Identity.Abstractions;
 using GymOS.Platform.Application.Identity.Users;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
+using GymOS.WebApi.Extensions;
 
 namespace GymOS.WebApi.Endpoints;
 
@@ -68,6 +69,7 @@ public static class UserEndpoints
 
         group.MapPut("/{userId:guid}", UpdateAsync)
             .RequireAuthorization(PlatformPermissions.UsersManage)
+            .RequiresIfMatch()
             .WithName("UpdateUser")
             .WithSummary("Change an administrator's name")
             .WithDescription(
@@ -84,6 +86,7 @@ public static class UserEndpoints
 
         group.MapPost("/{userId:guid}/suspend", SuspendAsync)
             .RequireAuthorization(PlatformPermissions.UsersManage)
+            .HonoursIfMatch()
             .WithName("SuspendUser")
             .WithSummary("Suspend an administrator and end their sessions")
             .WithDescription(
@@ -100,6 +103,7 @@ public static class UserEndpoints
 
         group.MapPost("/{userId:guid}/reactivate", ReactivateAsync)
             .RequireAuthorization(PlatformPermissions.UsersManage)
+            .HonoursIfMatch()
             .WithName("ReactivateUser")
             .WithSummary("Lift a suspension")
             .WithDescription(
@@ -113,6 +117,7 @@ public static class UserEndpoints
 
         group.MapPut("/{userId:guid}/roles", SetRolesAsync)
             .RequireAuthorization(PlatformPermissions.UsersManage)
+            .RequiresIfMatch()
             .WithName("SetUserRoles")
             .WithSummary("Replace an administrator's roles")
             .WithDescription(

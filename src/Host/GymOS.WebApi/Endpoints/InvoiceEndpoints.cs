@@ -6,6 +6,7 @@ using GymOS.Platform.Application.Invoices;
 using GymOS.Platform.Application.Invoices.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
+using GymOS.WebApi.Extensions;
 
 namespace GymOS.WebApi.Endpoints;
 
@@ -59,6 +60,8 @@ public static class InvoiceEndpoints
 
         group.MapPost("/{invoiceId:guid}/mark-paid", MarkPaidAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
+            .RequiresIdempotencyKey()
+            .HonoursIfMatch()
             .WithName("MarkInvoicePaid")
             .WithSummary("Mark an invoice paid")
             .WithDescription(
@@ -78,6 +81,8 @@ public static class InvoiceEndpoints
 
         group.MapPost("/{invoiceId:guid}/void", VoidAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
+            .RequiresConfirmAction()
+            .HonoursIfMatch()
             .WithName("VoidInvoice")
             .WithSummary("Void an unpaid invoice")
             .WithDescription(

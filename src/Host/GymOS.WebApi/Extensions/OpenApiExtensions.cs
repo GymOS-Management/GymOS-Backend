@@ -70,6 +70,8 @@ public static partial class OpenApiExtensions
                     ];
                 }
 
+                RequiredHeaders.Declare(operation, context.Description.ActionDescriptor.EndpointMetadata);
+
                 return Task.CompletedTask;
             });
         });

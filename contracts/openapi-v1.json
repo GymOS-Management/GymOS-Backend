@@ -2632,6 +2632,23 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Step-up confirmation, echoing the resource\u0027s own identifier (a gym\u0027s slug, an invoice\u0027s number). A header rather than a body field so it survives DELETE and cannot be replayed by a script that never read the resource.",
+            "in": "header",
+            "name": "X-Confirm-Action",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2767,6 +2784,15 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "The strong ETag from the resource you read. Omitting it is 428; a stale value is 409.",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -2865,6 +2891,14 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2931,6 +2965,15 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The strong ETag from the resource you read. Omitting it is 428; a stale value is 409.",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
               "type": "string"
             }
           }
@@ -3092,6 +3135,14 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3226,6 +3277,14 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3314,6 +3373,14 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3390,6 +3457,14 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
               "type": "string"
             }
           }
@@ -3521,6 +3596,14 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3599,6 +3682,14 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3665,6 +3756,14 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
               "type": "string"
             }
           }
@@ -3949,6 +4048,23 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "A caller-chosen key, one per intent (a UUID is recommended). Retrying with the same key replays the stored outcome instead of repeating the effect. Omitting it is 400 \u0060idempotency.key_required\u0060.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -4061,6 +4177,23 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Step-up confirmation, echoing the resource\u0027s own identifier (a gym\u0027s slug, an invoice\u0027s number). A header rather than a body field so it survives DELETE and cannot be replayed by a script that never read the resource.",
+            "in": "header",
+            "name": "X-Confirm-Action",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
               "type": "string"
             }
           }
@@ -4391,6 +4524,15 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "The strong ETag from the resource you read. Omitting it is 428; a stale value is 409.",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -4489,6 +4631,14 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4557,6 +4707,14 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4623,6 +4781,14 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
               "type": "string"
             }
           }
@@ -4720,6 +4886,14 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
               "type": "string"
             }
           }
@@ -5150,6 +5324,15 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "The strong ETag from the resource you read. Omitting it is 428; a stale value is 409.",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -5248,6 +5431,14 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5314,6 +5505,15 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The strong ETag from the resource you read. Omitting it is 428; a stale value is 409.",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
               "type": "string"
             }
           }
@@ -5412,6 +5612,14 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
               "type": "string"
             }
           }
