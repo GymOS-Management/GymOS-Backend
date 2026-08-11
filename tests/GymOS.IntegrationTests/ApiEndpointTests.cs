@@ -155,8 +155,8 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         // A tripwire, not a specification: this number is expected to change whenever an endpoint
         // is added, and the point of asserting it is that adding one makes you look at this test
         // and confirm the new operation landed in `secured` rather than in `anonymous`.
-        // 43 → 45 with M4's two feature-catalogue operations.
-        Assert.Equal(45, secured.Count);
+        // 43 → 47 across M4: two feature-catalogue operations, two plan-feature operations.
+        Assert.Equal(47, secured.Count);
     }
 
     /// <summary>
@@ -182,6 +182,17 @@ public sealed class ApiEndpointTests : IAsyncLifetime
     [InlineData("/api/v1/plans/{planId}", "put", "If-Match", true)]
     [InlineData("/api/v1/gyms/{gymId}", "delete", "X-Confirm-Action", true)]
     [InlineData("/api/v1/plans/{planId}/activate", "post", "If-Match", false)]
+
+    // The price routes: required since the 2026-08-11 audit made them so (they overwrite a price
+    // the caller read, and SetPrice is an upsert with no state machine to refuse a stale write).
+    // Added here because the audit changed the pipeline and left the declaration saying "honoured"
+    // — this theory's hand-picked cases did not cover these paths, so nothing caught the drift.
+    [InlineData("/api/v1/plans/{planId}/prices", "put", "If-Match", true)]
+    [InlineData("/api/v1/plans/{planId}/prices/{planPriceId}", "delete", "If-Match", true)]
+
+    // M4: both writes overwrite what the caller read.
+    [InlineData("/api/v1/plans/{planId}/features", "put", "If-Match", true)]
+    [InlineData("/api/v1/features/{featureId}", "put", "If-Match", true)]
     public async Task EnforcedHeaders_AreDeclared_WithTheRequirednessThePipelineActuallyApplies(
         string path, string method, string header, bool expectedRequired)
     {

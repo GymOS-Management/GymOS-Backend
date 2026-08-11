@@ -2,6 +2,7 @@ using Asp.Versioning;
 using Asp.Versioning.Builder;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Models;
+using GymOS.Platform.Application.Features;
 using GymOS.Platform.Application.Subscriptions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Identity;
@@ -90,7 +91,7 @@ public static class PlanEndpoints
 
         group.MapPut("/{planId:guid}/prices", SetPriceAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
-            .HonoursIfMatch()
+            .RequiresIfMatch()
             .WithName("SetPlanPrice")
             .WithSummary("Set the price for one cycle and currency")
             .WithDescription(
@@ -98,25 +99,67 @@ public static class PlanEndpoints
                     + "intent, so one operation. Prices are rows, so offering annual billing or a second "
                     + "currency is data entry rather than a schema change. **Existing subscriptions are "
                     + "unaffected**: they hold a price snapshot, so a change applies to new assignments "
-                    + "and renewals only. `If-Match` is honoured when supplied. Returns the updated plan.")
+                    + "and renewals only. `If-Match` is **required**: this overwrites a price you read, "
+                    + "and it is an upsert with no state machine to refuse a stale interleaving, so "
+                    + "without it one operator's price silently replaces another's. Returns the "
+                    + "updated plan.")
             .Produces<PlanDetail>()
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict);
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         group.MapDelete("/{planId:guid}/prices/{planPriceId:guid}", RemovePriceAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
-            .HonoursIfMatch()
+            .RequiresIfMatch()
             .WithName("RemovePlanPrice")
             .WithSummary("Withdraw a price")
             .WithDescription(
                 "Removes the offer for that cycle and currency. Safe for existing subscriptions, which "
-                    + "snapshot the price they were assigned. Returns the updated plan.")
+                    + "snapshot the price they were assigned. `If-Match` is **required**, like the "
+                    + "upsert above: withdrawing a price you may not have seen repriced is the same "
+                    + "lost-update hazard from the other direction. Returns the updated plan.")
             .Produces<PlanDetail>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict);
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapGet("/{planId:guid}/features", GetFeaturesAsync)
+            .RequireAuthorization(PlatformPermissions.BillingRead)
+            .WithName("GetPlanFeatures")
+            .WithSummary("What this plan includes")
+            .WithDescription(
+                "The features this plan has an **opinion** about (§2.4). A feature absent from the "
+                    + "list is not excluded — it is unmentioned, and gyms on this plan fall through "
+                    + "to the platform default for it. That third state is why resolution has three "
+                    + "layers. Returned as part of the plan, so the response is the plan itself.")
+            .Produces<PlanDetail>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPut("/{planId:guid}/features", SetFeaturesAsync)
+            .RequireAuthorization(PlatformPermissions.BillingManage)
+            .RequiresIfMatch()
+            .WithName("SetPlanFeatures")
+            .WithSummary("Set what this plan includes")
+            .WithDescription(
+                "Each entry names a feature `key` and an `isEnabled` of `true`, `false`, or **`null` "
+                    + "to clear the plan's opinion** — which makes gyms on the plan fall through to "
+                    + "the platform default, a different answer from `false`. Only the keys you send "
+                    + "are touched, so a client that knows about ten features cannot erase an "
+                    + "eleventh added by a later release. An unknown key rejects the whole request: "
+                    + "a half-applied feature set is worse than a refused one. Gated on "
+                    + "`billing.manage` because what a plan includes is priced — granting one gym an "
+                    + "exception is `features.manage` instead. `If-Match` is **required**.")
+            .Produces<PlanDetail>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         group.MapPost("/{planId:guid}/deactivate", DeactivateAsync)
             .RequireAuthorization(PlatformPermissions.BillingManage)
@@ -221,6 +264,34 @@ public static class PlanEndpoints
                 request.StorageLimitMb,
                 request.SortOrder,
                 request.IsPublic,
+                PreconditionHeaders.IfMatch(httpContext.Request)),
+            cancellationToken);
+
+        return WriteResults.Updated(result, result.IsSuccess ? result.Value.RowVersion : null);
+    }
+
+    private static async Task<IResult> GetFeaturesAsync(
+        Guid planId,
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        // The plan carries its own feature set, so "what does this plan include" is the plan.
+        Result<PlanDetail> result = await dispatcher.QueryAsync(new GetPlanQuery(planId), cancellationToken);
+
+        return WriteResults.Read(result, result.IsSuccess ? result.Value.RowVersion : null);
+    }
+
+    private static async Task<IResult> SetFeaturesAsync(
+        Guid planId,
+        SetPlanFeaturesRequest request,
+        HttpContext httpContext,
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        Result<PlanDetail> result = await dispatcher.SendAsync(
+            new SetPlanFeaturesCommand(
+                planId,
+                request.Features,
                 PreconditionHeaders.IfMatch(httpContext.Request)),
             cancellationToken);
 

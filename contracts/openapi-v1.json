@@ -1173,6 +1173,12 @@
           "description": {
             "type": "string"
           },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/PlanFeatureDetail"
+            },
+            "type": "array"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -1272,7 +1278,58 @@
           "prices",
           "subscribedGymCount",
           "createdAtUtc",
-          "rowVersion"
+          "rowVersion",
+          "features"
+        ],
+        "type": "object"
+      },
+      "PlanFeatureDetail": {
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "featureId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "isEnabled": {
+            "type": "boolean"
+          },
+          "isPremium": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "featureId",
+          "key",
+          "name",
+          "category",
+          "isEnabled",
+          "isPremium"
+        ],
+        "type": "object"
+      },
+      "PlanFeatureRequest": {
+        "properties": {
+          "isEnabled": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "isEnabled"
         ],
         "type": "object"
       },
@@ -1535,6 +1592,20 @@
         },
         "required": [
           "pastDue"
+        ],
+        "type": "object"
+      },
+      "SetPlanFeaturesRequest": {
+        "properties": {
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/PlanFeatureRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "features"
         ],
         "type": "object"
       },
@@ -2590,6 +2661,15 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The strong ETag from the resource you read. Omitting it is 428; a stale value is 409.",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
               "type": "string"
             }
           }
@@ -5029,9 +5109,182 @@
         ]
       }
     },
+    "/api/v1/plans/{planId}/features": {
+      "get": {
+        "description": "The features this plan has an **opinion** about (\u00A72.4). A feature absent from the list is not excluded \u2014 it is unmentioned, and gyms on this plan fall through to the platform default for it. That third state is why resolution has three layers. Returned as part of the plan, so the response is the plan itself.",
+        "operationId": "GetPlanFeatures",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "What this plan includes",
+        "tags": [
+          "Subscription plans"
+        ]
+      },
+      "put": {
+        "description": "Each entry names a feature \u0060key\u0060 and an \u0060isEnabled\u0060 of \u0060true\u0060, \u0060false\u0060, or **\u0060null\u0060 to clear the plan\u0027s opinion** \u2014 which makes gyms on the plan fall through to the platform default, a different answer from \u0060false\u0060. Only the keys you send are touched, so a client that knows about ten features cannot erase an eleventh added by a later release. An unknown key rejects the whole request: a half-applied feature set is worse than a refused one. Gated on \u0060billing.manage\u0060 because what a plan includes is priced \u2014 granting one gym an exception is \u0060features.manage\u0060 instead. \u0060If-Match\u0060 is **required**.",
+        "operationId": "SetPlanFeatures",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The strong ETag from the resource you read. Omitting it is 428; a stale value is 409.",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPlanFeaturesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "428": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Precondition Required"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Set what this plan includes",
+        "tags": [
+          "Subscription plans"
+        ]
+      }
+    },
     "/api/v1/plans/{planId}/prices": {
       "put": {
-        "description": "Adds the price, or changes it if one already exists for that cycle and currency \u2014 one intent, so one operation. Prices are rows, so offering annual billing or a second currency is data entry rather than a schema change. **Existing subscriptions are unaffected**: they hold a price snapshot, so a change applies to new assignments and renewals only. \u0060If-Match\u0060 is honoured when supplied. Returns the updated plan.",
+        "description": "Adds the price, or changes it if one already exists for that cycle and currency \u2014 one intent, so one operation. Prices are rows, so offering annual billing or a second currency is data entry rather than a schema change. **Existing subscriptions are unaffected**: they hold a price snapshot, so a change applies to new assignments and renewals only. \u0060If-Match\u0060 is **required**: this overwrites a price you read, and it is an upsert with no state machine to refuse a stale interleaving, so without it one operator\u0027s price silently replaces another\u0027s. Returns the updated plan.",
         "operationId": "SetPlanPrice",
         "parameters": [
           {
@@ -5044,9 +5297,10 @@
             }
           },
           {
-            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "description": "The strong ETag from the resource you read. Omitting it is 428; a stale value is 409.",
             "in": "header",
             "name": "If-Match",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -5112,6 +5366,16 @@
               }
             },
             "description": "Conflict"
+          },
+          "428": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Precondition Required"
           }
         },
         "security": [
@@ -5127,7 +5391,7 @@
     },
     "/api/v1/plans/{planId}/prices/{planPriceId}": {
       "delete": {
-        "description": "Removes the offer for that cycle and currency. Safe for existing subscriptions, which snapshot the price they were assigned. Returns the updated plan.",
+        "description": "Removes the offer for that cycle and currency. Safe for existing subscriptions, which snapshot the price they were assigned. \u0060If-Match\u0060 is **required**, like the upsert above: withdrawing a price you may not have seen repriced is the same lost-update hazard from the other direction. Returns the updated plan.",
         "operationId": "RemovePlanPrice",
         "parameters": [
           {
@@ -5149,9 +5413,10 @@
             }
           },
           {
-            "description": "Optional. When supplied, the write is refused with 409 if the resource has changed since you read it. Omitting it accepts last-write-wins.",
+            "description": "The strong ETag from the resource you read. Omitting it is 428; a stale value is 409.",
             "in": "header",
             "name": "If-Match",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -5197,6 +5462,16 @@
               }
             },
             "description": "Conflict"
+          },
+          "428": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Precondition Required"
           }
         },
         "security": [

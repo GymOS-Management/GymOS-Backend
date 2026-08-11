@@ -57,6 +57,12 @@ internal sealed class FakePlanQueries : IPlanQueries
     public uint RowVersion { get; set; } = 1;
 
     /// <summary>
+    /// Attach the catalogue fake to have plan features project their real keys. Optional, because
+    /// most plan tests predate features and have no reason to know about them.
+    /// </summary>
+    public FakeFeatureRepository? Features { get; set; }
+
+    /// <summary>
     /// Gyms the test has declared as subscribed to a plan. Settable rather than derived from a
     /// subscription fake, so a plan test can set up "three gyms are on this" without building a
     /// subscription graph.
@@ -132,7 +138,20 @@ internal sealed class FakePlanQueries : IPlanQueries
             prices,
             SubscribedGymCount(plan.Id),
             plan.CreatedAtUtc,
-            RowVersion.ToString(CultureInfo.InvariantCulture)));
+            RowVersion.ToString(CultureInfo.InvariantCulture),
+
+            // Projected from the aggregate, so a handler that sets a plan feature and reads back
+            // sees its own write. Keys come from the catalogue fake when one is attached; without
+            // it the id is the only truthful answer, so tests assert on FeatureId and IsEnabled.
+            plan.Features
+                .Select(feature => new PlanFeatureDetail(
+                    feature.FeatureId,
+                    Features?.KeyOf(feature.FeatureId) ?? string.Empty,
+                    Features?.KeyOf(feature.FeatureId) ?? string.Empty,
+                    string.Empty,
+                    feature.IsEnabled,
+                    IsPremium: false))
+                .ToList()));
     }
 }
 

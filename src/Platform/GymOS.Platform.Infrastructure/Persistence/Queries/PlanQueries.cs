@@ -1,6 +1,7 @@
 ﻿using GymOS.BuildingBlocks.Application.Models;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
+using GymOS.Platform.Domain.Features;
 using GymOS.Platform.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
 using RowVersion = GymOS.BuildingBlocks.Application.Abstractions.RowVersion;
@@ -123,6 +124,32 @@ internal sealed class PlanQueries : IPlanQueries
                         Amount = price.Price.Amount,
                     })
                     .ToList(),
+
+                // Only the features this plan has an opinion about (M4). Joined to the catalogue for
+                // the key and label, because a feature id is not an answer a human can use.
+                Features = plan.Features
+                    .Select(feature => new
+                    {
+                        feature.FeatureId,
+                        feature.IsEnabled,
+                        Key = _dbContext.Set<Feature>()
+                            .Where(row => row.Id == feature.FeatureId)
+                            .Select(row => row.Key)
+                            .FirstOrDefault(),
+                        Name = _dbContext.Set<Feature>()
+                            .Where(row => row.Id == feature.FeatureId)
+                            .Select(row => row.Name)
+                            .FirstOrDefault(),
+                        Category = _dbContext.Set<Feature>()
+                            .Where(row => row.Id == feature.FeatureId)
+                            .Select(row => row.Category)
+                            .FirstOrDefault(),
+                        IsPremium = _dbContext.Set<Feature>()
+                            .Where(row => row.Id == feature.FeatureId)
+                            .Select(row => row.IsPremium)
+                            .FirstOrDefault(),
+                    })
+                    .ToList(),
             })
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -144,6 +171,20 @@ internal sealed class PlanQueries : IPlanQueries
                 price.Amount))
             .ToList();
 
+        var features = projection.Features
+            // Category then name, matching the catalogue's own order so the console can render a
+            // plan's feature set beside the full list without re-sorting either.
+            .OrderBy(feature => feature.Category, StringComparer.Ordinal)
+            .ThenBy(feature => feature.Name, StringComparer.Ordinal)
+            .Select(feature => new PlanFeatureDetail(
+                feature.FeatureId,
+                feature.Key ?? string.Empty,
+                feature.Name ?? string.Empty,
+                feature.Category ?? string.Empty,
+                feature.IsEnabled,
+                feature.IsPremium))
+            .ToList();
+
         return new PlanDetail(
             projection.Id,
             projection.Code,
@@ -160,7 +201,8 @@ internal sealed class PlanQueries : IPlanQueries
             prices,
             projection.SubscribedGymCount,
             projection.CreatedAtUtc,
-            RowVersion.ToToken(projection.RowVersion));
+            RowVersion.ToToken(projection.RowVersion),
+            features);
     }
 
     private static IQueryable<SubscriptionPlan> Sort(IQueryable<SubscriptionPlan> query, PageRequest page) =>

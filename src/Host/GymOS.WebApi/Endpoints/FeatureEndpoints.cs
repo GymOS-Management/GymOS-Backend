@@ -5,6 +5,7 @@ using GymOS.Platform.Application.Features;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
+using GymOS.WebApi.Extensions;
 
 namespace GymOS.WebApi.Endpoints;
 
@@ -46,6 +47,7 @@ public static class FeatureEndpoints
 
         group.MapPut("/{featureId:guid}", UpdateAsync)
             .RequireAuthorization(PlatformPermissions.FeaturesManage)
+            .RequiresIfMatch()
             .WithName("UpdateFeature")
             .WithSummary("Edit a feature's copy, its platform default, and whether it is sold")
             .WithDescription(

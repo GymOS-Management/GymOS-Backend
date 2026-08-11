@@ -31,12 +31,26 @@ public sealed record PlanListItem(
     DateTimeOffset CreatedAtUtc);
 
 /// <summary>
+/// What one plan says about one feature — present only when the plan has an opinion at all.
+/// </summary>
+public sealed record PlanFeatureDetail(
+    Guid FeatureId,
+    string Key,
+    string Name,
+    string Category,
+    bool IsEnabled,
+    bool IsPremium);
+
+/// <summary>
 /// One plan in full.
 ///
 /// <para><paramref name="SubscribedGymCount"/> counts gyms on a **live** subscription to this plan — the
-/// number that decides whether withdrawing it is safe. It arrived with M3.2; the plan's feature set is
-/// still absent because the feature catalogue is M4, and a field that always reads empty teaches
-/// operators to distrust the screen.</para>
+/// number that decides whether withdrawing it is safe (M3.2).</para>
+///
+/// <para><paramref name="Features"/> arrived with M4, when the catalogue it points at came to exist.
+/// It lists only the features this plan has an <b>opinion</b> about: a feature absent from the list
+/// is not "excluded", it is unmentioned, and gyms on the plan fall through to the platform default.
+/// That third state is why resolution has three layers rather than two.</para>
 /// </summary>
 /// <param name="MaxMembers">Null means unlimited, throughout.</param>
 /// <param name="RowVersion">Echo in <c>If-Match</c> when updating (API_STANDARDS.md §3).</param>
@@ -56,7 +70,8 @@ public sealed record PlanDetail(
     IReadOnlyCollection<PlanPriceDetail> Prices,
     int SubscribedGymCount,
     DateTimeOffset CreatedAtUtc,
-    string RowVersion);
+    string RowVersion,
+    IReadOnlyCollection<PlanFeatureDetail> Features);
 
 /// <param name="IncludeInactive">
 /// Withdrawn plans are excluded by default: the catalogue an operator means is the one they can sell
