@@ -1,4 +1,5 @@
 using GymOS.BuildingBlocks.Infrastructure.Time;
+using GymOS.Platform.Application.Features;
 using GymOS.Platform.Application.Invoices;
 using GymOS.Platform.Application.Subscriptions;
 using GymOS.Platform.Domain.Gyms;
@@ -52,6 +53,8 @@ public sealed class RenewalSweepTests : IAsyncLifetime
         new PlanRepository(context),
         new InvoiceIssuer(
             new InvoiceRepository(context), new InvoiceNumberGenerator(context), Clock),
+        new FeatureExceptionMaintainer(
+            new FeatureRepository(context), new PlanRepository(context), new SubscriptionRepository(context)),
         new UnitOfWork(context));
 
     /// <summary>A gym on a monthly plan whose period began in the past — due when backdated enough.</summary>

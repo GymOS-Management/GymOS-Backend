@@ -310,49 +310,36 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
+    // The five feature-specific helpers (Feature, ReadFeaturesAsync, SetGymFeaturesAsync,
+    // CountOverridesAsync, SetPlanFeatureAsync) live in FeatureApiHelpers now — GymFeatureLifecycleTests
+    // needs the same five, and two files needing them is the moment to share, not to copy. These thin
+    // wrappers bind them to this fixture's client/host so every call site above reads unchanged.
 
     private static Uri FeaturesUri(Guid gymId) =>
         new($"/api/v1/gyms/{gymId}/features", UriKind.Relative);
 
     private static JsonElement Feature(JsonElement features, string key) =>
-        features.EnumerateArray().Single(feature => feature.GetProperty("key").GetString() == key);
+        FeatureApiHelpers.Feature(features, key);
 
-    private async Task<JsonElement> ReadFeaturesAsync(Guid gymId)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(FeaturesUri(gymId));
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        return await response.Content.ReadFromJsonAsync<JsonElement>();
-    }
+    private Task<JsonElement> ReadFeaturesAsync(Guid gymId) =>
+        FeatureApiHelpers.ReadFeaturesAsync(_client, gymId);
+
+    private Task<JsonElement> SetGymFeaturesAsync(
+        Guid gymId,
+        params (string Key, bool IsEnabled, string? Reason)[] features) =>
+        FeatureApiHelpers.SetGymFeaturesAsync(_client, gymId, features);
+
+    private Task<int> CountOverridesAsync(Guid gymId) =>
+        FeatureApiHelpers.CountOverridesAsync(_host, gymId);
+
+    private Task SetPlanFeatureAsync(Guid planId, string featureKey, bool isEnabled) =>
+        FeatureApiHelpers.SetPlanFeatureAsync(_client, planId, featureKey, isEnabled);
 
     private async Task<bool> EnabledAsync(Guid gymId, string key) =>
         Feature(await ReadFeaturesAsync(gymId), key).GetProperty("enabled").GetBoolean();
 
     private async Task<string?> SourceAsync(Guid gymId, string key) =>
         Feature(await ReadFeaturesAsync(gymId), key).GetProperty("source").GetString();
-
-    private async Task<JsonElement> SetGymFeaturesAsync(
-        Guid gymId,
-        params (string Key, bool IsEnabled, string? Reason)[] features)
-    {
-        using HttpResponseMessage response = await _client.PutAsJsonAsync(
-            FeaturesUri(gymId),
-            new
-            {
-                features = features
-                    .Select(feature => new { key = feature.Key, isEnabled = feature.IsEnabled, reason = feature.Reason })
-                    .ToArray(),
-            });
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        return await response.Content.ReadFromJsonAsync<JsonElement>();
-    }
-
-    private async Task<int> CountOverridesAsync(Guid gymId)
-    {
-        await using var context = _host.CreateDbContext();
-
-        return await context.Set<GymFeatureOverride>().CountAsync(over => over.GymId == gymId);
-    }
 
     /// <summary>
     /// The email of whoever set an override, joined through the user table — provenance is only worth
@@ -372,28 +359,4 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
                 """)
             .SingleAsync();
     }
-
-    private async Task SetPlanFeatureAsync(Guid planId, string featureKey, bool isEnabled)
-    {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/features", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { features = new[] { new { key = featureKey, isEnabled } } }),
-        };
-        request.Headers.TryAddWithoutValidation("If-Match", $"\"{await PlanVersionAsync(planId)}\"");
-
-        using HttpResponseMessage response = await _client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    }
-
-    private async Task<string> PlanVersionAsync(Guid planId)
-    {
-        using HttpResponseMessage plan = await _client.GetAsync(
-            new Uri($"/api/v1/plans/{planId}", UriKind.Relative));
-        Assert.Equal(HttpStatusCode.OK, plan.StatusCode);
-
-        return (await plan.Content.ReadFromJsonAsync<JsonElement>())
-            .GetProperty("rowVersion").GetString()!;
-    }
-
 }

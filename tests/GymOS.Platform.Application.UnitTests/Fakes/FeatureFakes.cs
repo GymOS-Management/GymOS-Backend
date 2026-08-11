@@ -4,6 +4,24 @@ using GymOS.Platform.Domain.Features;
 
 namespace GymOS.Platform.Application.UnitTests.Fakes;
 
+/// <summary>
+/// No-op stand-in for the redundancy sweep. The subscription handler tests are not testing feature
+/// withdrawal — they exist to pin subscription behaviour — so this simply records that it was asked
+/// and, unless a test configures otherwise, reports nothing to withdraw.
+/// </summary>
+internal sealed class FakeFeatureExceptionMaintainer : IFeatureExceptionMaintainer
+{
+    public List<Guid> CalledForGymIds { get; } = [];
+
+    public int ReturnValue { get; set; }
+
+    public Task<int> WithdrawRedundantAsync(Guid gymId, CancellationToken cancellationToken)
+    {
+        CalledForGymIds.Add(gymId);
+        return Task.FromResult(ReturnValue);
+    }
+}
+
 /// <summary>In-memory stand-in for the feature catalogue and override write side.</summary>
 internal sealed class FakeFeatureRepository : IFeatureRepository
 {

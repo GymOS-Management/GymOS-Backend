@@ -1,3 +1,4 @@
+using GymOS.Platform.Application.Features;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.Platform.Infrastructure.Persistence.Repositories;
@@ -19,6 +20,7 @@ public static class PlatformFeaturesServiceCollectionExtensions
 
         services.TryAddScoped<IFeatureRepository, FeatureRepository>();
         services.TryAddScoped<IFeatureQueries, FeatureQueries>();
+        services.TryAddScoped<IFeatureExceptionMaintainer, FeatureExceptionMaintainer>();
 
         return services;
     }

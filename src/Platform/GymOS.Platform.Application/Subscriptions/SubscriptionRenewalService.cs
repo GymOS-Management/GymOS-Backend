@@ -1,4 +1,5 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Invoices;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Subscriptions;
@@ -43,17 +44,20 @@ public sealed class SubscriptionRenewalService
     private readonly ISubscriptionRepository _subscriptions;
     private readonly IPlanRepository _plans;
     private readonly InvoiceIssuer _issuer;
+    private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
 
     public SubscriptionRenewalService(
         ISubscriptionRepository subscriptions,
         IPlanRepository plans,
         InvoiceIssuer issuer,
+        IFeatureExceptionMaintainer featureExceptions,
         IUnitOfWork unitOfWork)
     {
         _subscriptions = subscriptions;
         _plans = plans;
         _issuer = issuer;
+        _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
     }
 
@@ -96,6 +100,13 @@ public sealed class SubscriptionRenewalService
             subscription.ConvertTrial();
             subscription.CatchUpPeriods(now);
             await _issuer.IssueForPeriodAsync(subscription, plan, cancellationToken);
+
+            // The trial could have run for months; a platform default or the plan's own features
+            // may have moved underneath an exception the gym was granted at trial start, with no
+            // subsequent gym-scoped write to catch it. The sweep is exactly the moment nobody else
+            // is watching, so it re-checks here rather than assuming nothing moved.
+            await _featureExceptions.WithdrawRedundantAsync(subscription.GymId, cancellationToken);
+
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return RenewalAction.ConvertedTrial;
@@ -110,6 +121,12 @@ public sealed class SubscriptionRenewalService
         if (subscription.CancelAtPeriodEnd)
         {
             subscription.CancelNow(reason: null, now); // keeps the reason recorded at scheduling
+
+            // A subscription that ends overnight is precisely the case nobody is watching: no
+            // operator is at the console to notice an exception that now equals the platform
+            // default it fell back to.
+            await _featureExceptions.WithdrawRedundantAsync(subscription.GymId, cancellationToken);
+
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return RenewalAction.FinalizedCancellation;
@@ -120,6 +137,11 @@ public sealed class SubscriptionRenewalService
         if (!subscription.AutoRenew)
         {
             subscription.Expire();
+
+            // Same reasoning as the cancellation branch above: the sweep is the only thing that
+            // will ever notice this gym's exceptions again tonight.
+            await _featureExceptions.WithdrawRedundantAsync(subscription.GymId, cancellationToken);
+
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return RenewalAction.Expired;

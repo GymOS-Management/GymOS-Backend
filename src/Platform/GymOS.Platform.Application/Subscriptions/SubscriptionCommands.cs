@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Invoices;
@@ -80,6 +81,7 @@ internal sealed class AssignSubscriptionCommandHandler
     private readonly ISubscriptionRepository _subscriptions;
     private readonly ISubscriptionQueries _subscriptionQueries;
     private readonly InvoiceIssuer _issuer;
+    private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
 
@@ -89,6 +91,7 @@ internal sealed class AssignSubscriptionCommandHandler
         ISubscriptionRepository subscriptions,
         ISubscriptionQueries subscriptionQueries,
         InvoiceIssuer issuer,
+        IFeatureExceptionMaintainer featureExceptions,
         IUnitOfWork unitOfWork,
         IClock clock)
     {
@@ -97,6 +100,7 @@ internal sealed class AssignSubscriptionCommandHandler
         _subscriptions = subscriptions;
         _subscriptionQueries = subscriptionQueries;
         _issuer = issuer;
+        _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
         _clock = clock;
     }
@@ -259,6 +263,11 @@ internal sealed class AssignSubscriptionCommandHandler
                 Error.Conflict("subscriptions.invalid_state", exception.Message));
         }
 
+        // The assignment or plan change just applied may have made a stored exception redundant —
+        // most obviously an upgrade onto a plan that now grants what the exception granted. Before
+        // the same save, so the withdrawal and the change that caused it commit together.
+        await _featureExceptions.WithdrawRedundantAsync(command.GymId, cancellationToken);
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await SubscriptionWrites.ReadBackAsync(
@@ -312,6 +321,7 @@ internal sealed class SubscriptionStateCommandHandlers :
     private readonly ISubscriptionQueries _subscriptionQueries;
     private readonly IPlanRepository _plans;
     private readonly InvoiceIssuer _issuer;
+    private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
 
@@ -320,6 +330,7 @@ internal sealed class SubscriptionStateCommandHandlers :
         ISubscriptionQueries subscriptionQueries,
         IPlanRepository plans,
         InvoiceIssuer issuer,
+        IFeatureExceptionMaintainer featureExceptions,
         IUnitOfWork unitOfWork,
         IClock clock)
     {
@@ -327,6 +338,7 @@ internal sealed class SubscriptionStateCommandHandlers :
         _subscriptionQueries = subscriptionQueries;
         _plans = plans;
         _issuer = issuer;
+        _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
         _clock = clock;
     }
@@ -497,6 +509,12 @@ internal sealed class SubscriptionStateCommandHandlers :
         {
             return Result.Failure<SubscriptionDetail>(mutation.Error!);
         }
+
+        // Covers cancel, resume, convert-trial and payment-state: any of them can change what the
+        // gym's plan opinion effectively is (trial conversion re-evaluates against the same plan;
+        // the others leave it unchanged), so re-checking here is what keeps a stored exception from
+        // outliving the reason it was ever needed. Before the save, same transaction.
+        await _featureExceptions.WithdrawRedundantAsync(gymId, cancellationToken);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
