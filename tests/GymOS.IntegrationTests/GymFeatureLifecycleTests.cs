@@ -218,6 +218,40 @@ public sealed class GymFeatureLifecycleTests : IAsyncLifetime
         Assert.Equal("Default", reports.GetProperty("source").GetString());
     }
 
+    [Fact]
+    public async Task A_gym_deletion_withdraws_an_exception_it_has_made_redundant()
+    {
+        // The gap the whole-branch review found: DeleteGymCommandHandler cancels the live
+        // subscription (the plan layer goes silent, exactly like the expiry test above) but was the
+        // only CancelNow/Expire/ChangePlan/Assign site never wired to the maintainer. Without the
+        // fix, this override survives deletion and is only cleared by the 03:50 UTC sweep — up to a
+        // day in which a deleted gym's `GET /gyms/{id}` reports `source: Override` for a capability
+        // that no longer differs from the default.
+        Guid basic = await CreatePlanAsync("BASIC");
+        await SetPlanFeatureAsync(basic, PlatformFeatures.Reports, isEnabled: false);
+
+        Guid gym = await CreateGymAsync("deleted-gym");
+        await AssignAsync(gym, basic);
+
+        await SetGymFeaturesAsync(gym, (PlatformFeatures.Reports, true, "Needed reports during a dispute."));
+        Assert.Equal(1, await CountOverridesAsync(gym));
+
+        await PlatformApiHelpers.DeleteGymAsync(_client, gym, "deleted-gym");
+
+        // Same transaction as the deletion, not the next sweep: no job ran between the write above
+        // and this read.
+        Assert.Equal(0, await CountOverridesAsync(gym));
+
+        // Reading a deleted gym's features still works (Features.md: "a deleted gym cannot be
+        // configured" is deliberately not "cannot be read"), and now reports the truth: no live
+        // plan, so the platform default decides, and the default agrees with what the override used
+        // to grant.
+        JsonElement reports = Feature(await ReadFeaturesAsync(gym), PlatformFeatures.Reports);
+        Assert.True(reports.GetProperty("enabled").GetBoolean());
+        Assert.Equal("Default", reports.GetProperty("source").GetString());
+        Assert.Null(reports.GetProperty("overrideReason").GetString());
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
     // Thin wrappers binding the shared PlatformApiHelpers / FeatureApiHelpers to this fixture's
     // client/host — see GymFeatureApiTests for the same pattern and why the five feature helpers

@@ -248,6 +248,45 @@ the plan's opinion in the gap between this write's decision and the body it retu
 always exactly the resolution this transaction is committing, never one already superseded by the time
 it is read.
 
+### The same lock is missing on the subscription side — a known, narrow gap
+
+**`PUT /gyms/{id}/subscription` (`AssignSubscriptionCommandHandler`) reads the plan without the guard
+above.** It opens no explicit transaction and calls `IPlanRepository.FindByIdAsync`, not
+`FindByIdForUpdateAsync`, before deciding — via the synchronous `WithdrawRedundantAsync` call this
+increment added — which of the gym's stored exceptions the new plan makes redundant.
+
+**The interleaving that loses a capability.** T1 assigns a gym to `PRO`, reading `crm = true`. Before
+T1 commits, T2 commits `PUT /plans/PRO/features` setting `crm = false`. T1's maintainer, judging
+against the stale `crm = true` it already read, decides the gym's `crm = true` override is now
+redundant (the assignment appears to grant the same thing) and withdraws it. Final state: the gym is
+on `PRO`, which now says `crm = false`, and the exception that was protecting `crm` is gone. Withdrawal
+is a hard delete (`RemoveOverride`), not a soft one, so the next nightly sweep does not put it back —
+there is nothing left for the sweep to find redundant or not.
+
+**The loss is a missing capability, not corrupted data.** Nothing is stored incorrectly: the gym
+genuinely has no override and its plan genuinely says `crm = false`, which is a state
+`GET /gyms/{id}/features` reports truthfully. What is lost is the *decision* — the override an operator
+deliberately granted — and the only trace of it is the outbox: the withdrawal still raises
+`GymFeatureOverrideCleared` exactly as an operator-driven clear does, so an operator who goes looking
+finds the moment it disappeared and can re-grant it. It does not come back on its own.
+
+**How narrow this is.** Both writes must race — `PUT /plans/{id}/features` on the exact plan a gym is
+mid-assignment to or mid-change onto, inside the few milliseconds between this handler's plan read and
+its commit — and the outcome must specifically be the withdrawal branch of `GymFeatureExceptions.Redundant`
+finding a now-stale match. Every other interleaving converges correctly: if the plan edit lands first or
+after this transaction's commit, the maintainer sees one consistent state or the other, never a mix; if
+the assignment does not touch a feature the plan edit changed, nothing depends on the stale read; and
+the `PUT /gyms/{id}/features` write path this section describes above is already immune, because it
+takes the same lock the assignment path is missing.
+
+**Not fixed here, deliberately.** The fix is the same shape already proven on
+`SetGymFeaturesCommandHandler`: an explicit transaction plus `FindByIdForUpdateAsync` around the plan
+read in `AssignSubscriptionCommandHandler`, so a concurrent `PUT /plans/{id}/features` on the same plan
+serialises behind it exactly as it already does for the gym-features write. That touches the busiest
+handler in the subscriptions slice — every assignment, upgrade, downgrade, and cycle change — for a
+race two writes this specific have to hit, so it is recorded rather than folded into this wave. Tracked
+in `docs/STATUS.md`'s known open items.
+
 ## Value rules and stable codes
 
 | Code | Kind | When |

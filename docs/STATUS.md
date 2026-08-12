@@ -1136,7 +1136,8 @@ literal, unedited order of calls made against the freshly rebuilt image.
 
 **Test counts, every project run individually to completion with no `Aborted`, 0 build warnings:**
 SharedKernel 126 · BuildingBlocks 62 · Architecture 151 · Domain 423 · Application 235 ·
-Infrastructure 67 · Integration 274 = **1338**.
+Infrastructure 67 · Integration 275 = **1339** *(1338 as at the seventh review-fix commit; the
+whole-branch review below adds the eighth)*.
 
 ### Decisions and traps found
 
@@ -1176,6 +1177,46 @@ Infrastructure 67 · Integration 274 = **1338**.
   plan write could land between commit and read-back, so the body returned could already be stale by
   the time the caller saw it. The read-back moved inside the transaction, before commit, so the
   response is always exactly the resolution that transaction is committing.
+
+### Whole-branch review (2026-08-12) — 1 fixed, 1 recorded, 1 cheap fake fix
+
+The gate before a human decides whether to merge `m4-review-fixes` — the same protocol as the "M4
+review" above, run over the seven review-fix commits together rather than over M4 itself.
+
+Fixed, with a regression test confirmed failing before the fix landed:
+
+- **`DeleteGymCommandHandler` was the one `CancelNow`/`Expire`/`ChangePlan`/`Assign` site never wired
+  to `IFeatureExceptionMaintainer`.** Deleting a gym cancels its live subscription — the plan layer
+  goes silent exactly as an expiry does — but nothing re-evaluated the gym's exceptions afterward, so
+  an override made redundant by the deletion survived until the nightly sweep. This was not merely a
+  gap in behaviour: the design's §2 table, `Features.md`'s guarantee, and this file's own §5 summary
+  all stated "assigned a plan, changes plan, **or its subscription ends**" is synchronous, and the
+  code did not do that for one of the three ways a subscription ends. Fixed by adding the same
+  `WithdrawRedundantAsync(command.GymId, null, cancellationToken)` call, before the same save, that
+  the other three call sites already make — `null` because `CancelNow` has already set the
+  in-memory subscription to non-live, the same reasoning `SubscriptionRenewalService` and
+  `SubscriptionStateCommandHandlers` already document. `GymFeatureLifecycleTests
+  .A_gym_deletion_withdraws_an_exception_it_has_made_redundant` failed with 1 override still present
+  where 0 was expected before the fix, and passes now.
+
+Recorded rather than fixed:
+
+- **`AssignSubscriptionCommandHandler` decides feature redundancy against a plan read with no lock**,
+  unlike the sibling `SetGymFeaturesCommandHandler` this same increment already closed the same race
+  for. Narrow — only a `PUT /plans/{id}/features` racing a subscription assignment/change on the exact
+  same plan can lose a capability — and a lost capability rather than corrupted data, traceable via
+  `GymFeatureOverrideCleared` in the outbox. Full reasoning in `docs/BusinessRules/Features.md`; listed
+  under "Known open items" below rather than fixed here, since the fix is the same `FindByIdForUpdateAsync`
+  shape sized for the busiest handler in the subscriptions slice, not this wave.
+
+Cheap, fixed:
+
+- **`FakeFeatureQueries` shared one projection between `ListCatalogueAsync` and `GetAsync`**, hard-coding
+  `AdoptionCount: 0` where production's `GetAsync` (backing `PUT /features/{id}`'s read-back) uses
+  `ProjectWithoutCounts` and returns `null` for both counts. Inert today — no test asserted on
+  `GetAsync`'s counts — but the same missing-`Include` shape as the `PlanRepository` trap M4 already
+  paid for: a fake whose shape differs from the real thing teaches the wrong contract to whichever
+  test relies on it next. The fake now mirrors the split.
 
 ## M5 as built
 
@@ -1465,6 +1506,26 @@ above, not repeated here.
   lands. The product decision comes first (does an expiring override lapse silently, or does someone
   get told?), then `ExpiresAtUtc` plus one more predicate in the sweep that now already exists, rather
   than a new mechanism. Reasoning in `docs/BusinessRules/Features.md`.
+
+- **`AssignSubscriptionCommandHandler` decides feature redundancy against a plan read with no lock**
+  (M4.1 whole-branch review, deliberately deferred): unlike `SetGymFeaturesCommandHandler`, it opens
+  no explicit transaction and calls `IPlanRepository.FindByIdAsync`, not `FindByIdForUpdateAsync`,
+  before the synchronous `WithdrawRedundantAsync` call decides which of the gym's exceptions the new
+  plan makes redundant. A `PUT /plans/{id}/features` that commits between that read and this
+  handler's own commit can make the decision stale: T1 assigns a gym to a plan read as `crm = true`,
+  T2 concurrently flips that plan's `crm` to `false`, and T1's maintainer — judging against its now-
+  stale read — withdraws the gym's `crm = true` override as apparently redundant. The gym ends up on
+  a plan that says `crm = false` with the protecting exception gone; withdrawal is a hard delete, so
+  the nightly sweep does not restore it. This is a lost **capability**, not corrupted data — the
+  stored state is internally consistent and reported truthfully — and it is traceable: the withdrawal
+  still raises `GymFeatureOverrideCleared` in the outbox, exactly as an operator-driven clear would.
+  **Narrow by construction**: only a plan-feature edit racing a subscription assignment/change on that
+  exact plan, inside the few milliseconds between the read and the commit, can lose a capability this
+  way; every other interleaving converges to one consistent state or the other. The fix is the same
+  shape already proven on `SetGymFeaturesCommandHandler` — an explicit transaction plus
+  `FindByIdForUpdateAsync` around the plan read — sized for its own change rather than this wave,
+  since it touches the busiest handler in the subscriptions slice. Reasoning in
+  `docs/BusinessRules/Features.md`.
 
 - **`GET /features` computes adoption with two correlated subqueries per gym per feature**, with no
   bound and no cache — 12 features × every gym, on every catalogue page load. Fine at present scale

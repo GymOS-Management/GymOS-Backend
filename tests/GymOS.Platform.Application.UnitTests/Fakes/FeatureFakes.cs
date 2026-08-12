@@ -129,7 +129,7 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
     public Task<FeatureListItem?> GetAsync(Guid featureId, CancellationToken cancellationToken)
     {
         Feature? feature = _features.Features.SingleOrDefault(candidate => candidate.Id == featureId);
-        return Task.FromResult(feature is null ? null : Project(feature));
+        return Task.FromResult(feature is null ? null : ProjectWithoutCounts(feature));
     }
 
     public Task<IReadOnlyList<ResolvedFeatureDetail>> ResolveForGymAsync(
@@ -196,6 +196,28 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
         // override tally only, and the tests that care about adoption are the integration ones.
         AdoptionCount: 0,
         OverrideCount: _features.Overrides.Count(over => over.FeatureId == feature.Id),
+        RowVersion.ToString(CultureInfo.InvariantCulture),
+        IsDeclared: PlatformFeatures.All.Any(definition =>
+            string.Equals(definition.Key, feature.Key, StringComparison.Ordinal)));
+
+    /// <summary>
+    /// Mirrors production's split: <see cref="GetAsync"/> backs <c>PUT /features/{id}</c>'s
+    /// read-back and uses <c>FeatureQueries.ProjectWithoutCounts</c> there, returning <c>null</c>
+    /// for both counts rather than paying for (or faking) the adoption/override scan. Only
+    /// <see cref="ListCatalogueAsync"/> reports real counts, via <see cref="Project"/> above — a
+    /// fake that shared one projection between the two taught the wrong contract, the same
+    /// missing-<c>Include</c> shape the <c>PlanRepository</c> trap already cost this codebase once.
+    /// </summary>
+    private FeatureListItem ProjectWithoutCounts(Feature feature) => new(
+        feature.Id,
+        feature.Key,
+        feature.Name,
+        feature.Description,
+        feature.Category,
+        feature.DefaultEnabled,
+        feature.IsPremium,
+        AdoptionCount: null,
+        OverrideCount: null,
         RowVersion.ToString(CultureInfo.InvariantCulture),
         IsDeclared: PlatformFeatures.All.Any(definition =>
             string.Equals(definition.Key, feature.Key, StringComparison.Ordinal)));

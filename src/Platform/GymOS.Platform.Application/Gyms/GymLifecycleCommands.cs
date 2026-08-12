@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Gyms;
@@ -230,17 +231,20 @@ internal sealed class DeleteGymCommandHandler : ICommandHandler<DeleteGymCommand
 {
     private readonly IGymRepository _gyms;
     private readonly ISubscriptionRepository _subscriptions;
+    private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
 
     public DeleteGymCommandHandler(
         IGymRepository gyms,
         ISubscriptionRepository subscriptions,
+        IFeatureExceptionMaintainer featureExceptions,
         IUnitOfWork unitOfWork,
         IClock clock)
     {
         _gyms = gyms;
         _subscriptions = subscriptions;
+        _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
         _clock = clock;
     }
@@ -295,6 +299,15 @@ internal sealed class DeleteGymCommandHandler : ICommandHandler<DeleteGymCommand
             // this gym at all. Invoices already issued stay — they are the billing record.
             subscription.CancelNow(RevocationReasonGymDeleted, now);
         }
+
+        // The deletion (and the cancellation above, when there was a live subscription) may have
+        // made a stored exception redundant — most obviously one that only differed from the plan
+        // layer, which has now gone silent. `null`, not a lookup: CancelNow only sets Status in
+        // memory, so a query run before the save below would still match the not-yet-saved row as
+        // live and hand back the plan that is ending, not "no live plan" — the same reasoning the
+        // other three WithdrawRedundantAsync call sites already rely on. Before the same save, so
+        // the withdrawal and the deletion that caused it commit together or not at all.
+        await _featureExceptions.WithdrawRedundantAsync(command.GymId, null, cancellationToken);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
