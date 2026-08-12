@@ -49,7 +49,7 @@ public sealed class InvoiceCommandTests
 
             services.AddSingleton<IClock>(Clock);
             services.AddSingleton<IGymRepository>(Gyms);
-            services.AddSingleton<IGymQueries>(new FakeGymQueries(Gyms));
+            services.AddSingleton<IGymQueries>(new FakeGymQueries(Gyms, Permissions));
             services.AddSingleton<IPlanRepository>(Plans);
             services.AddSingleton<ISubscriptionRepository>(Subscriptions);
             services.AddSingleton<ISubscriptionQueries>(

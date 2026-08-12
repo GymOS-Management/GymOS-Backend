@@ -1,4 +1,3 @@
-using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Models;
 using GymOS.BuildingBlocks.Application.Security;
@@ -50,26 +49,17 @@ public sealed record GetGymQuery(Guid GymId) : IQuery<Result<GymDetail>>;
 internal sealed class GetGymQueryHandler : IQueryHandler<GetGymQuery, Result<GymDetail>>
 {
     private readonly IGymQueries _gymQueries;
-    private readonly IPermissionEvaluator _permissionEvaluator;
 
-    public GetGymQueryHandler(IGymQueries gymQueries, IPermissionEvaluator permissionEvaluator)
-    {
-        _gymQueries = gymQueries;
-        _permissionEvaluator = permissionEvaluator;
-    }
+    public GetGymQueryHandler(IGymQueries gymQueries) => _gymQueries = gymQueries;
 
     public async Task<Result<GymDetail>> HandleAsync(GetGymQuery query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        // The same evaluator AuthorizationBehavior and the endpoint policies use, so this can never
-        // disagree with them about who holds features.read. gyms.read is already guaranteed by the
-        // pipeline (this query's own RequiresPermission) before the handler runs, so only the second,
-        // narrower permission needs asking here.
-        bool includeFeatures = await _permissionEvaluator.HasPermissionAsync(
-            PlatformPermissions.FeaturesRead, cancellationToken);
-
-        GymDetail? gym = await _gymQueries.GetAsync(query.GymId, includeFeatures, cancellationToken);
+        // Whether Features comes back is IGymQueries.GetAsync's decision (M4.1 task 4), not this
+        // handler's: it is the one point both this route and every write's read-back share, so the
+        // features.read check lives there instead of being repeated at every caller.
+        GymDetail? gym = await _gymQueries.GetAsync(query.GymId, cancellationToken);
 
         return gym is null
             ? Result.Failure<GymDetail>(GymErrors.NotFound(query.GymId))

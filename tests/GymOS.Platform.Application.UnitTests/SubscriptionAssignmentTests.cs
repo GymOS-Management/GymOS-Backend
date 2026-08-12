@@ -47,7 +47,7 @@ public sealed class SubscriptionAssignmentTests
 
             services.AddSingleton<IClock>(Clock);
             services.AddSingleton<IGymRepository>(Gyms);
-            services.AddSingleton<IGymQueries>(new FakeGymQueries(Gyms));
+            services.AddSingleton<IGymQueries>(new FakeGymQueries(Gyms, Permissions));
             services.AddSingleton<IPlanRepository>(Plans);
             services.AddSingleton<IPlanQueries>(PlanQueries);
             services.AddSingleton<ISubscriptionRepository>(Subscriptions);

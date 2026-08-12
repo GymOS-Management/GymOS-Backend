@@ -64,7 +64,10 @@ public sealed record GymDetail(
     /// capability for free, commercially sensitive on its own — so a caller who only holds
     /// <c>gyms.read</c> gets the rest of the gym's detail without it, exactly as the dedicated
     /// <c>GET /gyms/{id}/features</c> route already requires at both its endpoint policy and its
-    /// request type.</para>
+    /// request type. Enforced once, inside <c>IGymQueries.GetAsync</c> itself, because every route
+    /// that produces a <see cref="GymDetail"/> — the direct read and every write's read-back —
+    /// shares that one method, and gating each caller individually is exactly the kind of
+    /// enumeration this increment has already been bitten by twice.</para>
     /// </summary>
     IReadOnlyList<ResolvedFeatureDetail>? Features,
     string RowVersion);
@@ -87,13 +90,16 @@ public interface IGymQueries
 {
     Task<PagedResult<GymListItem>> ListAsync(GymListFilter filter, CancellationToken cancellationToken);
 
-    /// <param name="includeFeatures">
-    /// Whether to resolve and attach the feature block. The query takes this as a plain flag rather
-    /// than deciding it itself: <c>features.read</c> is an authorization concept, and this read side
-    /// (AD-3) stays free of them — the caller (the handler) is where a permission is evaluated, once,
-    /// through the same <c>IPermissionEvaluator</c> the pipeline uses.
-    /// </param>
-    Task<GymDetail?> GetAsync(Guid gymId, bool includeFeatures, CancellationToken cancellationToken);
+    /// <summary>
+    /// The gym in full, including the resolved feature block — but only when the calling user holds
+    /// <c>features.read</c> (M4.1 task 4); otherwise <see cref="GymDetail.Features"/> comes back null,
+    /// unresolved rather than resolved-then-discarded. Checked here, once, through the same
+    /// <c>IPermissionEvaluator</c> <c>AuthorizationBehavior</c> and the endpoint policies use — not by
+    /// each caller — because both routes that reach this method (the direct <c>GET</c> and every
+    /// write's read-back) must agree, and a handler-by-handler check is the one that a route added
+    /// next year forgets.
+    /// </summary>
+    Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Whether the gym exists at all, deleted or not. For handlers that need to tell "no such gym"

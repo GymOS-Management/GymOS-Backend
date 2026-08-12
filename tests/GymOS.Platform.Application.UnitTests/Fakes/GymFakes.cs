@@ -4,6 +4,7 @@ using GymOS.BuildingBlocks.Application.Models;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Domain.Gyms;
+using GymOS.Platform.Domain.Identity;
 
 namespace GymOS.Platform.Application.UnitTests.Fakes;
 
@@ -80,8 +81,19 @@ internal sealed class FakeGymRepository : IGymRepository
 internal sealed class FakeGymQueries : IGymQueries
 {
     private readonly FakeGymRepository _gyms;
+    private readonly IPermissionEvaluator _permissionEvaluator;
 
-    public FakeGymQueries(FakeGymRepository gyms) => _gyms = gyms;
+    /// <summary>
+    /// Takes the same evaluator the pipeline uses, mirroring production <c>GymQueries</c>
+    /// (M4.1 task 4): <see cref="GetAsync"/> is the single point every caller — the direct read and
+    /// every write's read-back — shares, so it is also the single point that checks
+    /// <c>features.read</c>.
+    /// </summary>
+    public FakeGymQueries(FakeGymRepository gyms, IPermissionEvaluator permissionEvaluator)
+    {
+        _gyms = gyms;
+        _permissionEvaluator = permissionEvaluator;
+    }
 
     /// <summary>Settable, so a "version changed" assertion has something to see.</summary>
     public uint RowVersion { get; set; } = 1;
@@ -125,7 +137,7 @@ internal sealed class FakeGymQueries : IGymQueries
     public Task<bool> ExistsAsync(Guid gymId, CancellationToken cancellationToken) =>
         Task.FromResult(_gyms.Gyms.Any(gym => gym.Id == gymId));
 
-    public async Task<GymDetail?> GetAsync(Guid gymId, bool includeFeatures, CancellationToken cancellationToken)
+    public async Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken)
     {
         Gym? gym = _gyms.Gyms.SingleOrDefault(candidate => candidate.Id == gymId);
         if (gym is null)
@@ -134,6 +146,9 @@ internal sealed class FakeGymQueries : IGymQueries
         }
 
         GymBranding? branding = _gyms.Branding.SingleOrDefault(candidate => candidate.GymId == gymId);
+
+        bool includeFeatures = await _permissionEvaluator.HasPermissionAsync(
+            PlatformPermissions.FeaturesRead, cancellationToken);
 
         IReadOnlyList<ResolvedFeatureDetail>? features = !includeFeatures || FeatureQueries is null
             ? null

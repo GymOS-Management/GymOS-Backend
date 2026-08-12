@@ -50,7 +50,7 @@ public sealed class GymFeatureCommandTests
         public Context(params string[] permissions)
         {
             FeatureQueries = new FakeFeatureQueries(FeatureCatalogue, Plans, Subscriptions);
-            GymQueries = new FakeGymQueries(Gyms) { FeatureQueries = FeatureQueries };
+            GymQueries = new FakeGymQueries(Gyms, Permissions) { FeatureQueries = FeatureQueries };
             FeatureCatalogue.SeedDeclaredCatalogue();
 
             var services = new ServiceCollection();
@@ -466,12 +466,14 @@ public sealed class GymFeatureCommandTests
     [Fact]
     public async Task TheGymDetail_CarriesTheSameResolution()
     {
-        var context = new Context(FeaturesManage);
+        // FeaturesRead granted too: GymQueries.GetAsync now gates the block on it (M4.1 task 4), and
+        // this test calls the query directly rather than through GetGymQueryHandler.
+        var context = new Context(FeaturesManage, FeaturesRead);
         Gym gym = context.GivenGym();
         await context.SetAsync(gym.Id, new GymFeatureRequest(OffByDefault, true, Reason));
 
         Gyms.Abstractions.GymDetail? detail = await context.GymQueries.GetAsync(
-            gym.Id, includeFeatures: true, CancellationToken.None);
+            gym.Id, CancellationToken.None);
 
         // §3.3: the detail view carries resolved feature flags. One resolution, two places it is
         // reported — never two implementations of it.
@@ -486,7 +488,8 @@ public sealed class GymFeatureCommandTests
     [Fact]
     public async Task TheGymDetail_OmitsFeatures_WithoutFeaturesRead()
     {
-        // gyms.read alone is not features.read: GetGymQueryHandler asks the same IPermissionEvaluator
+        // gyms.read alone is not features.read: IGymQueries.GetAsync — the one point this route and
+        // every write's read-back share (M4.1 task 4) — asks the same IPermissionEvaluator
         // AuthorizationBehavior already used to admit this request past its own gyms.read gate, and
         // withholds the block rather than resolving and discarding it.
         var context = new Context(GymsRead);

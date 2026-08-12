@@ -66,18 +66,19 @@ internal static class GymWrites
     /// Reads the gym back after a successful write, so the response matches what a following GET would
     /// return — including the *new* row version the caller needs for their next update.
     ///
-    /// <para>Always includes the feature block: every write route this feeds is gated on
-    /// <c>gyms.create</c>, <c>gyms.update</c>, or <c>gyms.suspend</c>, and today every stock role
-    /// holding one of those also holds <c>features.read</c>. The narrower, permission-aware read
-    /// (M4.1 task 4) belongs to <c>GetGymQueryHandler</c>, for the dedicated <c>GET /gyms/{id}</c>
-    /// route the review actually flagged.</para>
+    /// <para>Whether <c>features</c> comes back is <see cref="IGymQueries.GetAsync"/>'s decision
+    /// (M4.1 task 4), not this method's: a caller provisioning, updating, or suspending a gym without
+    /// <c>features.read</c> gets the same null block a direct <c>GET</c> would give them. Checking it
+    /// here too — or in each write handler — would be the same finding the review found on the
+    /// dedicated <c>GET /gyms/{id}</c> route, just repeated at six more call sites instead of fixed
+    /// at the one point they all share.</para>
     /// </summary>
     public static async Task<Result<GymDetail>> ReadBackAsync(
         IGymQueries gymQueries,
         Guid gymId,
         CancellationToken cancellationToken)
     {
-        GymDetail? detail = await gymQueries.GetAsync(gymId, includeFeatures: true, cancellationToken);
+        GymDetail? detail = await gymQueries.GetAsync(gymId, cancellationToken);
 
         return detail is null
             ? Result.Failure<GymDetail>(GymErrors.NotFound(gymId))
