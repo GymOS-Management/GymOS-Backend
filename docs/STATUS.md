@@ -1,15 +1,20 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-12 · **M4.1 (the M4 review-fixes increment) is complete on branch
-`m4-review-fixes`** — all seven tasks done. M4's first whole-increment review (2026-08-12) found one
+**Last updated:** 2026-08-12 (evening) · **M4.1 (the M4 review-fixes increment) is MERGED to `main`**
+(`e72b1f8`) — all seven tasks done. M4's first whole-increment review (2026-08-12) found one
 Critical, six Important and eight Minor issues; this increment fixes the Critical (a redundant
 override was cleaned up only at the instant of its own write, never afterward), all six Importants,
 the three contract additions F4's console will need, and the documentation that had claimed things
-the code did not do. Rules revised in `docs/BusinessRules/Features.md`. **1338 tests green**, 0 build
-warnings, verified live against a rebuilt compose stack — the Critical fix demonstrated, not just
-asserted (an override survives until the gym's plan changes to include the same feature, then is
-withdrawn and `source` reads `Plan`). M4.1's own review is the next gate owed, the same protocol
-M3.3/M3.4 went through.
+the code did not do. Rules revised in `docs/BusinessRules/Features.md`. **1339 tests green**
+(re-measured on merge), 0 build warnings. The Critical was verified **in both directions** before
+merging: fixed on the branch (upgrade a gym onto a plan that grants what an exception granted → the
+override is withdrawn, `source` reads `Plan`, platform override count returns to 0) and reproduced on
+the pre-merge `main` (the same upgrade left `source: Override` with the stale trial reason) — a
+negative control, so the fix is known to fix something. M4.1's multi-agent review gate is still owed;
+one finding was added on merge and is recorded under "Known open items" (the nightly sweep logs an
+expected concurrency race at `Error`).
+**F3 (dashboard & analytics — the frontend share of M5) is MERGED** to GymOS-Platform `main`
+(`a504abb`) — designed, approved, built and reviewed-pending; see the F3 row below.
 **M5 dashboard & analytics is complete on branch
 `m5-dashboard-analytics`** — all six tasks done, business rules recorded in
 `docs/BusinessRules/Analytics.md`, verified live against a rebuilt compose stack. **1302 tests green**
@@ -43,11 +48,13 @@ before resuming work on any machine.
 | **API reference** (OpenAPI bearer scheme + per-operation security, `OpenApi:Enabled` exposure gate, Scalar UI at `/scalar/v1`, browser opens on startup) | ✅ complete — verified live · ⬅ **awaiting review** (Konstantinos's increment, landed after the audit's scope) |
 | **Enforced-header declarations** (`Idempotency-Key`, `If-Match`, `X-Confirm-Action` declared as real OpenAPI parameters, with the requiredness the pipeline actually applies) | ✅ **merged to `main`** (`5ee9aef`) — **1123 tests green**, snapshot regenerated and read semantically (25 header parameters added, nothing else changed) |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
+| **F2 — billing console** (GymOS-Platform: plans, subscriptions, invoices incl. `Idempotency-Key` minting) | ✅ complete — the frontend of M3; whole-branch reviewed, recorded in `GymOS-Platform/docs/F2-AS-BUILT.md` |
+| **F3 — dashboard & analytics console** (GymOS-Platform: `/dashboard` + revenue/growth/churn screens over M5's six operations) | ✅ **merged** (`a504abb`) — **117 unit tests**, owned SVG charts with **no new runtime dependency**, chart palette validated against the repo's own surfaces in both themes · design: `GymOS-Platform/docs/F3-DESIGN.md` · ⬅ **review owed**, and `F3-AS-BUILT.md` is deliberately unwritten until it can record what the review changed |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
 | **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
 | **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1267 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · single-pass reviewed, 2 findings fixed · **multi-agent whole-increment review run 2026-08-12** (1 Critical, 6 Important, 8 Minor) — fixed in **M4.1**, next row |
-| **M4.1 — M4 review fixes** (the redundant-override self-cleaning rule now maintained by construction — synchronous on a gym's own subscription change, a nightly sweep for the plan- and default-wide triggers too broad to do inline — plus the contract additions F4's console needs and the write-path/seeder races the review found) | ✅ complete — all seven tasks on branch `m4-review-fixes`, **1338 tests green**, verified live (the Critical fix demonstrated, not merely asserted) · rules revised in **`docs/BusinessRules/Features.md`** · ⬅ **its own review still owed** |
-| **M5 — dashboard & analytics** (daily read model + job, live dashboard, three analytics series, `analytics.read`) | ✅ complete — all six tasks on branch `m5-dashboard-analytics`, **1302 tests green**, verified live · rules in **`docs/BusinessRules/Analytics.md`** · ⬅ **review still owed** |
+| **M4.1 — M4 review fixes** (the redundant-override self-cleaning rule now maintained by construction — synchronous on a gym's own subscription change, a nightly sweep for the plan- and default-wide triggers too broad to do inline — plus the contract additions F4's console needs and the write-path/seeder races the review found) | ✅ **merged to `main`** (`e72b1f8`) — all seven tasks, **1339 tests green**, the Critical proved fixed *and* proved to fail on the pre-merge `main` · rules revised in **`docs/BusinessRules/Features.md`** · ⬅ **multi-agent review gate still owed** |
+| **M5 — dashboard & analytics** (daily read model + job, live dashboard, three analytics series, `analytics.read`) | ✅ **merged to `main`** — all six tasks (the branch `m5-dashboard-analytics` is history now), **1302 tests green** at merge, verified live · rules in **`docs/BusinessRules/Analytics.md`** · ⬅ **review still owed** · consumed by **F3** |
 | M6+ — per approved roadmap (monitoring, settings) | next |
 
 ## M1.2 as built
@@ -1425,20 +1432,20 @@ written or need their own ADR; whether the population/event split for `new_gyms`
 whether `/dashboard/summary`'s live computation is cheap enough to stay live once real gym counts
 grow, or should move to the read model sooner than "when it stops being cheap."
 
-**Neither review blocks the frontend, and that is where the next unblocked step is.** Then, in
-priority order:
+**F3 was that next unblocked step and is now done** (`a504abb` in GymOS-Platform), so the frontend is
+no longer where the slack is. Then, in priority order:
 
-1. **F3 — the GymOS-Platform console's dashboard-and-analytics screens** (`GymOS-Platform/docs/F3-DESIGN.md`,
-   approved 2026-08-12, not yet built). It is the frontend share of M5, against a contract already
-   frozen (six operations, `GET /dashboard/summary`/`/health`/`/activity`, `GET
-   /analytics/revenue`/`gyms-growth`/`churn`), so it does not wait on M5's review landing — the API it
-   consumes does not move if that review only touches the two recorded deviations above. This is the
-   most immediately actionable next step of anything in this section.
-2. **M4.1's review**, and **M5's review**, both outstanding — pick the order that suits the reviewer;
-   neither blocks the other or F3.
-3. **F4 — the M4 feature-flags console** waits specifically on M4.1's review landing, since it would
-   otherwise be built against a contract three fixes (§3.1–3.3 of the M4.1 design) already moved once
-   this increment.
+1. **F4 — the M4 feature-flags console** is now the most immediately actionable step. It was waiting
+   specifically on M4.1 landing, since it would otherwise have been built against a contract three
+   fixes (§3.1–3.3 of the M4.1 design) had already moved; M4.1 is merged (`e72b1f8`), so the contract
+   it consumes is stable whatever the outstanding review concludes about the *implementation*.
+2. **Three reviews are outstanding** — M4.1's multi-agent gate, M5's whole-branch review, and now
+   F3's. Pick the order that suits the reviewer; none blocks another, and none blocks F4.
+3. **Two things F3 deliberately left owed**, both small and both worth doing before F3's review rather
+   than after: an **E2E seed of `daily_platform_stats` rows including a deliberate one-day gap** —
+   without it the three analytics E2E specs skip rather than assert, so the gap rule (F3's most
+   important behaviour) is currently proved in the unit suite only — and **`F3-AS-BUILT.md`**, left
+   unwritten so it can record what the review changes instead of being rewritten after it.
 4. **The API reference increment awaits review** (Konstantinos's) — unchanged by this work, and the
    only thing left over from before the audit's scope.
 5. **Audit finding 7** wants its own increment: concurrent failed sign-ins collide on the user row's
@@ -1456,6 +1463,17 @@ log-count conflation) are recorded in `docs/BusinessRules/Features.md`'s deferre
 above, not repeated here.
 
 ## Known open items / honest notes
+
+- **`FeatureOverrideSweepJob` logs an expected concurrency race at `Error`** (found on M4.1's merge,
+  not fixed there). `GymFeatureOverride` carries an `xmin` concurrency token, so an operator
+  restating an override between the nightly sweep's read and its delete makes the delete match
+  nothing — `DbUpdateConcurrencyException`, caught by the job's broad `catch (Exception)` and logged
+  as a failed gym via `LogGymFailed`. The *behaviour* is right (the operator's decision wins, and the
+  next sweep re-evaluates), but an expected interleaving reported as a job failure will page someone
+  for something that worked as designed. Catching `DbUpdateConcurrencyException` separately and
+  logging it at Information ("re-evaluation deferred, the gym changed underneath") would keep the
+  Error channel meaningful. Same class as the five below: real, small, and recorded rather than fixed
+  inside someone else's increment.
 
 - **Five minor findings were deliberately carried out of M4.1's reviews**, each judged not worth the
   change it would cost, and recorded here so the judgement is visible rather than forgotten:
