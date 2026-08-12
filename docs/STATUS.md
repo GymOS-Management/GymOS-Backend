@@ -1464,6 +1464,15 @@ above, not repeated here.
 
 ## Known open items / honest notes
 
+- **`dotnet format --verify-no-changes` fails on seven pre-existing files.** Found 2026-08-12 while
+  regrouping the solution view, and confirmed **identical against the previous `.slnx`**, so that
+  change did not cause it: CHARSET on `AuditLogQueries`, `GymQueries`, `InvoiceQueries`, `PlanQueries`,
+  `UserQueries` and `PlanCatalogueTests`, plus IMPORTS ordering on `AuditLogQueries` (byte-identical
+  there since before 2026-08-12's commits). CI runs this step, so it is presumably red there too.
+  Deliberately not swept into an unrelated commit: a blanket reformat of file encodings and import
+  order across files nobody is otherwise touching is exactly the change that hides a real edit. It
+  wants one pass of `dotnet format` and a read of the diff, on its own.
+
 - **`FeatureOverrideSweepJob` logs an expected concurrency race at `Error`** (found on M4.1's merge,
   not fixed there). `GymFeatureOverride` carries an `xmin` concurrency token, so an operator
   restating an override between the nightly sweep's read and its delete makes the delete match
