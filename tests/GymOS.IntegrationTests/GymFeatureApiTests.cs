@@ -339,39 +339,72 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     [Fact]
     public async Task A_concurrent_plan_edit_cannot_make_the_gym_writes_own_answer_stale()
     {
-        // SetGymFeaturesCommandHandler decides "does this need an override?" against the gym's live
-        // plan, read outside any guard. Without a lock held across the decision and the save, a
-        // concurrent PUT /plans/{id}/features could change the plan's opinion in between, so the 200
-        // this request returns would assert a resolution the gym does not actually resolve to a
-        // moment later. FindByIdForUpdateAsync closes that: the plan write now serializes behind the
-        // gym write (or precedes it entirely), so whichever order the two land in, the gym write's
-        // own answer is never contradicted by an independent read taken right after both finish.
+        // A prior version of this test raced both writes toward the SAME value (gym asks for CRM
+        // true, plan moves to true): that can never fail, because an override, once created,
+        // outranks the plan forever, and the "no override needed" path is only reached when the
+        // locked read already agrees with the plan's new value. Every interleaving of "same value"
+        // converges, fixed or not — a test that cannot fail is worse than no test.
+        //
+        // This version uses DIVERGENT values and checks a self-consistency invariant that does not
+        // depend on which of the two writes lands first — so it needs no "and then wait, and read
+        // again later" step, which would itself be indistinguishable from the plan legitimately
+        // changing right after a perfectly correct response.
+        //
+        // SetGymFeaturesCommandHandler's own contract (see the other tests in this file) is: after a
+        // successful write, the resolved value for the touched key equals what was requested — either
+        // because an override now forces it, or because the request already matched the layer
+        // beneath and needed no override. That invariant holds under EITHER valid ordering below:
+        //
+        //   - gym decides first (against the plan's old value): the existing override, which the
+        //     request's value still matches, is correctly withdrawn or kept as appropriate — using
+        //     the value the gym write itself will still be holding the lock against.
+        //   - plan commits first (gym reads the new value): the request no longer matches the plan,
+        //     so the override is (re)needed and kept — same invariant, different reason.
+        //
+        // It can ONLY break if the decision uses a plan value that a concurrent write has already
+        // superseded by the time this transaction's own read-back runs — exactly the bug fixes 3/4
+        // exist to close. That failure is directly visible in the gym write's own response: it would
+        // report a resolved value the caller never asked for, with no override protecting it.
         Guid plan = (await PlatformApiHelpers.CreatePlanAsync(_client, "RACEPLAN")).Id;
         Guid gym = await CreateGymAsync("plan-race-gym");
         using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gym, plan);
         Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
 
-        // The plan starts silent on CRM (platform default: off), so a gym asking for it on needs an
-        // override — the exact decision a concurrent plan edit could make stale.
+        // Plan starts at CRM = false; the gym is granted an override to true (it needs one, since it
+        // differs from the plan). The override exists FOR the reason that the gym wants something the
+        // plan does not give it.
+        await SetPlanFeatureAsync(plan, PlatformFeatures.Crm, isEnabled: false);
+        using HttpResponseMessage granted = await SetGymFeatureRawAsync(
+            gym, PlatformFeatures.Crm, true, "Needed while the plan says no.");
+        Assert.Equal(HttpStatusCode.OK, granted.StatusCode);
+        Assert.Equal(1, await CountOverridesAsync(gym));
+
+        // Now race: the gym asks for exactly what the plan CURRENTLY gives (false) — read naively,
+        // that looks redundant and the override would be withdrawn — while the plan concurrently
+        // moves AWAY from false, to true. If the withdrawal decision is made against the old (false)
+        // plan value but the plan is already true by the time this transaction reads back its own
+        // result, the response would show CRM resolved to true (via the now-true plan, override
+        // gone) even though the request explicitly asked for false. That contradiction is the bug;
+        // it needs no comparison against a later, separately-timed read to detect.
+        //
+        // A reason is carried on the request even though the "matches, clear it" branch does not
+        // need one: if the plan wins the race and the gym write sees CRM already true, false once
+        // again differs from the plan and still needs an override — which then does need a reason.
+        // Whichever branch is actually taken, the request must not be rejected for missing one.
         Task<HttpResponseMessage> gymWrite = SetGymFeatureRawAsync(
-            gym, PlatformFeatures.Crm, true, "Racing the plan.");
+            gym, PlatformFeatures.Crm, false, "Still needed if the plan has already moved.");
         Task planWrite = SetPlanFeatureAsync(plan, PlatformFeatures.Crm, isEnabled: true);
 
         await Task.WhenAll(gymWrite, planWrite);
 
         using HttpResponseMessage gymResponse = await gymWrite;
         Assert.Equal(HttpStatusCode.OK, gymResponse.StatusCode);
-        JsonElement atWriteTime = Feature(
+        JsonElement resolved = Feature(
             await gymResponse.Content.ReadFromJsonAsync<JsonElement>(), PlatformFeatures.Crm);
 
-        JsonElement afterBothSettled = Feature(await ReadFeaturesAsync(gym), PlatformFeatures.Crm);
-
-        Assert.Equal(
-            atWriteTime.GetProperty("enabled").GetBoolean(),
-            afterBothSettled.GetProperty("enabled").GetBoolean());
-        Assert.Equal(
-            atWriteTime.GetProperty("source").GetString(),
-            afterBothSettled.GetProperty("source").GetString());
+        // The one assertion that matters: whichever way the race actually landed, the gym write's own
+        // answer must agree with what it was asked for. A stale decision is the only way this fails.
+        Assert.False(resolved.GetProperty("enabled").GetBoolean());
     }
 
     [Fact]

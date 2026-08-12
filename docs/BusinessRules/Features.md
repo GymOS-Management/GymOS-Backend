@@ -180,6 +180,23 @@ omission. There is no single version to match: each override is its own aggregat
 conflict at all. Two editing the *same* one is a disagreement about policy, not a lost update — the
 later decision wins, carries its own required reason, and the audit trail keeps the earlier one.
 
+### Two concurrency guards behind `PUT /gyms/{id}/features`, not visible in the contract
+
+**A repeated identical grant retries once instead of 409ing.** Two callers granting the same
+(gym, feature) exception at the same moment both see "no existing override" and both insert; the
+unique index lets exactly one through. The loser is not told to retry with a different value — there
+is no other value — it is retried once, internally, which finds the winner's row and restates it.
+Only a second, unrelated conflict past that point surfaces as `persistence.uniqueness_conflict` (409).
+
+**The decision is made against the gym's live plan, locked for the length of the write.** The
+handler decides whether a request needs an override by reading what the gym's plan currently says;
+that read takes the plan row `FOR UPDATE` and holds it in one transaction through the save *and* the
+read-back that builds the response — not just through the save. A concurrent
+`PUT /plans/{id}/features` on the same plan blocks until that transaction ends, so it can never change
+the plan's opinion in the gap between this write's decision and the body it returns: the response is
+always exactly the resolution this transaction is committing, never one already superseded by the time
+it is read.
+
 ## Value rules and stable codes
 
 | Code | Kind | When |

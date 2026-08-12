@@ -247,11 +247,23 @@ internal sealed class SetGymFeaturesCommandHandler
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Read back before committing, not after. The FOR UPDATE lock above releases the instant
+        // this transaction ends, and a plan write blocked on it is free to run the moment that
+        // happens — if the resolve query ran after CommitAsync, that unblocked plan write could
+        // land in the gap between the commit and the resolve, and the body returned to the caller
+        // would already be stale by the time it left the database. IFeatureQueries and this
+        // handler's repositories share one scoped AppDbContext (registered once per request), so
+        // this query runs on the same connection, inside the same transaction, and sees exactly
+        // the row values this transaction is about to make durable — nothing else can be
+        // interleaved before it.
+        IReadOnlyList<ResolvedFeatureDetail> resolution =
+            await _featureQueries.ResolveForGymAsync(command.GymId, cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
 
         // The resolution, not an echo — see the command's remarks.
-        return Result.Success(
-            await _featureQueries.ResolveForGymAsync(command.GymId, cancellationToken));
+        return Result.Success(resolution);
     }
 
     /// <summary>
