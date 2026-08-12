@@ -1457,6 +1457,35 @@ above, not repeated here.
 
 ## Known open items / honest notes
 
+- **Five minor findings were deliberately carried out of M4.1's reviews**, each judged not worth the
+  change it would cost, and recorded here so the judgement is visible rather than forgotten:
+  - **A withdrawal leaves no trace in the application log.** `WithdrawRedundantAsync` returns how many
+    exceptions it withdrew and all four synchronous callers discard it; only the sweep logs a count.
+    The `gymos.platform.gym_feature.override_cleared` event does reach the outbox, so this is
+    legibility rather than auditability — but a support engineer reading logs sees a subscription
+    change with nothing saying it deleted an operator's grant.
+  - **`IUnitOfWork.DiscardTrackedChanges()` widens a core abstraction for one call site** (the
+    retry in `SetGymFeaturesCommandHandler`). The sequence is correct and the doc comment is careful,
+    but a future caller outside a bounded retry would silently drop pending state with no compiler or
+    test signal. A `BannedSymbols.txt` entry carrying "use only inside a single-attempt retry" would
+    close it without another interface.
+  - **The plan-edit race test detects a regression roughly one run in eight.** The asymmetry is the
+    right way round — it cannot flake red on correct code — and it was proved able to fail by stashing
+    the fix. But it is a probe, not a gate; a deterministic interleaving hook would make it one.
+  - **"Load the plan by id, map null to `[]`" now exists twice**, in `GymFeatureCommands` and
+    `FeatureExceptionMaintainer`, differing only in output shape. Deliberate: the shared helper they
+    were extracted from forced one answer onto two different questions ("what does the database say
+    now" versus "what will be true after this commit"), which was part of the Critical's root cause.
+    Re-sharing it would reintroduce the defect.
+  - **`StoredException`'s CA1711 suppression is per-type**, while `.editorconfig` uses
+    `allowed_suffixes` for the same analyzer elsewhere. Two mechanisms for one rule; the narrower one
+    was chosen deliberately, but the inconsistency is worth knowing.
+
+  Also unfixed at the unit-test layer: no test asserts that `DeleteGymCommandHandler` calls the
+  maintainer — that wiring is covered only by its integration test, so a future regression in the
+  wiring would not fail fast.
+
+
 - **Four minor findings were deliberately carried out of M5's reviews**, each judged not worth the
   change it would cost, and recorded here so the judgement is visible rather than forgotten:
   - `ADeletedGymLeavesThePopulationButStillCountsAsChurn` asserts that a gym's creation and
