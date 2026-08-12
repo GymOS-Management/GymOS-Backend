@@ -22,6 +22,17 @@ public static class SearchPatterns
     public static string Contains(string value) => $"%{Escape(value)}%";
 
     /// <summary>
+    /// A "starts with" pattern: the value, escaped, followed by one wildcard.
+    ///
+    /// <para>Exists so a prefix filter gets the same two properties the free-text ones already have —
+    /// case-insensitivity (through <c>ILIKE</c>) and literal matching. <c>string.StartsWith</c>
+    /// translates to a case-<em>sensitive</em> <c>LIKE</c> with the caller's metacharacters intact,
+    /// which is a filter that silently finds nothing for a capitalised prefix and silently finds
+    /// everything for a <c>%</c>.</para>
+    /// </summary>
+    public static string StartsWith(string value) => $"{Escape(value)}%";
+
+    /// <summary>
     /// Escapes the LIKE metacharacters. The escape character goes first — escaping it after
     /// adding others would double the ones just added.
     /// </summary>

@@ -208,6 +208,57 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
         Assert.StartsWith("users.", body.RootElement.GetProperty("code").GetString(), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The action filter matches regardless of case, and treats LIKE metacharacters literally.
+    ///
+    /// <para>Reported from the console: typing `User.` returned nothing while `user.` worked, because
+    /// the filter translated to a case-sensitive LIKE. Action codes are lower-case by convention, so
+    /// the old behaviour required the reader to already know that — and answered "no entries match"
+    /// when entries plainly matched.</para>
+    ///
+    /// <para>The `%` case is the same finding the 2026-08-11 audit fixed for four other query
+    /// classes: an unescaped metacharacter makes the filter match rows that do not start with what
+    /// was typed. Asserted here because it is invisible until someone types one.</para>
+    /// </summary>
+    [Fact]
+    public async Task TheActionFilterIgnoresCaseAndTreatsWildcardsLiterally()
+    {
+        await InviteAsync("filter-case@gymos.test");
+
+        // The same prefix in three casings must return the same entries.
+        int lower = await CountActionsAsync("user.");
+        int capitalised = await CountActionsAsync("User.");
+        int shouty = await CountActionsAsync("USER.");
+
+        Assert.True(lower > 0, "expected user.* entries from the invite above");
+        Assert.Equal(lower, capitalised);
+        Assert.Equal(lower, shouty);
+
+        // A bare `%` is a literal, not "everything": no action code contains a percent sign.
+        Assert.Equal(0, await CountActionsAsync("%"));
+
+        // And an underscore matches an underscore, not any single character. `use_` is the prefix
+        // that proves it: nothing starts with a literal "use_", but if the underscore were a
+        // wildcard it would match every `user.*` and `user_role.*` row there is.
+        //
+        // (Not `user_`, which was the first attempt and a wrong assertion rather than a bug —
+        // `user_role` is a real audited entity, so entries legitimately start with it.)
+        Assert.Equal(0, await CountActionsAsync("use_"));
+    }
+
+    private async Task<int> CountActionsAsync(string actionPrefix)
+    {
+        using HttpResponseMessage response = await _client.GetAsync(
+            new Uri($"/api/v1/audit-logs?pageSize=200&action={Uri.EscapeDataString(actionPrefix)}",
+                UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        return body.RootElement.GetProperty("items").GetArrayLength();
+    }
+
     [Fact]
     public async Task EntityChangesAppearInTheAuditTrail_WithSecretsRedacted()
     {

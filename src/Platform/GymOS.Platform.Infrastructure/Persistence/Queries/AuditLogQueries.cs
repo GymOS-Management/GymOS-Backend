@@ -29,8 +29,20 @@ internal sealed class AuditLogQueries : IAuditLogQueries
         {
             // Prefix match, so `user.` finds every action on users without the caller
             // enumerating them (ARCHITECTURE.md Â§2.6 action prefix search).
-            string prefix = filter.Action.Trim();
-            query = query.Where(log => log.Action == prefix || log.Action.StartsWith(prefix));
+            //
+            // ILIKE rather than `string.StartsWith`, which EF translates to a case-SENSITIVE LIKE
+            // with the caller's metacharacters left live. Two defects came out of that, and this
+            // file already avoided both a few lines below for its free-text search:
+            //
+            //   * `Gym.` found nothing at all. Action codes are lower-case by convention, so the
+            //     filter demanded the reader know that and type it exactly — a filter that answers
+            //     "no entries match" when entries plainly match reads as a broken trail.
+            //   * A `%` typed into the filter acted as a wildcard, so it matched rows that do not
+            //     start with what was typed. The audit's LIKE-escaping finding, in the one query
+            //     that escapes its other parameter and not this one.
+            string pattern = SearchPatterns.StartsWith(filter.Action.Trim());
+            query = query.Where(log =>
+                EF.Functions.ILike(log.Action, pattern, SearchPatterns.EscapeCharacter));
         }
 
         if (!string.IsNullOrWhiteSpace(filter.EntityType))
