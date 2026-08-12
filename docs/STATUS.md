@@ -885,9 +885,13 @@ that is deliberate (design §6): the tenant-facing modules that would — POS, i
 exist. M4 delivers the decision and its API; the first consumer enforces it.
 
 **The rule, in one line:** `override ?? plan ?? platform default`, with the layer that decided it
-reported alongside the answer. `FeatureResolution` is the single definition; both the read query and
-the write path call it rather than re-expressing it, and the resolution is deliberately **not** done
-in SQL for that reason.
+reported alongside the answer. `FeatureResolution` is the single definition; the write path and the
+per-gym read call it directly. **M4.1 correction:** this section originally went on to claim
+resolution is "deliberately not done in SQL" at all — false, and one of the three places the M4.1
+review found that exact claim. `GET /features`' `AdoptionCount` restates the rule as a translated LINQ
+expression, because counting adoption per gym in C# would mean loading every gym; it is correct, and
+now pinned against `FeatureResolution.Resolve` by `FeatureAdoptionParityTests`. See "M4.1 as built"
+below.
 
 1. **Domain** (`eb185b3`) — `Feature` (immutable key, editable copy/default/premium),
    `GymFeatureOverride` (required reason, one row per (gym, feature)), `PlanFeature` (the tri-state:
@@ -908,12 +912,16 @@ in SQL for that reason.
    `MarkAggregateChanged` moves the plan's own version so concurrent feature edits collide.
 5. **Per-gym overrides** (this task) — `GET/PUT /gyms/{id}/features` gated
    `features.read`/`features.manage`, plus the `features` block on `GET /gyms/{id}` that §3.3 always
-   described. An override is stored **only while it differs from what the gym would get anyway**, so
+   described. A `PUT` stores an override only while it differs from what the gym would get anyway, so
    asking for exactly what the plan (or default) already gives **withdraws** the exception rather
    than restating it — a gym that later changes plan then follows the new plan instead of staying
    frozen by a row nobody remembers creating. `reason` is required only when an override is genuinely
    needed, and the response is the **full resolution, not an echo**: after a withdrawal the stored
-   state is deliberately not what was sent.
+   state is deliberately not what was sent. **M4.1 correction:** this held only at the instant of that
+   one write — nothing re-checked it afterward, which is the Critical the M4.1 review found. The
+   actual guarantee, since M4.1: a redundant exception is withdrawn **immediately** when the change is
+   to that gym's own subscription, and **within a day** when the change is to a plan or a platform
+   default, via the nightly `feature-override-sweep`. See "M4.1 as built" below.
 6. **Close-out** (this commit) — `docs/BusinessRules/Features.md`, full verification, and the live
    run the design's §7 asks for.
 
@@ -985,13 +993,23 @@ intermittent connection-open failures noted after task 5.
 multi-agent adversarial gate M3.3 and M3.4 went through. It should not be read as equivalent
 assurance, and running the real gate over M4 is still worth doing.
 
-**Structure verdict: conformant.** Resolution lives in the Domain as one pure function and is never
-re-expressed in SQL; `GymQueries` delegates rather than reprojecting; the permission split matches
-the design; both `SubscriptionPlan` loaders carry the `Features` include whose absence caused the
-task-5 defect, and nothing else loads a plan. One thing checked specifically because it would have
-failed silently: a cleared override raises its event on an aggregate the repository then **removes**,
-which would be lost if the outbox interceptor filtered by entity state. It does not — every tracked
-aggregate is drained regardless of state.
+**Structure verdict: conformant**, with one clause this single-pass review got wrong and the
+2026-08-12 whole-increment review corrected (§5 of the M4.1 design): `GymQueries` delegates rather
+than reprojecting; the permission split matches the design; both `SubscriptionPlan` loaders carry the
+`Features` include whose absence caused the task-5 defect, and nothing else loads a plan. One thing
+checked specifically because it would have failed silently: a cleared override raises its event on an
+aggregate the repository then **removes**, which would be lost if the outbox interceptor filtered by
+entity state. It does not — every tracked aggregate is drained regardless of state.
+
+**The wrong clause, left visible rather than silently rewritten:** this review recorded "resolution
+lives in the Domain as one pure function and is never re-expressed in SQL" as part of the conformant
+verdict above. That is false — `FeatureQueries.Project()`'s `AdoptionCount` restates the rule as a
+translated LINQ expression, correctly, and always did. This was one of the three places (alongside
+`Features.md` and this file's M4 summary above) the 2026-08-12 whole-increment review found asserting
+a structural property the code does not have; M4.1 fixed the documentation and added
+`FeatureAdoptionParityTests` to pin the restatement against `FeatureResolution.Resolve`. Recorded here
+as history of what this review actually concluded, not as a claim still believed — see "M4.1 as
+built" below for what is true now.
 
 Fixed, each with a pinning test:
 
