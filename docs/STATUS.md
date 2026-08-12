@@ -1,6 +1,21 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-12 (evening) · **M4.1 (the M4 review-fixes increment) is MERGED to `main`**
+**Last updated:** 2026-08-12 (late) · **Administrator activation is MERGED and works end to end**
+(`c487012` here, `d27e32a` in GymOS-Platform) — the newest increment and the one to read first.
+`POST /users` had been shipping accounts nobody could use since M1.3: the invite creates a
+`PendingActivation` administrator with no password (correctly — §3.6), and the emailed link that was
+supposed to activate them never existed, so the only way to give any account a password was the
+`Seed:SuperAdmin` path. **ADR-53** (approved, in GymOS-Specification) permits a minimal `IEmailSender`
+for exactly two messages rather than building §4.1's Notification Center first, on the grounds that
+§4.1's own design makes security a mandatory category that cannot be muted — so these two resolve no
+preference and honour no digest. **1354 tests green**, 0 warnings. Verified live through Mailpit and
+then in a browser: invite → the first send failed with no SMTP server and the account was still
+created (`X-Invitation-Email: failed`) → re-send recovered it → link followed → password set →
+**signed in as the invited administrator** → the same link then offers no form. Its review is owed,
+and it is a security surface. Two smaller things merged alongside: the audit action filter is now
+case-insensitive and escapes wildcards (`40b2bb3`), and `F5` starts a stack where the whole flow works
+(`0d56184`). See the milestone rows for both.
+**M4.1 (the M4 review-fixes increment) is MERGED to `main`**
 (`e72b1f8`) — all seven tasks done. M4's first whole-increment review (2026-08-12) found one
 Critical, six Important and eight Minor issues; this increment fixes the Critical (a redundant
 override was cleaned up only at the instant of its own write, never afterward), all six Importants,
@@ -55,6 +70,9 @@ before resuming work on any machine.
 | **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1267 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · single-pass reviewed, 2 findings fixed · **multi-agent whole-increment review run 2026-08-12** (1 Critical, 6 Important, 8 Minor) — fixed in **M4.1**, next row |
 | **M4.1 — M4 review fixes** (the redundant-override self-cleaning rule now maintained by construction — synchronous on a gym's own subscription change, a nightly sweep for the plan- and default-wide triggers too broad to do inline — plus the contract additions F4's console needs and the write-path/seeder races the review found) | ✅ **merged to `main`** (`e72b1f8`) — all seven tasks, **1339 tests green**, the Critical proved fixed *and* proved to fail on the pre-merge `main` · rules revised in **`docs/BusinessRules/Features.md`** · ⬅ **multi-agent review gate still owed** |
 | **M5 — dashboard & analytics** (daily read model + job, live dashboard, three analytics series, `analytics.read`) | ✅ **merged to `main`** — all six tasks (the branch `m5-dashboard-analytics` is history now), **1302 tests green** at merge, verified live · rules in **`docs/BusinessRules/Analytics.md`** · ⬅ **review still owed** · consumed by **F3** |
+| **Administrator activation & password-reset email** (`ADR-53`) — the `IEmailSender` seam + SMTP transport, `user_activation_tokens`, invite/re-send/reset endpoints, anonymous `GET`+`POST /auth/set-password`, console `/set-password` | ✅ **merged to `main`** (`c487012`) and to GymOS-Platform (`d27e32a`) — **1354 tests green**, verified live end to end through Mailpit *and* in a browser through to signing in as the invited administrator · design: `docs/superpowers/specs/2026-08-12-admin-activation-email-design.md` · ⬅ **review owed — this is a security surface and has had no adversarial pass** |
+| **Audit action filter — case and wildcards** | ✅ **merged** (`40b2bb3`) — `Gym.` used to match nothing and a typed `%` acted as a wildcard; now `ILIKE` with `SearchPatterns.StartsWith`. Proved in both directions (`user.` → 3 entries, `User.` → 0 on the old code) |
+| **Solution view + F5** | ✅ **merged** (`053f4d6`, `0d56184`) — Solution Explorer regrouped by role (Host/Platform/Shared/Tests, docker-compose at the root); F5 now starts postgres + api + **mailpit** with email wired, so the invitation flow works with nothing started by hand. No project renamed, moved, or re-referenced |
 | M6+ — per approved roadmap (monitoring, settings) | next |
 
 ## M1.2 as built
@@ -1344,6 +1362,46 @@ Infrastructure 67 · Integration 251 = **1302**.
   been from zero, and pretending otherwise would be the "smoother than it was" writeup this task was
   explicitly told not to produce.
 
+## Administrator activation as built (ADR-53)
+
+**Merged** (`c487012`), console half in GymOS-Platform (`d27e32a`). One migration:
+`AddUserActivationTokens`. Design:
+`docs/superpowers/specs/2026-08-12-admin-activation-email-design.md`.
+
+1. **`IEmailSender`** in BuildingBlocks — a recipient, a subject, two rendered bodies, and nothing
+   about identity, so `GymOS.Modules.Notifications` can absorb it as its Email channel sender rather
+   than replace it. `SmtpEmailSender` (MailKit) when `Email:Enabled`, `LoggingEmailSender` otherwise —
+   which is why the suite needs no SMTP server. **MailKit approved in `DEPENDENCY_POLICY.md` with
+   `ForbiddenPackagesTests` in the same commit**, Infrastructure-only by R8.
+2. **`UserActivationToken`** gets `RefreshToken`'s treatment exactly: 32 random bytes, SHA-256 at
+   rest, single-use, time-boxed — 72h for an invitation, 1h for a reset. Issuing invalidates whatever
+   the user held, so at most one link is live.
+3. **Two orderings do the security work.** The token is spent *before* the password is policy-checked
+   (otherwise a link stays replayable for its whole life to anyone willing to submit a rejected
+   password — the attempt costs them nothing), and setting a password revokes every refresh token,
+   because a reset is often prompted by the belief that somebody else is in.
+4. **All four failure modes answer identically** — unknown, expired, already used, account gone or
+   suspended: one `404`, one body. A distinct "expired" would confirm to an anonymous caller that the
+   token had once been real. Asserted at the unit *and* HTTP layers, comparing everything but the
+   per-request `traceId`.
+5. **The send is after the commit and cannot undo the account work.** The outbox would be the right
+   home and its processor does not exist; `resend-invitation` is the recovery path, which is why it is
+   in scope. `RetentionJob` purges spent tokens.
+
+### Decisions and traps found
+
+- **`ActivationLinks` built its URL from an empty `ConsoleBaseUrl` when email was disabled**, turning
+  every invitation into a 500. Caught by the integration suite (22 failures), not by review. There is
+  now a development default, and the startup validation still demands an absolute URL when email is on.
+- **Three convention guards fired and were answered rather than muted**: the concurrency-token rule
+  (`UserActivationToken` exempt, with the reason — written once, consumed once, guarded by the
+  aggregate), the permission-or-exemption rule, and the bearer-auth tripwire. All three now name the
+  anonymous `set-password` operations explicitly.
+- **`X-Invitation-Email: sent` also means "email is disabled"** — see "Known open items". Found while
+  verifying the README against an instance that had email off.
+- The raw token never reaches a log, a response body, or an audit row; the trail records
+  `user.invitation_sent` / `user.password_reset_requested` / `user.password_set` instead.
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -1410,6 +1468,15 @@ was renamed `gymos-pgdata` → `gymos-postgres-data` in M0.X, so a pre-M0.X loca
 still on disk but no longer mounted — see DOCKER.md troubleshooting.
 
 ## Next step (resume here)
+
+**The activation increment's review is the one to run first, because it is a security surface and has
+had no adversarial pass.** The sharpest questions a reviewer should put to it: whether spending the
+token before the password is validated trades one problem for a worse one (a legitimate typo now costs
+a new link); whether the four-way identical `404` leaks anything through timing rather than through its
+body; whether an inline send after the commit is acceptable at all, or whether the outbox processor
+should land first; whether `Email:ConsoleBaseUrl` being a startup-validated string is enough protection
+for a value that, wrong once, is already delivered; and whether `X-Invitation-Email` reporting `sent`
+when email is disabled is a wart to fix now rather than record (see "Known open items").
 
 **M4's whole-increment review has now happened, and M4.1 is its fix-up** — built, verified, and
 proved live on branch `m4-review-fixes`. That review is the gate M3.3 and M3.4 went through and M4
