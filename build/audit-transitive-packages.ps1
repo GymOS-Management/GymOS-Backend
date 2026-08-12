@@ -22,9 +22,34 @@ $bannedPrefixes = @(
 $publishVerifiedExemptions = @('Newtonsoft.Json')
 
 $raw = dotnet list GymOS.Backend.slnx package --include-transitive --format json
-if ($LASTEXITCODE -ne 0) { throw 'dotnet list package failed - restore the solution first.' }
+$listExitCode = $LASTEXITCODE
 
-$report = ($raw -join "`n") | ConvertFrom-Json
+$report = $null
+try { $report = ($raw -join "`n") | ConvertFrom-Json } catch { }
+if (-not $report) {
+    Write-Host ($raw -join "`n")
+    throw "dotnet list package produced no parsable output (exit $listExitCode) - restore the solution first."
+}
+
+# The exit code alone cannot be trusted here, and this is why:
+#
+# docker-compose.dcproj sits in GymOS.Backend.slnx as a Visual Studio orchestration node and has
+# no assets file BY DESIGN — only VS understands Microsoft.Docker.Sdk, which is exactly why the
+# solution excludes it from every build configuration. `dotnet list package` walks it anyway,
+# reports "No assets file was found", and exits non-zero for that one project while still
+# reporting every real project correctly. Failing on the exit code therefore failed this audit
+# permanently from the moment the dcproj was added, on a condition that is not an audit finding.
+#
+# So: inspect the reported problems instead. The dcproj's is expected and ignored; anything else
+# — a genuinely unrestored solution, for instance — still stops the audit, and would show up here
+# as a problem against a real project.
+$unexpected = @($report.problems | Where-Object { $_.project -notlike '*docker-compose.dcproj' })
+if ($unexpected.Count -gt 0) {
+    Write-Host 'dotnet list package reported problems:' -ForegroundColor Red
+    $unexpected | ForEach-Object { Write-Host "  [$($_.level)] $($_.project): $($_.text)" -ForegroundColor Red }
+    Write-Host 'Restore the solution and try again.' -ForegroundColor Red
+    exit 1
+}
 $violations = @()
 
 foreach ($project in $report.projects) {

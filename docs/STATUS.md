@@ -1567,11 +1567,19 @@ above, not repeated here.
   requires the Container Tools component, which VS 2026 does not install by default and whose id
   changed to `Microsoft.VisualStudio.Component.DockerTools` (no dot before `Tools`).
 
-- **The dcproj breaks solution-level `dotnet list package`.** `dotnet list package --outdated` against
-  `GymOS.Backend.slnx` fails with *"No assets file was found for docker-compose.dcproj"*. The
-  `<Build Project="false" />` exclusion covers building, not this command, so dependency review has to
-  iterate the `.csproj` files instead of asking the solution. Worth knowing before concluding the
-  dependency check itself is broken.
+- **The dcproj breaks solution-level `dotnet list package` — and that was failing CI.** FIXED
+  2026-08-12 for the CI path. `dotnet list GymOS.Backend.slnx package` reports every real project
+  correctly but **exits non-zero** because `docker-compose.dcproj` has no assets file (by design —
+  only VS understands `Microsoft.Docker.Sdk`, which is why the solution excludes it from every build
+  configuration; the `<Build Project="false" />` exclusion covers building, not this command).
+  `build/audit-transitive-packages.ps1` threw on that exit code, so **the "Transitive dependency
+  audit (banned packages)" step has been red since the dcproj was added** (`ec47eab`/`a42eafa`) —
+  failing on a condition that is not an audit finding, which is the worst kind of red because it
+  trains people to ignore it. The script now inspects the reported `problems` instead: the dcproj's
+  is expected and ignored, and anything else — an unrestored solution, say — still stops the audit.
+  Verified both directions, that it passes now and that a non-dcproj problem is still caught.
+  **Still true interactively:** `dotnet list package --outdated` against the solution exits non-zero
+  for the same reason, so ad-hoc dependency review has to iterate the `.csproj` files.
 
 - **Three dependency majors are open, and none is a routine bump.**
   `Microsoft.CodeAnalysis.BannedApiAnalyzers` 3.3.4 → 5.6.0 (two majors of an analyzer against
