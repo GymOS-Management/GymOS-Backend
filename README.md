@@ -33,12 +33,18 @@ frontend repository.
 The whole stack, from a clean clone, with no setup step:
 
 ```
-docker compose up -d       # PostgreSQL 17 + API, migrated and seeded, on http://localhost:5080
+docker compose up -d       # PostgreSQL 17 + API + Mailpit, migrated and seeded, on http://localhost:5080
 ```
 
 Sign in as `admin@gymos.local` / `gymos-dev-admin-password` — deliberately public development
 credentials, like the signing key in `appsettings.Development.json`. Full reference, including the
 production workflow and every security decision: [`docs/Infrastructure/DOCKER.md`](docs/Infrastructure/DOCKER.md).
+
+**In Visual Studio, `F5` on the `docker-compose` project does the same thing** and is the shortest
+path to a working stack: it builds the real image, starts all three containers, and opens the API
+reference. Nothing else needs starting by hand — email included, so inviting an administrator
+actually sends a message (readable at <http://localhost:8025>). The only piece outside this repo is
+the console itself: run GymOS-Platform separately if you want to follow an activation link.
 
 ### Running the API on the host
 
@@ -122,11 +128,12 @@ entry containing it would be a second copy of it. So **you cannot complete an ac
 disabled**: there is no way to obtain the token, which is the property the flow depends on. To follow
 the flow at all, point it at a local sink.
 
-Use the **Mailpit** service already in the compose file — SMTP with a web inbox, so nothing leaves
-the machine:
+Use the **Mailpit** service in the compose file — SMTP with a web inbox, so nothing leaves the
+machine. It is part of the development baseline, so `docker compose up -d` starts it alongside
+PostgreSQL and the API:
 
 ```
-docker compose --profile tools up -d mailpit      # SMTP on :1025, inbox on http://localhost:8025
+docker compose up -d postgres mailpit      # SMTP on :1025, inbox on http://localhost:8025
 ```
 
 ```
@@ -144,9 +151,15 @@ before anyone notices — which is why, with email enabled, a missing or non-abs
 **startup** failure rather than a first-send surprise. `Email:Smtp:Host` and `Email:From:Address`
 are checked the same way.
 
-Running the API **inside** the compose stack instead? Email is off there unless you add the same
-settings to the `api` service, and the SMTP host is then `mailpit` rather than `localhost` — the
-containers reach each other by service name, not through your host's ports.
+**Running the API inside the compose stack needs none of the above.** The development overlay already
+turns email on and points the `api` service at the Mailpit sidecar, so `docker compose up -d` — or
+**F5 in Visual Studio** — gives you a stack where inviting an administrator sends a real message you
+can read. Note the SMTP host there is `mailpit`, not `localhost`: containers reach each other by
+service name, not through your host's published ports.
+
+Two overlay values you may want to override in `.env`: `GYMOS_CONSOLE_URL` if the console is not on
+`http://localhost:3000` (every activation link is built from it, and it is followed by a browser on
+your host, so it must be host-reachable), and `GYMOS_EMAIL_FROM` for the sender address.
 
 Other keys, with their defaults: `Email:Smtp:UseStartTls` (`false`, for a local sink that speaks
 plain SMTP), `Email:Smtp:Username` / `Password` (blank locally, required by any real provider),

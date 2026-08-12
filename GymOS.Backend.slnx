@@ -1,13 +1,19 @@
 <Solution>
   <!-- Solution folders are a *view*, not the repository layout: they group projects for whoever
-       opens this in Visual Studio and never move a file. Four source folders by role — Host,
-       Platform, Shared — plus Tests and the compose orchestration.
+       opens this in Visual Studio and never move a file. Three source folders by role — Host,
+       Platform, Shared — plus Tests, with the compose orchestration at the root.
 
        Folder names follow the frozen architecture's own vocabulary rather than generic enterprise
        labels: "Gateways" means the on-prem appliance agent in GymOS-Gateway (ADR-52), not this web
        API, and "Services" would imply the microservice split AD-15/ADR-52 explicitly rejected —
        this backend is one deployable. Feature modules get a sibling "Modules" folder when
        src/Modules/ has its first project. -->
+
+  <!-- Two files that belong to no project, so nothing else would surface them. Solution items rather
+       than a folder built to hold two things. -->
+  <File Path="docker/postgres/initdb/00-extensions.sql" />
+  <File Path="docs/Infrastructure/DOCKER.md" />
+
   <Folder Name="/Host/">
     <Project Path="src/Host/GymOS.WebApi/GymOS.WebApi.csproj" />
   </Folder>
@@ -31,20 +37,16 @@
     <Project Path="tests/GymOS.SharedKernel.UnitTests/GymOS.SharedKernel.UnitTests.csproj" />
     <Project Path="tests/GymOS.TestingSupport/GymOS.TestingSupport.csproj" />
   </Folder>
-  <Folder Name="/docker-compose/">
-    <File Path=".dockerignore" />
-    <File Path="docker-compose.override.yml" />
-    <File Path="docker-compose.prod.yml" />
-    <File Path="docker-compose.yml" />
-    <File Path="docker/postgres/initdb/00-extensions.sql" />
-    <File Path="docs/Infrastructure/DOCKER.md" />
-    <File Path="src/Host/GymOS.WebApi/Dockerfile" />
-    <Project Path="docker-compose.dcproj" Type="E53339B2-1760-4266-BCC7-CA923CBCF16C">
-      <!-- VS-only orchestration, excluded from EVERY build configuration: `dotnet build` and CI
-           cannot restore a project type only Visual Studio understands (NU1105). If VS rewrites
-           this element on save, open Configuration Manager and untick Build for docker-compose
-           in BOTH Debug and Release so VS serializes the exclusion itself. -->
-      <Build Solution="*|*" Project="false" />
-    </Project>
-  </Folder>
+  <!-- At the solution root, not in a folder. The dcproj already carries the compose files as its own
+       items — `.override.yml` and `.prod.yml` nested under `docker-compose.yml` — so it renders as one
+       "docker-compose" node with them inside. Listing them as solution items too, which the folder
+       did, showed every one of them twice. The Dockerfile is likewise already visible under
+       GymOS.WebApi, whose directory it sits in. -->
+  <Project Path="docker-compose.dcproj" Type="E53339B2-1760-4266-BCC7-CA923CBCF16C">
+    <!-- VS-only orchestration, excluded from EVERY build configuration: `dotnet build` and CI
+         cannot restore a project type only Visual Studio understands (NU1105). If VS rewrites
+         this element on save, open Configuration Manager and untick Build for docker-compose
+         in BOTH Debug and Release so VS serializes the exclusion itself. -->
+    <Build Solution="*|*" Project="false" />
+  </Project>
 </Solution>

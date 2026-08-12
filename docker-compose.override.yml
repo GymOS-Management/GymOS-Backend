@@ -84,6 +84,23 @@ services:
       # otherwise trip the production-appropriate limit of 10 per minute.
       Security__RateLimiting__SignInAttemptsPerWindow: '200'
 
+      # ── Email (ADR-53) ────────────────────────────────────────────────────────────────────────
+      # On, pointed at the Mailpit sidecar. Inviting an administrator is the only way to create a
+      # usable account, and the invitation is what makes it usable — so a stack where email does
+      # nothing is a stack where the first thing anyone tries silently fails. Nothing leaves the
+      # machine: Mailpit captures mail instead of delivering it.
+      Email__Enabled: 'true'
+      # `mailpit`, not localhost: containers reach each other by service name on the compose
+      # network, and 1025 here is the container port rather than the published one.
+      Email__Smtp__Host: mailpit
+      Email__Smtp__Port: '1025'
+      Email__From__Address: ${GYMOS_EMAIL_FROM:-platform@gymos.local}
+      Email__From__DisplayName: 'GymOS Platform'
+      # Every activation link is built from this, and it is followed by a *browser on the host*, so
+      # it must be a host-reachable URL for the console — not a compose service name. Defaults to
+      # the console's own dev port; set GYMOS_CONSOLE_URL in .env if you run it elsewhere.
+      Email__ConsoleBaseUrl: ${GYMOS_CONSOLE_URL:-http://localhost:3000}
+
     ports:
       # 5080 matches the port `dotnet run` uses via launchSettings.json, so a URL from the README
       # or a colleague works whether the API is running in a container or on the host.
@@ -97,13 +114,16 @@ services:
   # Development-only tooling
   # ══════════════════════════════════════════════════════════════════════════════════════════════
   #
-  # Behind profiles, so the default `docker compose up -d` stays two containers. Start what you
-  # need:
+  # pgAdmin is behind the `tools` profile — nothing depends on it, so it starts only when asked:
   #     docker compose --profile tools up -d
   #
-  # Defined here rather than in the base file because neither belongs in production: pgAdmin is a
-  # database console reachable over HTTP, and Mailpit's purpose is to *capture* mail instead of
-  # delivering it.
+  # Mailpit is not: the API sends mail as part of creating a usable administrator (ADR-53), so it is
+  # part of the development baseline rather than optional tooling. `docker compose up -d` is three
+  # containers.
+  #
+  # Both are defined here rather than in the base file because neither belongs in production:
+  # pgAdmin is a database console reachable over HTTP, and Mailpit's purpose is to *capture* mail
+  # instead of delivering it.
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -146,7 +166,10 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     container_name: gymos-mailpit
-    profiles: ['tools']
+    # No profile, unlike pgAdmin: since ADR-53 the API sends mail on the one path that creates a
+    # usable administrator, so a stack without somewhere to send it is a broken stack rather than a
+    # leaner one. It is also what makes F5 self-sufficient — the whole flow, including the
+    # invitation, works with nothing else started by hand.
     restart: unless-stopped
     environment:
       MP_MAX_MESSAGES: '500'

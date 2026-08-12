@@ -55,7 +55,7 @@ Files, and which environment each applies to:
 | File | Applied | Contains |
 |---|---|---|
 | `docker-compose.yml` | always | Service topology, health checks, volumes, networks, hardening. No credentials, no published ports. |
-| `docker-compose.override.yml` | **automatically** | Development: public credentials, published ports, relaxed Argon2 cost, pgAdmin/Mailpit. |
+| `docker-compose.override.yml` | **automatically** | Development: public credentials, published ports, relaxed Argon2 cost, email on via the Mailpit sidecar, pgAdmin behind a profile. |
 | `docker-compose.prod.yml` | only when named | Production: required secrets, no database port, loopback binding, internal data network, resource limits. |
 | `src/Host/GymOS.WebApi/Dockerfile` | build | Three stages: restore → publish → runtime. |
 | `.env.example` | template | Every variable, with defaults. Copy to `.env` only to change something. |
@@ -181,7 +181,7 @@ Super Admin console (GymOS-Platform) proxies to this API — see that repository
 Optional services:
 
 ```bash
-docker compose --profile tools up -d          # pgAdmin :5050, Mailpit UI :8025 / SMTP :1025
+docker compose --profile tools up -d          # pgAdmin :5050  (Mailpit already runs by default)
 docker compose --profile redis up -d          # Redis :6379
 docker compose --profile observability up -d  # Seq UI :8341, ingestion :5341
 docker compose --profile storage up -d        # MinIO API :9000, console :9001
