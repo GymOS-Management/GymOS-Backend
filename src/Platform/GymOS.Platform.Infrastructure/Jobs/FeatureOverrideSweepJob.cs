@@ -48,6 +48,11 @@ internal sealed partial class FeatureOverrideSweepJob : IScheduledJob
         "next sweep retries it.")]
     private static partial void LogGymFailed(ILogger logger, Guid gymId, Exception exception);
 
+    [LoggerMessage(Level = LogLevel.Information, Message =
+        "Feature override sweep deferred re-evaluation for gym {GymId}: an operator changed its " +
+        "exceptions underneath the sweep, so their decision stands and the next sweep re-evaluates.")]
+    private static partial void LogGymChangedUnderneath(ILogger logger, Guid gymId);
+
     public FeatureOverrideSweepJob(
         IServiceScopeFactory scopeFactory,
         AppDbContext dbContext,
@@ -106,6 +111,16 @@ internal sealed partial class FeatureOverrideSweepJob : IScheduledJob
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw; // host shutdown mid-sweep: stop cleanly, the next tick resumes
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // An expected interleaving, not a failure. GymFeatureOverride carries an xmin
+                // token, so an operator restating an override between this sweep's read and its
+                // delete makes the delete match nothing. That is the design working — the
+                // operator's decision wins and the next sweep re-evaluates against it — and
+                // reporting it at Error would page someone for correct behaviour. Caught before
+                // the general handler below precisely so it never reaches that channel.
+                LogGymChangedUnderneath(_logger, gymId);
             }
             catch (Exception exception)
             {
