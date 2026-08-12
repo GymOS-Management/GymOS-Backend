@@ -34,15 +34,18 @@ internal sealed class UpdateGymBrandingCommandHandler
 {
     private readonly IGymRepository _gyms;
     private readonly IGymQueries _gymQueries;
+    private readonly IPermissionEvaluator _permissionEvaluator;
     private readonly IUnitOfWork _unitOfWork;
 
     public UpdateGymBrandingCommandHandler(
         IGymRepository gyms,
         IGymQueries gymQueries,
+        IPermissionEvaluator permissionEvaluator,
         IUnitOfWork unitOfWork)
     {
         _gyms = gyms;
         _gymQueries = gymQueries;
+        _permissionEvaluator = permissionEvaluator;
         _unitOfWork = unitOfWork;
     }
 
@@ -113,6 +116,6 @@ internal sealed class UpdateGymBrandingCommandHandler
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await GymWrites.ReadBackAsync(_gymQueries, command.GymId, cancellationToken);
+        return await GymWrites.ReadBackAsync(_gymQueries, _permissionEvaluator, command.GymId, cancellationToken);
     }
 }

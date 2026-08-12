@@ -51,12 +51,18 @@ internal sealed class ActivateGymCommandHandler : ICommandHandler<ActivateGymCom
 {
     private readonly IGymRepository _gyms;
     private readonly IGymQueries _gymQueries;
+    private readonly IPermissionEvaluator _permissionEvaluator;
     private readonly IUnitOfWork _unitOfWork;
 
-    public ActivateGymCommandHandler(IGymRepository gyms, IGymQueries gymQueries, IUnitOfWork unitOfWork)
+    public ActivateGymCommandHandler(
+        IGymRepository gyms,
+        IGymQueries gymQueries,
+        IPermissionEvaluator permissionEvaluator,
+        IUnitOfWork unitOfWork)
     {
         _gyms = gyms;
         _gymQueries = gymQueries;
+        _permissionEvaluator = permissionEvaluator;
         _unitOfWork = unitOfWork;
     }
 
@@ -99,7 +105,7 @@ internal sealed class ActivateGymCommandHandler : ICommandHandler<ActivateGymCom
         gym.Activate();
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await GymWrites.ReadBackAsync(_gymQueries, command.GymId, cancellationToken);
+        return await GymWrites.ReadBackAsync(_gymQueries, _permissionEvaluator, command.GymId, cancellationToken);
     }
 }
 
@@ -107,12 +113,18 @@ internal sealed class SuspendGymCommandHandler : ICommandHandler<SuspendGymComma
 {
     private readonly IGymRepository _gyms;
     private readonly IGymQueries _gymQueries;
+    private readonly IPermissionEvaluator _permissionEvaluator;
     private readonly IUnitOfWork _unitOfWork;
 
-    public SuspendGymCommandHandler(IGymRepository gyms, IGymQueries gymQueries, IUnitOfWork unitOfWork)
+    public SuspendGymCommandHandler(
+        IGymRepository gyms,
+        IGymQueries gymQueries,
+        IPermissionEvaluator permissionEvaluator,
+        IUnitOfWork unitOfWork)
     {
         _gyms = gyms;
         _gymQueries = gymQueries;
+        _permissionEvaluator = permissionEvaluator;
         _unitOfWork = unitOfWork;
     }
 
@@ -154,7 +166,7 @@ internal sealed class SuspendGymCommandHandler : ICommandHandler<SuspendGymComma
         gym.Suspend(command.Reason);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await GymWrites.ReadBackAsync(_gymQueries, command.GymId, cancellationToken);
+        return await GymWrites.ReadBackAsync(_gymQueries, _permissionEvaluator, command.GymId, cancellationToken);
     }
 }
 
@@ -163,12 +175,18 @@ internal sealed class ReactivateGymCommandHandler
 {
     private readonly IGymRepository _gyms;
     private readonly IGymQueries _gymQueries;
+    private readonly IPermissionEvaluator _permissionEvaluator;
     private readonly IUnitOfWork _unitOfWork;
 
-    public ReactivateGymCommandHandler(IGymRepository gyms, IGymQueries gymQueries, IUnitOfWork unitOfWork)
+    public ReactivateGymCommandHandler(
+        IGymRepository gyms,
+        IGymQueries gymQueries,
+        IPermissionEvaluator permissionEvaluator,
+        IUnitOfWork unitOfWork)
     {
         _gyms = gyms;
         _gymQueries = gymQueries;
+        _permissionEvaluator = permissionEvaluator;
         _unitOfWork = unitOfWork;
     }
 
@@ -204,7 +222,7 @@ internal sealed class ReactivateGymCommandHandler
         gym.Reactivate();
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await GymWrites.ReadBackAsync(_gymQueries, command.GymId, cancellationToken);
+        return await GymWrites.ReadBackAsync(_gymQueries, _permissionEvaluator, command.GymId, cancellationToken);
     }
 }
 

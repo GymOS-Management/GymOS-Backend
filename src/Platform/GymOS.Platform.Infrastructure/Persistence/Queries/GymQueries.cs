@@ -1,11 +1,9 @@
-﻿using GymOS.BuildingBlocks.Application.Abstractions;
-using GymOS.BuildingBlocks.Application.Models;
+﻿using GymOS.BuildingBlocks.Application.Models;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Gyms;
-using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
 using RowVersion = GymOS.BuildingBlocks.Application.Abstractions.RowVersion;
@@ -22,26 +20,15 @@ internal sealed class GymQueries : IGymQueries
 
     private readonly AppDbContext _dbContext;
     private readonly IFeatureQueries _featureQueries;
-    private readonly IPermissionEvaluator _permissionEvaluator;
 
     /// <summary>
     /// Resolution is delegated rather than reprojected here: <see cref="FeatureQueries"/> already owns
     /// the three-layer read, and a second copy of it in this file would be the one that drifts.
-    ///
-    /// <para><see cref="IPermissionEvaluator"/> is taken for the same reason as
-    /// <see cref="IFeatureQueries"/>: <see cref="GetAsync"/> is the single point every route that
-    /// produces a <see cref="GymDetail"/> — the direct <c>GET</c> and every write's read-back — routes
-    /// through, so it is also the single point that must decide whether <c>features</c> comes back.
-    /// Deciding it once here, rather than asking every caller to remember, is the fix for the same
-    /// class of miss the M4.1 review found twice already (three renewal branches instead of five;
-    /// <c>FeatureExceptionMaintainer</c> asking a question its callers already knew the answer to).
-    /// </para>
     /// </summary>
-    public GymQueries(AppDbContext dbContext, IFeatureQueries featureQueries, IPermissionEvaluator permissionEvaluator)
+    public GymQueries(AppDbContext dbContext, IFeatureQueries featureQueries)
     {
         _dbContext = dbContext;
         _featureQueries = featureQueries;
-        _permissionEvaluator = permissionEvaluator;
     }
 
     public async Task<PagedResult<GymListItem>> ListAsync(
@@ -123,7 +110,8 @@ internal sealed class GymQueries : IGymQueries
         return new PagedResult<GymListItem>(items, filter.Page.Page, filter.Page.PageSize, totalCount);
     }
 
-    public async Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken)
+    public async Task<GymDetail?> GetAsync(
+        Guid gymId, bool includeFeatures, CancellationToken cancellationToken)
     {
         var projection = await _dbContext.Set<Gym>()
             .AsNoTracking()
@@ -225,17 +213,13 @@ internal sealed class GymQueries : IGymQueries
                 projection.Subscription.TrialEndsAtUtc,
                 projection.Subscription.CancelAtPeriodEnd);
 
-        // Gated here, once, for every route that reaches this method — the direct GET and every
-        // write's read-back alike (M4.1 task 4): one entry carries overrideReason, and a caller
-        // without features.read gets neither it nor the rest of the block, resolved and discarded.
-        // The same IPermissionEvaluator AuthorizationBehavior and the endpoint policies use, so this
-        // can never disagree with them about who holds it.
-        bool includeFeatures = await _permissionEvaluator.HasPermissionAsync(
-            PlatformPermissions.FeaturesRead, cancellationToken);
-
         // A second round trip, deliberately: resolution reads the catalogue, the plan's opinions, and
         // the gym's overrides, and folding that into the projection above would duplicate the rule the
-        // domain already owns.
+        // domain already owns. Skipped entirely — not resolved and discarded — when the caller lacks
+        // features.read: one entry carries overrideReason, and there is no reason to pay for the
+        // resolution just to withhold it. Whether to include it is decided by the caller (M4.1 task
+        // 4): features.read is an authorization concept, and this read side (AD-3) stays free of
+        // them.
         IReadOnlyList<ResolvedFeatureDetail>? features = includeFeatures
             ? await _featureQueries.ResolveForGymAsync(projection.Id, cancellationToken)
             : null;

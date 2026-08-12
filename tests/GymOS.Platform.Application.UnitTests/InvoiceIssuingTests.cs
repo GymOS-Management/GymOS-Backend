@@ -49,7 +49,7 @@ public sealed class InvoiceIssuingTests
 
             services.AddSingleton<IClock>(Clock);
             services.AddSingleton<IGymRepository>(Gyms);
-            services.AddSingleton<IGymQueries>(new FakeGymQueries(Gyms, Permissions));
+            services.AddSingleton<IGymQueries>(new FakeGymQueries(Gyms));
             services.AddSingleton<IPlanRepository>(Plans);
             services.AddSingleton<IPlanQueries>(PlanQueries);
             services.AddSingleton<ISubscriptionRepository>(Subscriptions);

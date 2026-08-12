@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Domain.Gyms;
+using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
 
 namespace GymOS.Platform.Application.Gyms;
@@ -66,19 +67,24 @@ internal static class GymWrites
     /// Reads the gym back after a successful write, so the response matches what a following GET would
     /// return — including the *new* row version the caller needs for their next update.
     ///
-    /// <para>Whether <c>features</c> comes back is <see cref="IGymQueries.GetAsync"/>'s decision
-    /// (M4.1 task 4), not this method's: a caller provisioning, updating, or suspending a gym without
-    /// <c>features.read</c> gets the same null block a direct <c>GET</c> would give them. Checking it
-    /// here too — or in each write handler — would be the same finding the review found on the
-    /// dedicated <c>GET /gyms/{id}</c> route, just repeated at six more call sites instead of fixed
-    /// at the one point they all share.</para>
+    /// <para>Asks <c>features.read</c> itself, exactly as <c>GetGymQueryHandler</c> does for the direct
+    /// <c>GET</c> (M4.1 task 4): a caller provisioning, updating, or suspending a gym without it gets
+    /// the same null <c>features</c> block a direct read would give them. This is the one place all six
+    /// write routes that return a <see cref="GymDetail"/> converge, so checking it here — rather than
+    /// in each write handler, or inside <see cref="IGymQueries.GetAsync"/> itself — fixes the finding
+    /// at its one Application-layer choke point without moving an authorization decision into the read
+    /// side (AD-3).</para>
     /// </summary>
     public static async Task<Result<GymDetail>> ReadBackAsync(
         IGymQueries gymQueries,
+        IPermissionEvaluator permissionEvaluator,
         Guid gymId,
         CancellationToken cancellationToken)
     {
-        GymDetail? detail = await gymQueries.GetAsync(gymId, cancellationToken);
+        bool includeFeatures = await permissionEvaluator.HasPermissionAsync(
+            PlatformPermissions.FeaturesRead, cancellationToken);
+
+        GymDetail? detail = await gymQueries.GetAsync(gymId, includeFeatures, cancellationToken);
 
         return detail is null
             ? Result.Failure<GymDetail>(GymErrors.NotFound(gymId))

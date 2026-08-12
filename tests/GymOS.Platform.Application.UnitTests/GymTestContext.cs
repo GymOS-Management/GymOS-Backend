@@ -26,7 +26,7 @@ internal sealed class GymTestContext
 
     public GymTestContext()
     {
-        GymQueries = new FakeGymQueries(Gyms, Permissions);
+        GymQueries = new FakeGymQueries(Gyms);
 
         var services = new ServiceCollection();
 
