@@ -312,6 +312,69 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Two_identical_concurrent_grants_both_succeed()
+    {
+        // The documented promise is "the later decision wins, and the audit trail keeps the earlier
+        // one". The loser used to get a 409 telling it to choose a value that is still free — advice
+        // that cannot be followed, for a request that would succeed on retry.
+        Guid gym = await CreateGymAsync("racing-gym");
+
+        Task<HttpResponseMessage>[] both =
+        [
+            SetGymFeatureRawAsync(gym, PlatformFeatures.Crm, true, "First."),
+            SetGymFeatureRawAsync(gym, PlatformFeatures.Crm, true, "Second."),
+        ];
+
+        HttpResponseMessage[] responses = await Task.WhenAll(both);
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        Assert.Equal(1, await CountOverridesAsync(gym));
+
+        foreach (HttpResponseMessage response in responses)
+        {
+            response.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task A_concurrent_plan_edit_cannot_make_the_gym_writes_own_answer_stale()
+    {
+        // SetGymFeaturesCommandHandler decides "does this need an override?" against the gym's live
+        // plan, read outside any guard. Without a lock held across the decision and the save, a
+        // concurrent PUT /plans/{id}/features could change the plan's opinion in between, so the 200
+        // this request returns would assert a resolution the gym does not actually resolve to a
+        // moment later. FindByIdForUpdateAsync closes that: the plan write now serializes behind the
+        // gym write (or precedes it entirely), so whichever order the two land in, the gym write's
+        // own answer is never contradicted by an independent read taken right after both finish.
+        Guid plan = (await PlatformApiHelpers.CreatePlanAsync(_client, "RACEPLAN")).Id;
+        Guid gym = await CreateGymAsync("plan-race-gym");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gym, plan);
+        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
+
+        // The plan starts silent on CRM (platform default: off), so a gym asking for it on needs an
+        // override — the exact decision a concurrent plan edit could make stale.
+        Task<HttpResponseMessage> gymWrite = SetGymFeatureRawAsync(
+            gym, PlatformFeatures.Crm, true, "Racing the plan.");
+        Task planWrite = SetPlanFeatureAsync(plan, PlatformFeatures.Crm, isEnabled: true);
+
+        await Task.WhenAll(gymWrite, planWrite);
+
+        using HttpResponseMessage gymResponse = await gymWrite;
+        Assert.Equal(HttpStatusCode.OK, gymResponse.StatusCode);
+        JsonElement atWriteTime = Feature(
+            await gymResponse.Content.ReadFromJsonAsync<JsonElement>(), PlatformFeatures.Crm);
+
+        JsonElement afterBothSettled = Feature(await ReadFeaturesAsync(gym), PlatformFeatures.Crm);
+
+        Assert.Equal(
+            atWriteTime.GetProperty("enabled").GetBoolean(),
+            afterBothSettled.GetProperty("enabled").GetBoolean());
+        Assert.Equal(
+            atWriteTime.GetProperty("source").GetString(),
+            afterBothSettled.GetProperty("source").GetString());
+    }
+
+    [Fact]
     public async Task The_gym_detail_omits_the_features_block_without_features_read()
     {
         // gyms.read alone must not expose overrideReason — the commercially sensitive free text the
@@ -378,6 +441,12 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
 
     private Task<int> CountOverridesAsync(Guid gymId) =>
         FeatureApiHelpers.CountOverridesAsync(_host, gymId);
+
+    private Task<Guid> CreateGymAsync(string slug) => PlatformApiHelpers.CreateGymAsync(_client, slug);
+
+    private Task<HttpResponseMessage> SetGymFeatureRawAsync(
+        Guid gymId, string key, bool isEnabled, string? reason) =>
+        FeatureApiHelpers.SetGymFeatureRawAsync(_client, gymId, key, isEnabled, reason);
 
     private Task SetPlanFeatureAsync(Guid planId, string featureKey, bool isEnabled) =>
         FeatureApiHelpers.SetPlanFeatureAsync(_client, planId, featureKey, isEnabled);

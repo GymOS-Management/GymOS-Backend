@@ -121,6 +121,16 @@ public static class FeatureErrors
         $"'{key}' is not a feature in this platform's catalogue.");
 
     /// <summary>
+    /// The request body omitted <c>features</c> entirely. Distinct from an explicitly empty array —
+    /// which is a legitimate "change nothing" and is never refused — because a client that forgot
+    /// the field made a mistake that must surface, not one silently reinterpreted as an intentional
+    /// no-op.
+    /// </summary>
+    public static Error FeaturesRequired => Error.Validation(
+        "features.required",
+        "The 'features' field is required. Send an empty array to change nothing.");
+
+    /// <summary>
     /// One key, stated twice, with no way to tell which answer was meant. There is a single row per
     /// (gym, feature), so applying the last one would honour half the request and report success.
     /// </summary>

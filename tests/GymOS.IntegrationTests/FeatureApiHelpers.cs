@@ -50,6 +50,15 @@ internal static class FeatureApiHelpers
     }
 
     /// <summary>
+    /// Writes a single override and returns the raw response, unlike <see cref="SetGymFeaturesAsync"/>
+    /// which asserts success — a caller racing two of these against the same (gym, feature) needs to
+    /// see both status codes, not have one swallowed by an assertion inside the helper.
+    /// </summary>
+    public static Task<HttpResponseMessage> SetGymFeatureRawAsync(
+        HttpClient client, Guid gymId, string key, bool isEnabled, string? reason) =>
+        client.PutAsJsonAsync(FeaturesUri(gymId), new { features = new[] { new { key, isEnabled, reason } } });
+
+    /// <summary>
     /// The number of override rows stored for a gym, read straight from the table — the whole promise
     /// of the self-cleaning rule is that a redundant row does not merely get ignored, it stops existing.
     /// </summary>

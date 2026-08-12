@@ -10,6 +10,18 @@ public interface IPlanRepository
 {
     Task<SubscriptionPlan?> FindByIdAsync(Guid planId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Loads the plan holding its row lock until the ambient transaction ends (<c>SELECT … FOR
+    /// UPDATE</c>). Mirrors <see cref="GymOS.Platform.Application.Subscriptions.Abstractions.
+    /// ISubscriptionRepository.FindByIdForUpdateAsync"/>: a gym-feature write decides whether it
+    /// needs an override by reading the gym's live plan, and without this lock a concurrent
+    /// <c>PUT /plans/{id}/features</c> can change that plan's opinion between the read and the
+    /// save, making the decision stale rather than merely late. Callers must hold an
+    /// <see cref="GymOS.BuildingBlocks.Application.Abstractions.IUnitOfWork"/> transaction, or the
+    /// lock releases at the end of the statement.
+    /// </summary>
+    Task<SubscriptionPlan?> FindByIdForUpdateAsync(Guid planId, CancellationToken cancellationToken);
+
     /// <summary>Loads by code, for the uniqueness check at creation. Codes are upper-cased first.</summary>
     Task<SubscriptionPlan?> FindByCodeAsync(string code, CancellationToken cancellationToken);
 
