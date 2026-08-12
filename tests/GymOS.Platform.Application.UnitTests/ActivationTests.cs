@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.Platform.Application.Identity;
 using GymOS.Platform.Application.Identity.Activation;
@@ -31,7 +32,7 @@ public sealed class ActivationTests
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.True(result.Value.EmailSent);
+        Assert.Equal(EmailDispatch.Sent, result.Value.Email);
 
         // The token that was mailed is the one whose hash was stored — the whole point of the flow.
         UserActivationToken stored = Assert.Single(context.ActivationTokens.Tokens);
@@ -60,7 +61,7 @@ public sealed class ActivationTests
         // The account is created and reported as created; only the delivery flag says otherwise.
         // Rolling the invite back would tell an administrator that nothing happened when it did.
         Assert.True(result.IsSuccess);
-        Assert.False(result.Value.EmailSent);
+        Assert.Equal(EmailDispatch.Failed, result.Value.Email);
         Assert.Single(context.Users.Users);
         Assert.Single(context.ActivationTokens.Tokens);
     }

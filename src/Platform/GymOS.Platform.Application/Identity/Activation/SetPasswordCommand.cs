@@ -108,9 +108,13 @@ internal sealed class SetPasswordCommandHandler : ICommandHandler<SetPasswordCom
             // The token is spent either way — see above — so the consumption is committed before the
             // refusal is returned. The caller learns what was wrong with the password and needs a new
             // link, which is the honest cost of not leaving a replayable one behind.
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-            return policyCheck;
+            //
+            // This commit touches the token and nothing else, which is why it needed the token's own
+            // row version: with no user row in the transaction there was nothing else to arbitrate a
+            // concurrent second consume.
+            return await TryCommitAsync(cancellationToken)
+                ? policyCheck
+                : Result.Failure(ActivationErrors.LinkNotUsable);
         }
 
         // Rotates the security stamp, clears any lockout, and — for a PendingActivation account —
@@ -139,9 +143,32 @@ internal sealed class SetPasswordCommandHandler : ICommandHandler<SetPasswordCom
             },
             subjectEmail: user.Email);
 
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return await TryCommitAsync(cancellationToken)
+            ? Result.Success()
+            : Result.Failure(ActivationErrors.LinkNotUsable);
+    }
 
-        return Result.Success();
+    /// <summary>
+    /// Commits, translating a lost consume race into the ordinary "link not usable" refusal.
+    ///
+    /// <para>The token carries a row version, so a second request that read it while the first was
+    /// still in flight loses here instead of spending the same link twice. That conflict is
+    /// <em>not</em> a 409 for the caller to retry: the link is genuinely spent and a retry can only
+    /// fail again. It collapses into the same answer every other spent link gets, which is also the
+    /// only answer this endpoint documents.</para>
+    /// </summary>
+    private async Task<bool> TryCommitAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            return true;
+        }
+        catch (ConcurrencyConflictException)
+        {
+            return false;
+        }
     }
 }
 
@@ -169,7 +196,8 @@ internal sealed class CheckActivationTokenQueryHandler : IQueryHandler<CheckActi
 
         UserActivationToken? token = string.IsNullOrWhiteSpace(query.Token)
             ? null
-            : await _tokens.FindByHashAsync(_generator.ComputeHash(query.Token), cancellationToken);
+            : await _tokens.FindByHashForReadingAsync(
+                _generator.ComputeHash(query.Token), cancellationToken);
 
         // Validity and nothing else — no email, no name, no roles. The console needs to choose
         // between a form and an apology; anything more would make this a lookup service for anyone

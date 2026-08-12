@@ -1,5 +1,6 @@
 using Asp.Versioning;
 using Asp.Versioning.Builder;
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Models;
 using GymOS.Platform.Application.Identity.Abstractions;
@@ -21,13 +22,33 @@ namespace GymOS.WebApi.Endpoints;
 public static class UserEndpoints
 {
     /// <summary>
-    /// Whether an invitation or reset reached the mail server. <b>Not whether it arrived</b> — a
-    /// bounce, a spam filing, and a wrong-but-well-formed address are indistinguishable from here.
+    /// What became of the invitation or reset message: <c>sent</c>, <c>failed</c>, or
+    /// <c>disabled</c>.
+    ///
+    /// <para><c>sent</c> means the mail server accepted it. <b>Not that it arrived</b> — a bounce, a
+    /// spam filing, and a wrong-but-well-formed address are indistinguishable from here.</para>
     /// </summary>
     internal const string InvitationEmailHeader = "X-Invitation-Email";
 
     internal const string EmailSentValue = "sent";
     internal const string EmailFailedValue = "failed";
+
+    /// <summary>
+    /// <c>Email:Enabled</c> is false, so nothing was attempted and no link exists to follow.
+    ///
+    /// <para>Reported separately because it used to report as <c>sent</c>: the account was created,
+    /// the caller was told the invitation had gone, and nobody could ever activate it. "Switched off"
+    /// and "handed to a mail server" are different answers to the only question this header asks.</para>
+    /// </summary>
+    internal const string EmailDisabledValue = "disabled";
+
+    private static string HeaderValueFor(EmailDispatch dispatch) => dispatch switch
+    {
+        EmailDispatch.Sent => EmailSentValue,
+        EmailDispatch.Failed => EmailFailedValue,
+        EmailDispatch.Suppressed => EmailDisabledValue,
+        _ => EmailFailedValue,
+    };
 
     public static IEndpointRouteBuilder MapUserEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -133,7 +154,9 @@ public static class UserEndpoints
                 "For an administrator who has not activated yet. Issuing a new link invalidates the " +
                 "previous one, so at most one is ever live. Refused with `users.not_pending_activation` " +
                 "for an account that has already activated — that case wants a password reset instead. " +
-                "`X-Invitation-Email` reports whether the message reached the mail server; it never " +
+                "`X-Invitation-Email` reports `sent`, `failed`, or `disabled` (email is switched " +
+                "off server-side, so no link exists to follow); `sent` means the mail server " +
+                "accepted it and never " +
                 "means delivered.")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -222,7 +245,7 @@ public static class UserEndpoints
         if (result.IsSuccess)
         {
             httpContext.Response.Headers[InvitationEmailHeader] =
-                result.Value.EmailSent ? EmailSentValue : EmailFailedValue;
+                HeaderValueFor(result.Value.Email);
         }
 
         Result<UserDetail> user = result.IsSuccess
@@ -247,7 +270,7 @@ public static class UserEndpoints
         if (result.IsSuccess)
         {
             httpContext.Response.Headers[InvitationEmailHeader] =
-                result.Value.EmailSent ? EmailSentValue : EmailFailedValue;
+                HeaderValueFor(result.Value.Email);
         }
 
         return WriteResults.NoContent(result);
@@ -265,7 +288,7 @@ public static class UserEndpoints
         if (result.IsSuccess)
         {
             httpContext.Response.Headers[InvitationEmailHeader] =
-                result.Value.EmailSent ? EmailSentValue : EmailFailedValue;
+                HeaderValueFor(result.Value.Email);
         }
 
         return WriteResults.NoContent(result);

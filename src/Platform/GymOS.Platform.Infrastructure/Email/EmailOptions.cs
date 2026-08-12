@@ -37,9 +37,16 @@ public sealed class EmailOptions
     /// <see cref="Enabled"/> is true.</para>
     ///
     /// <para>The development default exists so link building never throws when email is
-    /// <b>disabled</b> — the invitation still has to succeed, and the link it logs still has to be
-    /// followable by a developer reading it out of the console. An earlier version defaulted this to
+    /// <b>disabled</b>: the invitation still has to succeed. An earlier version defaulted this to
     /// empty and turned every invitation into a 500 the moment the URL was assembled.</para>
+    ///
+    /// <para><b>The link is not recoverable when email is disabled.</b> This remark used to say a
+    /// developer could read it out of the console log, and that was never true —
+    /// <c>LoggingEmailSender</c> deliberately logs no body, because both messages carry a one-time
+    /// credential and a log that records one is a second copy of it. With <c>Email:Enabled</c> false
+    /// (the default) an invited account therefore cannot be activated at all; the response says so
+    /// through <c>X-Invitation-Email: disabled</c>, and the way to work locally is the <c>tools</c>
+    /// compose profile, which points this at Mailpit.</para>
     /// </summary>
     public string ConsoleBaseUrl { get; init; } = "http://localhost:3000";
 

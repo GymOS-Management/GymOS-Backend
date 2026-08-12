@@ -1,8 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using GymOS.BuildingBlocks.Application.Abstractions;
+using GymOS.Platform.Domain.Identity;
+using GymOS.Platform.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -26,7 +31,13 @@ public sealed class ActivationApiTests : IAsyncLifetime
     private static readonly Uri Users = new("/api/v1/users", UriKind.Relative);
     private static readonly Uri SetPassword = new("/api/v1/auth/set-password", UriKind.Relative);
 
-    private const string ConsoleBaseUrl = "https://console.gymos.test";
+    /// <summary>
+    /// Deliberately carries a <b>sub-path</b>. A console at the domain root is the easy case and the
+    /// one that hid a defect: the route was resolved root-relative, so any path here was silently
+    /// discarded and every emailed link pointed at the wrong place — undetectable by startup
+    /// validation, since the result is still an absolute, well-formed URL, and unfixable once sent.
+    /// </summary>
+    private const string ConsoleBaseUrl = "https://console.gymos.test/admin";
 
     private readonly PostgresFixture _postgres;
     private AuthenticationHost _host = null!;
@@ -126,6 +137,43 @@ public sealed class ActivationApiTests : IAsyncLifetime
         // Everything except `traceId`, which is per-request by design and the one field that is
         // *supposed* to differ. Comparing whole bodies would fail on it and prove nothing.
         Assert.Equal(await DescribeProblemAsync(replayed), await DescribeProblemAsync(unknown));
+    }
+
+    [Fact]
+    public async Task TwoRequestsThatBothReadOneLiveLink_OnlyOneCanSpendIt()
+    {
+        await InviteAsync("race@gymos.test");
+        string token = ReadTokenFromLatestEmail("race@gymos.test");
+        string hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
+        // Two contexts stand in for two requests that both read the token before either commits.
+        // Doing it deterministically rather than with real threads is the point: the interleaving
+        // this guards against is a narrow window, and a test that only sometimes hits it is not a
+        // gate. The HTTP-level single-use path is covered by TheLinkWorksOnce above.
+        await using AppDbContext first = _host.CreateDbContext();
+        await using AppDbContext second = _host.CreateDbContext();
+
+        UserActivationToken read1 = await first.Set<UserActivationToken>()
+            .SingleAsync(candidate => candidate.TokenHash == hash);
+        UserActivationToken read2 = await second.Set<UserActivationToken>()
+            .SingleAsync(candidate => candidate.TokenHash == hash);
+
+        // Derived from the token rather than read off the clock: rule R2 bans direct clock reads, and
+        // an instant an hour before expiry is one where the link is unambiguously live anyway.
+        DateTimeOffset now = read1.ExpiresAtUtc.AddHours(-1);
+
+        // Both pass the aggregate's own usability gate, because both read a live row. That check has
+        // never been the thing that makes redemption exclusive, and this is where that shows.
+        Assert.True(read1.Consume(now));
+        Assert.True(read2.Consume(now));
+
+        await first.SaveChangesAsync();
+
+        // The second write must lose. Before the token carried a row version its UPDATE had no
+        // predicate to fail on, so it committed happily and the link was spent twice — and on the
+        // password-policy-rejection path, where no user row joins the transaction, nothing else
+        // would have caught it either.
+        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => second.SaveChangesAsync());
     }
 
     [Fact]
@@ -229,7 +277,11 @@ public sealed class ActivationApiTests : IAsyncLifetime
         Match match = Regex.Match(message.TextBody, @"token=([A-Za-z0-9_-]+)");
 
         Assert.True(match.Success, $"no activation link in the message body: {message.TextBody}");
-        Assert.Contains(ConsoleBaseUrl, message.TextBody, StringComparison.Ordinal);
+
+        // The whole prefix, not just the host: a root-relative route would produce
+        // https://console.gymos.test/set-password and drop the sub-path this console is deployed
+        // under, which is a link nobody can follow.
+        Assert.Contains($"{ConsoleBaseUrl}/set-password?token=", message.TextBody, StringComparison.Ordinal);
 
         return Uri.UnescapeDataString(match.Groups[1].Value);
     }

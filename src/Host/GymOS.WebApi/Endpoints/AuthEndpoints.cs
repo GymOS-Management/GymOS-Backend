@@ -117,8 +117,8 @@ public static class AuthEndpoints
                 "that fails on submit. Answers **validity and nothing else** — no email, no name, no " +
                 "roles — so holding a token reveals nothing about the account behind it. Every " +
                 "failure (unknown, expired, already used, account gone or suspended) returns the " +
-                "same `410` with the same body, deliberately: a distinct \"expired\" would confirm " +
-                "the token had once been real.")
+                "same `404` with the same `auth.link_not_usable` body, deliberately: a distinct " +
+                "\"expired\" would confirm the token had once been real.")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);

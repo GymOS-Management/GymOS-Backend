@@ -21,7 +21,7 @@ namespace GymOS.Platform.Application.Identity.Activation;
 public sealed record ResendInvitationCommand(Guid UserId) : ICommand<Result<ActivationDispatch>>;
 
 /// <summary>Whether the message reached the mail server. Never says "delivered" — nothing here can.</summary>
-public sealed record ActivationDispatch(bool EmailSent);
+public sealed record ActivationDispatch(EmailDispatch Email);
 
 internal sealed class ResendInvitationCommandHandler
     : ICommandHandler<ResendInvitationCommand, Result<ActivationDispatch>>
@@ -80,6 +80,6 @@ internal sealed class ResendInvitationCommandHandler
             rawToken,
             cancellationToken);
 
-        return Result.Success(new ActivationDispatch(delivery.Sent));
+        return Result.Success(new ActivationDispatch(delivery.Status));
     }
 }

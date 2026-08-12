@@ -50,14 +50,41 @@ public interface IEmailSender
     Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken cancellationToken);
 }
 
-/// <param name="Sent">Whether the transport accepted the message.</param>
+/// <summary>
+/// What became of a message.
+///
+/// <para>Three states rather than two, because "switched off" is not a kind of success. It used to
+/// report as one, so a deployment with <c>Email:Enabled=false</c> answered an invitation with
+/// <c>X-Invitation-Email: sent</c> while nothing had been sent and no link existed for anyone to
+/// follow — the caller was told the opposite of what happened, on the one action whose whole purpose
+/// is to put a link in somebody's hands.</para>
+/// </summary>
+public enum EmailDispatch
+{
+    /// <summary>The transport accepted it. Never means delivered.</summary>
+    Sent = 1,
+
+    /// <summary>The transport refused it, or could not be reached. The re-send action is the remedy.</summary>
+    Failed = 2,
+
+    /// <summary>
+    /// Email is switched off, so nothing was attempted. Not a fault and not a success: the account
+    /// work stands, and there is no link to follow until email is enabled and the message re-sent.
+    /// </summary>
+    Suppressed = 3,
+}
+
+/// <param name="Status">What became of the message.</param>
 /// <param name="Error">
-/// Why it did not, for logging and for the caller's response. Never contains the message body —
+/// Why it failed, for logging and for the caller's response. Never contains the message body —
 /// these two messages carry one-time credentials in their links.
 /// </param>
-public sealed record EmailSendResult(bool Sent, string? Error)
+public sealed record EmailSendResult(EmailDispatch Status, string? Error)
 {
-    public static EmailSendResult Success { get; } = new(true, null);
+    public static EmailSendResult Success { get; } = new(EmailDispatch.Sent, null);
 
-    public static EmailSendResult Failed(string error) => new(false, error);
+    /// <summary>Nothing was attempted, because <c>Email:Enabled</c> is false.</summary>
+    public static EmailSendResult Suppressed { get; } = new(EmailDispatch.Suppressed, null);
+
+    public static EmailSendResult Failed(string error) => new(EmailDispatch.Failed, error);
 }

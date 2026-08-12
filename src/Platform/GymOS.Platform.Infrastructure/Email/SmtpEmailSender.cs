@@ -111,14 +111,18 @@ internal sealed partial class SmtpEmailSender : IEmailSender
 /// exercise the paths that send.</para>
 ///
 /// <para>The subject and recipient are logged; <b>the body is not</b>. Both messages carry a one-time
-/// credential in their link, and a log that records it is a second copy of it.</para>
+/// credential in their link, and a log that records it is a second copy of it. That is also why this
+/// reports <see cref="EmailDispatch.Suppressed"/> rather than success: with no link logged and none
+/// sent, nobody can activate the account, and telling the caller "sent" made that invisible.</para>
 /// </summary>
 internal sealed partial class LoggingEmailSender : IEmailSender
 {
     private readonly ILogger<LoggingEmailSender> _logger;
 
-    [LoggerMessage(Level = LogLevel.Information, Message =
-        "Email is disabled (Email:Enabled=false); '{Subject}' for {Recipient} was not sent.")]
+    [LoggerMessage(Level = LogLevel.Warning, Message =
+        "Email is disabled (Email:Enabled=false); '{Subject}' for {Recipient} was not sent, and the " +
+        "link it would have carried is not recoverable — the account cannot be activated until email " +
+        "is enabled and the message re-sent.")]
     private static partial void LogSuppressed(ILogger logger, string subject, string recipient);
 
     public LoggingEmailSender(ILogger<LoggingEmailSender> logger) => _logger = logger;
@@ -127,8 +131,10 @@ internal sealed partial class LoggingEmailSender : IEmailSender
     {
         ArgumentNullException.ThrowIfNull(message);
 
+        // Warning, not Information: on the two messages ADR-53 permits, "not sent" means a person is
+        // waiting for a link that will never arrive. That is worth interrupting a log reader for.
         LogSuppressed(_logger, message.Subject, message.To);
 
-        return Task.FromResult(EmailSendResult.Success);
+        return Task.FromResult(EmailSendResult.Suppressed);
     }
 }

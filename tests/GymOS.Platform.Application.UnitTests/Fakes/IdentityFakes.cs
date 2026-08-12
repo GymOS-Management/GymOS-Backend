@@ -313,6 +313,15 @@ internal sealed class FakeActivationTokenRepository : IUserActivationTokenReposi
     public Task<UserActivationToken?> FindByHashAsync(string tokenHash, CancellationToken cancellationToken) =>
         Task.FromResult(Tokens.SingleOrDefault(token => token.TokenHash == tokenHash));
 
+    /// <summary>
+    /// The same answer: tracking is an EF concern, and this fake has no change tracker for the read
+    /// path to stay out of. The distinction is asserted against the real repository instead.
+    /// </summary>
+    public Task<UserActivationToken?> FindByHashForReadingAsync(
+        string tokenHash,
+        CancellationToken cancellationToken) =>
+        FindByHashAsync(tokenHash, cancellationToken);
+
     public void Add(UserActivationToken token) => Tokens.Add(token);
 
     public Task InvalidateOutstandingAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken)

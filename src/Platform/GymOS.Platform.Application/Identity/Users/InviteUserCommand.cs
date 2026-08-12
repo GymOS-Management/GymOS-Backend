@@ -33,7 +33,7 @@ public sealed record InviteUserCommand(
 /// <c>Idempotency-Replayed</c> already set — so the console can say "created, but the email did not
 /// go; re-send it" instead of implying an invitation is on its way.</para>
 /// </summary>
-public sealed record InvitedUser(UserDetail User, bool EmailSent);
+public sealed record InvitedUser(UserDetail User, EmailDispatch Email);
 
 internal sealed class InviteUserCommandHandler : ICommandHandler<InviteUserCommand, Result<InvitedUser>>
 {
@@ -138,7 +138,7 @@ internal sealed class InviteUserCommandHandler : ICommandHandler<InviteUserComma
 
         return created is null
             ? Result.Failure<InvitedUser>(UserErrors.NotFound(user.Id))
-            : Result.Success(new InvitedUser(created, delivery.Sent));
+            : Result.Success(new InvitedUser(created, delivery.Status));
     }
 
     private async Task<Result<IReadOnlyList<Role>>> ResolveRolesAsync(

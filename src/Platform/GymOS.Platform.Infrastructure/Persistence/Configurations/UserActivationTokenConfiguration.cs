@@ -42,8 +42,21 @@ public sealed class UserActivationTokenConfiguration : IEntityTypeConfiguration<
         // Backs the retention purge.
         builder.HasIndex(token => token.ExpiresAtUtc);
 
-        // No xmin. A token is written once and consumed once, and the consume is guarded by the
-        // aggregate's own `IsUsable` check inside the same transaction — there is no field a second
-        // writer could overwrite unnoticed. `RefreshToken` is exempt for the same reason.
+        // Optimistic concurrency, like every other aggregate here (spec §2/§3).
+        //
+        // This carried no xmin, on the reasoning that a token is written once and consumed once so
+        // "there is no field a second writer could overwrite unnoticed". That frames the risk as a
+        // lost update, and the risk is not a lost update: it is two readers both passing `IsUsable`
+        // before either commits. Nothing then stopped both consuming, because the UPDATE carried no
+        // version predicate.
+        //
+        // The window is narrow but it is exactly the guarantee this table exists to provide. It also
+        // is not closed by the User aggregate's own xmin: SetPasswordCommandHandler's
+        // policy-rejection path commits the consumption ALONE, touching no user row, so on that path
+        // there was nothing to arbitrate.
+        //
+        // xmin is PostgreSQL's system column, so this costs no schema change — only the model
+        // snapshot moves.
+        builder.Property<uint>("xmin").IsRowVersion();
     }
 }

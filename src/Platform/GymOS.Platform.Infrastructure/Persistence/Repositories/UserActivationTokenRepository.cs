@@ -10,11 +10,25 @@ internal sealed class UserActivationTokenRepository : IUserActivationTokenReposi
 
     public UserActivationTokenRepository(AppDbContext dbContext) => _dbContext = dbContext;
 
-    /// <summary>Hits the unique index on <c>token_hash</c> — one row or none, never a scan.</summary>
+    /// <summary>
+    /// Hits the unique index on <c>token_hash</c> — one row or none, never a scan.
+    ///
+    /// <para>Tracked, and that is required rather than incidental: the command path calls
+    /// <c>Consume</c> on what comes back, and an untracked entity would take that mutation to the
+    /// garbage collector instead of the database, leaving the link replayable.</para>
+    /// </summary>
     public Task<UserActivationToken?> FindByHashAsync(
         string tokenHash,
         CancellationToken cancellationToken) =>
         _dbContext.Set<UserActivationToken>()
+            .SingleOrDefaultAsync(token => token.TokenHash == tokenHash, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<UserActivationToken?> FindByHashForReadingAsync(
+        string tokenHash,
+        CancellationToken cancellationToken) =>
+        _dbContext.Set<UserActivationToken>()
+            .AsNoTracking()
             .SingleOrDefaultAsync(token => token.TokenHash == tokenHash, cancellationToken);
 
     public void Add(UserActivationToken token) => _dbContext.Set<UserActivationToken>().Add(token);

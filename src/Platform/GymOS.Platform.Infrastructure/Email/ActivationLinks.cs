@@ -15,8 +15,17 @@ namespace GymOS.Platform.Infrastructure.Email;
 /// </summary>
 internal sealed class ActivationLinks : IActivationLinks
 {
-    /// <summary>The console route that reads the token. Mirrored in GymOS-Platform's app router.</summary>
-    private const string SetPasswordPath = "/set-password";
+    /// <summary>
+    /// The console route that reads the token. Mirrored in GymOS-Platform's app router.
+    ///
+    /// <para><b>Relative, with no leading slash</b>, and that is load-bearing: a root-relative path
+    /// resolves against the <em>authority</em> of the base URL and discards its path, so a console
+    /// deployed under a sub-path — <c>https://apps.example.com/gymos-console</c> — silently produced
+    /// links to <c>https://apps.example.com/set-password</c>. Startup validation could not catch it,
+    /// because that URL is absolute and well-formed; the first symptom was an invited administrator
+    /// on a 404, holding a link already delivered and beyond fixing.</para>
+    /// </summary>
+    private const string SetPasswordPath = "set-password";
 
     private readonly EmailOptions _options;
     private readonly IEmailSender _sender;
@@ -62,10 +71,18 @@ internal sealed class ActivationLinks : IActivationLinks
 
     private string BuildUrl(string rawToken)
     {
+        // The base is forced to end in a slash before the route is resolved against it. Without
+        // that, .NET treats the last segment as a file name and replaces it, so
+        // `https://host/console` + `set-password` gives `https://host/set-password` — the same
+        // sub-path loss the leading slash used to cause, arriving by a different route.
+        string root = _options.ConsoleBaseUrl.EndsWith('/')
+            ? _options.ConsoleBaseUrl
+            : _options.ConsoleBaseUrl + "/";
+
         // The token is base64url — URL-safe by construction — but it is escaped anyway rather than
         // interpolated: the encoding is a property of the generator, and a link that breaks the day
         // somebody changes it would break silently, in email, after delivery.
-        var builder = new UriBuilder(new Uri(new Uri(_options.ConsoleBaseUrl), SetPasswordPath))
+        var builder = new UriBuilder(new Uri(new Uri(root), SetPasswordPath))
         {
             Query = $"token={Uri.EscapeDataString(rawToken)}",
         };

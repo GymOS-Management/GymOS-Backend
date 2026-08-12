@@ -10,6 +10,20 @@ public interface IUserActivationTokenRepository
 {
     Task<UserActivationToken?> FindByHashAsync(string tokenHash, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The same lookup for a caller that only reads — <c>CheckActivationTokenQuery</c>, which decides
+    /// whether the console shows a form or an apology.
+    ///
+    /// <para>Separate rather than a flag on <see cref="FindByHashAsync"/> because the two callers
+    /// want opposite things and getting it backwards is silent either way: the command <b>must</b>
+    /// track, or <c>Consume</c> mutates a detached entity and the token is never spent. This one must
+    /// not, so an anonymous poll does not attach a mutable credential to the change tracker where an
+    /// incidental save could pick it up.</para>
+    /// </summary>
+    Task<UserActivationToken?> FindByHashForReadingAsync(
+        string tokenHash,
+        CancellationToken cancellationToken);
+
     void Add(UserActivationToken token);
 
     /// <summary>

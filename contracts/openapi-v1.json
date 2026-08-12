@@ -3221,7 +3221,7 @@
     },
     "/api/v1/auth/set-password": {
       "get": {
-        "description": "Lets the console show \u0022this link has expired, ask for another\u0022 instead of a form that fails on submit. Answers **validity and nothing else** \u2014 no email, no name, no roles \u2014 so holding a token reveals nothing about the account behind it. Every failure (unknown, expired, already used, account gone or suspended) returns the same \u0060410\u0060 with the same body, deliberately: a distinct \u0022expired\u0022 would confirm the token had once been real.",
+        "description": "Lets the console show \u0022this link has expired, ask for another\u0022 instead of a form that fails on submit. Answers **validity and nothing else** \u2014 no email, no name, no roles \u2014 so holding a token reveals nothing about the account behind it. Every failure (unknown, expired, already used, account gone or suspended) returns the same \u0060404\u0060 with the same \u0060auth.link_not_usable\u0060 body, deliberately: a distinct \u0022expired\u0022 would confirm the token had once been real.",
         "operationId": "CheckActivationLink",
         "parameters": [
           {
@@ -7075,7 +7075,7 @@
     },
     "/api/v1/users/{userId}/resend-invitation": {
       "post": {
-        "description": "For an administrator who has not activated yet. Issuing a new link invalidates the previous one, so at most one is ever live. Refused with \u0060users.not_pending_activation\u0060 for an account that has already activated \u2014 that case wants a password reset instead. \u0060X-Invitation-Email\u0060 reports whether the message reached the mail server; it never means delivered.",
+        "description": "For an administrator who has not activated yet. Issuing a new link invalidates the previous one, so at most one is ever live. Refused with \u0060users.not_pending_activation\u0060 for an account that has already activated \u2014 that case wants a password reset instead. \u0060X-Invitation-Email\u0060 reports \u0060sent\u0060, \u0060failed\u0060, or \u0060disabled\u0060 (email is switched off server-side, so no link exists to follow); \u0060sent\u0060 means the mail server accepted it and never means delivered.",
         "operationId": "ResendInvitation",
         "parameters": [
           {

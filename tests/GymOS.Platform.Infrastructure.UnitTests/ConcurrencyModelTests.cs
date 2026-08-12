@@ -74,12 +74,12 @@ public sealed class ConcurrencyModelTests
         // presented twice — which is a stronger guarantee than a version check.
         [typeof(RefreshToken)] = "rotated by replacement; reuse detection covers double-use",
 
-        [typeof(UserActivationToken)] =
-            "written once and consumed once (ADR-53). The only mutation is Consume, which the " +
-            "aggregate refuses unless the token is still usable — so two concurrent redemptions " +
-            "inside one transaction each see the row's real state and the second is rejected by the " +
-            "domain rather than by a version check. There is no field a later writer could overwrite " +
-            "unnoticed, which is the same reasoning RefreshToken is exempt on",
+        // UserActivationToken was exempted here on the reasoning that "two concurrent redemptions
+        // inside one transaction each see the row's real state and the second is rejected by the
+        // domain". Inside one transaction, yes — and that is not the case that matters. Two
+        // concurrent *transactions* both read an unconsumed token, both pass IsUsable, and both
+        // wrote, because the UPDATE carried no version predicate. It now carries xmin like everything
+        // else, so the exemption is gone rather than reworded.
 
         // Every write is a raw SQL statement (IdempotencyStore) gated by its own WHERE clause —
         // INSERT ... ON CONFLICT DO NOTHING for the claim, status/lease_expires_at conditions for

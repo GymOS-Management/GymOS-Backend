@@ -86,6 +86,6 @@ internal sealed class SendPasswordResetCommandHandler
             rawToken,
             cancellationToken);
 
-        return Result.Success(new ActivationDispatch(delivery.Sent));
+        return Result.Success(new ActivationDispatch(delivery.Status));
     }
 }
