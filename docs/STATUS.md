@@ -1531,25 +1531,59 @@ above, not repeated here.
 
 ## Known open items / honest notes
 
-- **`dotnet format --verify-no-changes` fails on seven pre-existing files.** Found 2026-08-12 while
-  regrouping the solution view, and confirmed **identical against the previous `.slnx`**, so that
-  change did not cause it: CHARSET on `AuditLogQueries`, `GymQueries`, `InvoiceQueries`, `PlanQueries`,
-  `UserQueries` and `PlanCatalogueTests`, plus IMPORTS ordering on `AuditLogQueries` (byte-identical
-  there since before 2026-08-12's commits). CI runs this step, so it is presumably red there too.
-  Deliberately not swept into an unrelated commit: a blanket reformat of file encodings and import
-  order across files nobody is otherwise touching is exactly the change that hides a real edit. It
-  wants one pass of `dotnet format` and a read of the diff, on its own.
+- **~~`dotnet format --verify-no-changes` fails~~ — FIXED 2026-08-12 (`81b9ebd`), in the standalone
+  pass this note asked for.** Worth keeping for one correction: the entry recorded *seven findings
+  across six files* and there were **eight across seven**. `FakeIdempotencyStore.cs` also carried two
+  WHITESPACE findings (one object initializer on a single line), pre-existing since the AD-39 commits
+  and simply missed when the note was written. The CHARSET findings turned out to be a UTF-8 **BOM the
+  `.editorconfig` does not want** — stripped, which is why those files show a one-line diff that
+  appears to change nothing. Gate now exits 0.
 
-- **`FeatureOverrideSweepJob` logs an expected concurrency race at `Error`** (found on M4.1's merge,
-  not fixed there). `GymFeatureOverride` carries an `xmin` concurrency token, so an operator
-  restating an override between the nightly sweep's read and its delete makes the delete match
-  nothing — `DbUpdateConcurrencyException`, caught by the job's broad `catch (Exception)` and logged
-  as a failed gym via `LogGymFailed`. The *behaviour* is right (the operator's decision wins, and the
-  next sweep re-evaluates), but an expected interleaving reported as a job failure will page someone
-  for something that worked as designed. Catching `DbUpdateConcurrencyException` separately and
-  logging it at Information ("re-evaluation deferred, the gym changed underneath") would keep the
-  Error channel meaningful. Same class as the five below: real, small, and recorded rather than fixed
-  inside someone else's increment.
+- **~~`FeatureOverrideSweepJob` logs an expected concurrency race at `Error`~~ — FIXED 2026-08-12
+  (`4ce45d0`).** `DbUpdateConcurrencyException` is now caught ahead of the general handler and logged
+  at Information as a deferral. Genuine step failures still reach `LogGymFailed` at Error with their
+  exception. **The gap it leaves:** no test asserts the level, because the repository has no
+  log-capturing test infrastructure at all. Adding one means a testing package that is not on the
+  allowlist (`Microsoft.Extensions.Diagnostics.Testing` is the obvious candidate), so it needs
+  `docs/Engineering/DEPENDENCY_POLICY.md`'s change process rather than a quiet addition. Until then,
+  every `LoggerMessage` level in this repository is unverified by anything but review.
+
+- **F5 on `docker-compose.dcproj` cannot work, and the dcproj's own comment sends you after the
+  wrong cause.** Found 2026-08-12. Visual Studio reports *"Cannot find the container for the service
+  'api'"*, which that comment attributes to Fast mode's partial build — but `DockerDevelopmentMode`
+  is already `Regular`, and the merged config VS writes to `obj/Docker/MergedDockerCompose.cache`
+  confirms it (no entrypoint shim, no vsdbg mount). The actual cause is that **VS Container Tools
+  does not support `container_name`**: it resolves a service's container by compose's generated
+  `<project>-<service>-<index>` name, so `container_name: gymos-api` makes the lookup miss. Every
+  service here pins a name, and `.github/workflows/ci.yml` depends on those fixed names in seven
+  places (`docker inspect gymos-api`, the read-only and cap-drop assertions), so removing them is not
+  free. **Behind that sits a second, independent wall:** even with the container found, `vsdbg`
+  cannot attach through `DOTNET_EnableDiagnostics=0`, `read_only: true`, `cap_drop: ALL`,
+  `no-new-privileges` and the non-root `USER $APP_UID` — which is the hardening working exactly as
+  designed ("dev runs the same hardened image production runs"). **Conclusion: `docker compose up -d`
+  is the workflow; F5 on the compose project is not.** For breakpoints, run the host project against
+  the containerised dependencies — the dev overlay already publishes Postgres for "Testcontainers-free
+  local runs", Seq "for a host-run API to log into", and picks 5080 to match `dotnet run`. Also
+  requires the Container Tools component, which VS 2026 does not install by default and whose id
+  changed to `Microsoft.VisualStudio.Component.DockerTools` (no dot before `Tools`).
+
+- **The dcproj breaks solution-level `dotnet list package`.** `dotnet list package --outdated` against
+  `GymOS.Backend.slnx` fails with *"No assets file was found for docker-compose.dcproj"*. The
+  `<Build Project="false" />` exclusion covers building, not this command, so dependency review has to
+  iterate the `.csproj` files instead of asking the solution. Worth knowing before concluding the
+  dependency check itself is broken.
+
+- **Three dependency majors are open, and none is a routine bump.**
+  `Microsoft.CodeAnalysis.BannedApiAnalyzers` 3.3.4 → 5.6.0 (two majors of an analyzer against
+  `TreatWarningsAsErrors`, so new default diagnostics arrive as build errors), `Microsoft.NET.Test.Sdk`
+  17.12.0 → 18.8.1, and `xunit.runner.visualstudio` 2.8.2 → 3.1.5. Each wants its own commit and a
+  full test run so a break is attributable. Note that **xunit 2.9.3 is the end of the v2 line**: v3
+  ships as the separate `xunit.v3` package, which is not on the allowlist, so `ForbiddenPackagesTests`
+  would fail the build — it needs `DEPENDENCY_POLICY.md`'s change process, not a version edit.
+  Deliberately *not* taken alongside them (`fd7763e`): **PostgreSQL stays on 17** — Neon reports 17.10
+  and the sidecar is `postgres:17-alpine`, and parity with the database actually in use beats a newer
+  engine — and **Redis stays on 7**, because Redis 8 is AGPL, which this repository's own policy bans.
+  Valkey is the BSD-licensed fork if that need ever lands.
 
 - **Five minor findings were deliberately carried out of M4.1's reviews**, each judged not worth the
   change it would cost, and recorded here so the judgement is visible rather than forgotten:
