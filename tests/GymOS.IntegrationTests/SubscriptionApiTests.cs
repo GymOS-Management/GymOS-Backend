@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using GymOS.Platform.Domain.Subscriptions;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -179,6 +181,28 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         Assert.Contains("UNIQUE", definition, StringComparison.Ordinal);
         Assert.Contains("gym_id", definition, StringComparison.Ordinal);
         Assert.Contains("status = ANY", definition, StringComparison.Ordinal);
+
+        // The migration hardcodes "status IN (1, 2, 3)" (Postgres normalises it to
+        // "= ANY (ARRAY[1, 2, 3])" in pg_indexes), rather than deriving the list from
+        // SubscriptionStatusTransitions.Live. Migrations are never hand-edited once shipped, so
+        // this is the guard: if Live ever grows, this fails instead of the index silently ceasing
+        // to guarantee one-live-subscription-per-gym — the same invariant FeatureQueries'
+        // FirstOrDefault and SubscriptionRepository's SingleOrDefault disagree about today.
+        Match arrayLiteral = Regex.Match(definition, @"ARRAY\[([^\]]+)\]");
+        Assert.True(arrayLiteral.Success, $"Expected an ARRAY[...] literal in: {definition}");
+
+        int[] filterValues = arrayLiteral.Groups[1].Value
+            .Split(',', StringSplitOptions.TrimEntries)
+            .Select(int.Parse)
+            .Order()
+            .ToArray();
+
+        int[] expected = SubscriptionStatusTransitions.Live
+            .Select(status => (int)status)
+            .Order()
+            .ToArray();
+
+        Assert.Equal(expected, filterValues);
     }
 
     [Fact]

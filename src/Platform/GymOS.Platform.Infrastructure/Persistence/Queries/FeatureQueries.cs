@@ -38,7 +38,7 @@ internal sealed class FeatureQueries : IFeatureQueries
 
     public async Task<FeatureListItem?> GetAsync(Guid featureId, CancellationToken cancellationToken)
     {
-        var row = await Project()
+        var row = await ProjectWithoutCounts()
             .SingleOrDefaultAsync(candidate => candidate.Id == featureId, cancellationToken);
 
         return row is null ? null : Map(row);
@@ -125,7 +125,10 @@ internal sealed class FeatureQueries : IFeatureQueries
     }
 
     /// <summary>
-    /// The catalogue projection, including the adoption count.
+    /// The catalogue projection, including the adoption count. <b>Used only by
+    /// <see cref="ListCatalogueAsync"/></b> — that endpoint is the reason these counts are computed
+    /// at all, and <see cref="GetAsync"/> uses <see cref="ProjectWithoutCounts"/> instead so that
+    /// editing one feature does not pay for a scan every gym contributes to.
     ///
     /// <para><b>Adoption counts gyms that resolve the feature ON</b>, through the whole three-layer
     /// rule — not plan rows, and not overrides. Counting one layer would understate reality and
@@ -178,6 +181,32 @@ internal sealed class FeatureQueries : IFeatureQueries
                         ?? feature.DefaultEnabled) == true),
             });
 
+    /// <summary>
+    /// The catalogue projection for a single row, <b>without</b> either count. Backs
+    /// <see cref="GetAsync"/>, which is <c>PUT /features/{id}</c>'s read-back: one row, returned so
+    /// the caller has its fresh <c>RowVersion</c> and edited fields for the next write. Nothing reads
+    /// counts off a write response — <see cref="ListCatalogueAsync"/> is where they are authoritative
+    /// and where a caller who wants them goes — so this projection skips both correlated subqueries
+    /// in <see cref="Project"/> rather than running the full O(features × gyms) adoption scan to
+    /// answer a request for one feature.
+    /// </summary>
+    private IQueryable<FeatureRow> ProjectWithoutCounts() =>
+        _dbContext.Set<Feature>()
+            .AsNoTracking()
+            .Select(feature => new FeatureRow
+            {
+                Id = feature.Id,
+                Key = feature.Key,
+                Name = feature.Name,
+                Description = feature.Description,
+                Category = feature.Category,
+                DefaultEnabled = feature.DefaultEnabled,
+                IsPremium = feature.IsPremium,
+                RowVersion = EF.Property<uint>(feature, "xmin"),
+                OverrideCount = 0,
+                AdoptionCount = 0,
+            });
+
     private static FeatureListItem Map(FeatureRow row) => new(
         row.Id,
         row.Key,
@@ -194,8 +223,12 @@ internal sealed class FeatureQueries : IFeatureQueries
         DeclaredKeys.Contains(row.Key));
 
     /// <summary>
-    /// Named rather than anonymous so <see cref="ListCatalogueAsync"/> and <see cref="GetAsync"/>
-    /// share one projection — two copies of the adoption expression is two chances to disagree.
+    /// Named rather than anonymous so <see cref="Project"/> and <see cref="ProjectWithoutCounts"/>
+    /// — and, through them, <see cref="ListCatalogueAsync"/> and <see cref="GetAsync"/> — map to the
+    /// same shape and <see cref="Map"/> stays the one place a <see cref="FeatureRow"/> becomes a
+    /// <see cref="FeatureListItem"/>. <see cref="Project"/>'s two counts are real counts;
+    /// <see cref="ProjectWithoutCounts"/> fills the same two properties with 0 rather than running
+    /// either subquery — see that method for why a write response is not the place they are paid for.
     /// </summary>
     private sealed class FeatureRow
     {
