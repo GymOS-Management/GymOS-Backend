@@ -184,11 +184,14 @@ internal sealed class FeatureQueries : IFeatureQueries
     /// <summary>
     /// The catalogue projection for a single row, <b>without</b> either count. Backs
     /// <see cref="GetAsync"/>, which is <c>PUT /features/{id}</c>'s read-back: one row, returned so
-    /// the caller has its fresh <c>RowVersion</c> and edited fields for the next write. Nothing reads
-    /// counts off a write response — <see cref="ListCatalogueAsync"/> is where they are authoritative
-    /// and where a caller who wants them goes — so this projection skips both correlated subqueries
-    /// in <see cref="Project"/> rather than running the full O(features × gyms) adoption scan to
-    /// answer a request for one feature.
+    /// the caller has its fresh <c>RowVersion</c> and edited fields for the next write.
+    ///
+    /// <para>The two counts come back <b>null</b>, not zero. A feature with real adopters does not
+    /// stop having them the moment its description is edited, so <c>0</c> here would be a lie a
+    /// caller has no way to detect — worse than the scan it replaces. <c>null</c> is honest: "not
+    /// computed for this response." <see cref="ListCatalogueAsync"/> is the only place the counts
+    /// are authoritative, and it still pays for and returns the real numbers, unaffected by this
+    /// method skipping both correlated subqueries in <see cref="Project"/>.</para>
     /// </summary>
     private IQueryable<FeatureRow> ProjectWithoutCounts() =>
         _dbContext.Set<Feature>()
@@ -203,8 +206,8 @@ internal sealed class FeatureQueries : IFeatureQueries
                 DefaultEnabled = feature.DefaultEnabled,
                 IsPremium = feature.IsPremium,
                 RowVersion = EF.Property<uint>(feature, "xmin"),
-                OverrideCount = 0,
-                AdoptionCount = 0,
+                OverrideCount = null,
+                AdoptionCount = null,
             });
 
     private static FeatureListItem Map(FeatureRow row) => new(
@@ -227,8 +230,8 @@ internal sealed class FeatureQueries : IFeatureQueries
     /// — and, through them, <see cref="ListCatalogueAsync"/> and <see cref="GetAsync"/> — map to the
     /// same shape and <see cref="Map"/> stays the one place a <see cref="FeatureRow"/> becomes a
     /// <see cref="FeatureListItem"/>. <see cref="Project"/>'s two counts are real counts;
-    /// <see cref="ProjectWithoutCounts"/> fills the same two properties with 0 rather than running
-    /// either subquery — see that method for why a write response is not the place they are paid for.
+    /// <see cref="ProjectWithoutCounts"/> leaves the same two properties null rather than running
+    /// either subquery — see that method for why null, not zero, is what a write response reports.
     /// </summary>
     private sealed class FeatureRow
     {
@@ -246,9 +249,9 @@ internal sealed class FeatureQueries : IFeatureQueries
 
         public bool IsPremium { get; init; }
 
-        public int AdoptionCount { get; init; }
+        public int? AdoptionCount { get; init; }
 
-        public int OverrideCount { get; init; }
+        public int? OverrideCount { get; init; }
 
         public uint RowVersion { get; init; }
     }

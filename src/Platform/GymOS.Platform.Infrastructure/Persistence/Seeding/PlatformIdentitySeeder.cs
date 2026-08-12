@@ -14,14 +14,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Seeding;
 /// </summary>
 public sealed partial class PlatformIdentitySeeder
 {
-    /// <summary>
-    /// Same lock name as <see cref="FeatureCatalogSeeder"/> — deliberately: both are startup-scope
-    /// syncs against the same fresh database (Program.cs runs this one first), and a single lock
-    /// spanning both is what stops two instances racing each other's inserts, whichever seeder
-    /// either one happens to be running.
-    /// </summary>
-    private const string CatalogSeedLock = "platform.catalog-seed";
-
     private readonly AppDbContext _dbContext;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAdvisoryLock _advisoryLock;
@@ -68,7 +60,7 @@ public sealed partial class PlatformIdentitySeeder
         // SeedAsync and killing the host via Program.cs's catch-all.
         await using IUnitOfWorkTransaction transaction =
             await _unitOfWork.BeginTransactionAsync(cancellationToken);
-        await _advisoryLock.AcquireAsync(CatalogSeedLock, cancellationToken);
+        await _advisoryLock.AcquireAsync(SeedingLocks.CatalogSeed, cancellationToken);
 
         Dictionary<string, Permission> permissionsByKey = await SyncPermissionsAsync(cancellationToken);
         await SyncSystemRolesAsync(permissionsByKey, cancellationToken);

@@ -258,10 +258,11 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
     public async Task Editing_a_feature_does_not_pay_for_adoption_counts_on_the_read_back()
     {
         // PUT /features/{id} shares FeatureListItem's shape with the list endpoint, but not its
-        // cost: the read-back skips the O(features x gyms) adoption scan and reports 0 for both
-        // counts. Nothing reads counts off a write response — GET /features is where they are
-        // authoritative — and this proves the list endpoint still pays for and returns the real
-        // numbers, unaffected by the edit that just happened.
+        // cost: the read-back skips the O(features x gyms) adoption scan and reports null for both
+        // counts — null, not zero, because a feature with real adopters does not lose them the
+        // moment its description is edited, and 0 would say otherwise with no way to tell it apart
+        // from a genuine zero. GET /features is where the counts are authoritative, and this proves
+        // it still pays for and returns the real numbers, unaffected by the edit that just happened.
         Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "write-response-gym");
         await SetGymFeatureAsync(gym, PlatformFeatures.Crm, enabled: true, "Goodwill trial.");
 
@@ -276,8 +277,8 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
 
         JsonElement body = await updated.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(0, body.GetProperty("adoptionCount").GetInt32());
-        Assert.Equal(0, body.GetProperty("overrideCount").GetInt32());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("adoptionCount").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("overrideCount").ValueKind);
 
         // The list endpoint is unaffected: it still pays for, and returns, the real counts.
         JsonElement afterEdit = FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm);

@@ -9,7 +9,15 @@ namespace GymOS.Platform.Application.Features.Abstractions;
 /// because of an override, because of its plan, or because of the platform default, and an adoption
 /// figure that only counted one of those would understate reality and mislead the decision it exists
 /// to inform ("can we retire this?").
+///
+/// <para><b>Null on <c>PUT /features/{id}</c>'s read-back.</b> That endpoint returns this same type
+/// for one edited row, and computing the count costs a scan over every gym for every feature —
+/// paid for by <c>GET /features</c>, whose whole purpose is that number, and not by a caller editing
+/// a feature's copy. Null means "not computed here", not "zero": a feature with real adopters does
+/// not lose them because its description changed, and reporting <c>0</c> would say otherwise with no
+/// way for the caller to tell the difference from a genuine zero.</para>
 /// </param>
+/// <param name="OverrideCount">Same population and the same null-on-write-response rule as <see cref="AdoptionCount"/>.</param>
 /// <param name="IsDeclared">
 /// Whether a module still declares this key in <c>PlatformFeatures.All</c>. False for a row a rename
 /// left behind: the seeder never deletes an orphan (dropping it would cascade-delete plan contents and
@@ -24,8 +32,8 @@ public sealed record FeatureListItem(
     string Category,
     bool DefaultEnabled,
     bool IsPremium,
-    int AdoptionCount,
-    int OverrideCount,
+    int? AdoptionCount,
+    int? OverrideCount,
     string RowVersion,
     bool IsDeclared);
 

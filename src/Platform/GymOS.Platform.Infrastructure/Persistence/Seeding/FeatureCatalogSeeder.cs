@@ -24,14 +24,6 @@ namespace GymOS.Platform.Infrastructure.Persistence.Seeding;
 /// </summary>
 public sealed partial class FeatureCatalogSeeder
 {
-    /// <summary>
-    /// Same lock name as <see cref="PlatformIdentitySeeder"/> — deliberately: both run from the
-    /// same startup scope against the same fresh database, so one lock covering the whole
-    /// startup-sync window is what stops two instances from both reading an empty catalogue and
-    /// both inserting. See that type for the rest of the reasoning.
-    /// </summary>
-    private const string CatalogSeedLock = "platform.catalog-seed";
-
     private readonly AppDbContext _dbContext;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAdvisoryLock _advisoryLock;
@@ -86,7 +78,7 @@ public sealed partial class FeatureCatalogSeeder
         // catch-all.
         await using IUnitOfWorkTransaction transaction =
             await _unitOfWork.BeginTransactionAsync(cancellationToken);
-        await _advisoryLock.AcquireAsync(CatalogSeedLock, cancellationToken);
+        await _advisoryLock.AcquireAsync(SeedingLocks.CatalogSeed, cancellationToken);
 
         HashSet<string> existingKeys = (await _dbContext.Set<Feature>()
                 .Select(feature => feature.Key)
