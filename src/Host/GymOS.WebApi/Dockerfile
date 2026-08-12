@@ -56,10 +56,30 @@ COPY src/Platform/GymOS.Platform.Infrastructure/GymOS.Platform.Infrastructure.cs
      src/Platform/GymOS.Platform.Infrastructure/
 COPY src/Host/GymOS.WebApi/GymOS.WebApi.csproj src/Host/GymOS.WebApi/
 
-# --mount=type=cache keeps the NuGet cache across builds without baking it into a layer.
-# Requires BuildKit, which is the default in Docker Desktop and Compose v2.
-RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
-    dotnet restore src/Host/GymOS.WebApi/GymOS.WebApi.csproj
+# The restored packages land in this layer, deliberately, and NOT in a --mount=type=cache.
+#
+# A cache mount was the obvious choice here and it was wrong, in a way that only shows up in CI.
+# A cache mount is not part of any image layer: it lives in the builder. The publish stage below
+# runs `--no-restore`, so it needs `obj/project.assets.json` — which IS in this layer — *and* the
+# packages that file points at, which with a mount are NOT. Both only exist together while a
+# single build runs the restore step and the publish step back to back.
+#
+# On a GitHub runner the mount starts empty every time. When BuildKit serves this layer from the
+# registry/GHA cache instead of executing it — which is exactly what happens on any commit that
+# does not touch these .csproj/props files — nothing is ever downloaded, and publish fails with
+# `NETSDK1064: Package <first one alphabetically> was not found`. The docker job passed on the
+# commit that changed Directory.Packages.props and failed on every docs-only commit after it,
+# which is the signature of this and not of any package being genuinely missing.
+#
+# Baking them into the layer costs image size in a *build* stage that never ships — the final
+# stage copies only /app/publish — and keeps the layer-caching property this file is arranged
+# for: a one-line .cs edit still does not invalidate this layer, so restore still does not re-run.
+# What is lost is the cross-build download cache, which the layer cache already covers.
+#
+# Do not reintroduce a cache mount on this path without also removing --no-restore below. Mounting
+# over /root/.nuget/packages in the publish stage would additionally *hide* the packages this
+# layer now contains.
+RUN dotnet restore src/Host/GymOS.WebApi/GymOS.WebApi.csproj
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════
 # Stage 2 — publish
@@ -77,8 +97,11 @@ COPY src/ src/
 #
 # UseAppHost=false drops the native launcher: the entrypoint invokes `dotnet GymOS.WebApi.dll`,
 # so the extra executable is weight with no purpose.
-RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
-    dotnet publish src/Host/GymOS.WebApi/GymOS.WebApi.csproj \
+#
+# No cache mount here either, and that is load-bearing rather than tidy: mounting one over
+# /root/.nuget/packages would shadow the packages the restore layer now carries, and --no-restore
+# would fail for the same reason it was failing before. See the note on the restore step.
+RUN dotnet publish src/Host/GymOS.WebApi/GymOS.WebApi.csproj \
         --configuration Release \
         --no-restore \
         --output /app/publish \
