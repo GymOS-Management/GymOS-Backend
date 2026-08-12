@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -14,6 +15,8 @@ namespace GymOS.Platform.Infrastructure.Persistence.Seeding;
 public sealed partial class PlatformIdentitySeeder
 {
     private readonly AppDbContext _dbContext;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IAdvisoryLock _advisoryLock;
     private readonly ILogger<PlatformIdentitySeeder> _logger;
 
     [LoggerMessage(Level = LogLevel.Warning, Message =
@@ -26,24 +29,44 @@ public sealed partial class PlatformIdentitySeeder
         "Remove it with an explicit migration once grants are reviewed.")]
     private static partial void LogOrphanedPermission(ILogger logger, string permissionKey);
 
-    public PlatformIdentitySeeder(AppDbContext dbContext, ILogger<PlatformIdentitySeeder> logger)
+    public PlatformIdentitySeeder(
+        AppDbContext dbContext,
+        IUnitOfWork unitOfWork,
+        IAdvisoryLock advisoryLock,
+        ILogger<PlatformIdentitySeeder> logger)
     {
         _dbContext = dbContext;
+        _unitOfWork = unitOfWork;
+        _advisoryLock = advisoryLock;
         _logger = logger;
     }
 
     public async Task SeedAsync(CancellationToken cancellationToken)
     {
+        // Checked before the transaction opens, same as FeatureCatalogSeeder: a database with
+        // pending migrations gets no lock and no transaction.
         if ((await _dbContext.Database.GetPendingMigrationsAsync(cancellationToken)).Any())
         {
             LogSyncSkippedPendingMigrations(_logger);
             return;
         }
 
+        // Two instances booting against a fresh database both see no permissions declared and both
+        // try to insert the whole catalogue — one of them loses to the permission key's unique
+        // index. The lock is held for the life of this transaction, so the instance that waits
+        // re-reads the existing permissions and roles below only after the other has committed.
+        // Saving through IUnitOfWork rather than the context directly means a race lost anyway
+        // surfaces as UniquenessConflictException rather than a raw DbUpdateException escaping
+        // SeedAsync and killing the host via Program.cs's catch-all.
+        await using IUnitOfWorkTransaction transaction =
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
+        await _advisoryLock.AcquireAsync(SeedingLocks.CatalogSeed, cancellationToken);
+
         Dictionary<string, Permission> permissionsByKey = await SyncPermissionsAsync(cancellationToken);
         await SyncSystemRolesAsync(permissionsByKey, cancellationToken);
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task<Dictionary<string, Permission>> SyncPermissionsAsync(CancellationToken cancellationToken)

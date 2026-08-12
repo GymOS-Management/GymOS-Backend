@@ -46,7 +46,8 @@ public sealed class IdentitySeedingTests : IAsyncLifetime
     private async Task SeedAsync()
     {
         await using AppDbContext context = CreateContext();
-        var seeder = new PlatformIdentitySeeder(context, NullLogger<PlatformIdentitySeeder>.Instance);
+        var seeder = new PlatformIdentitySeeder(
+            context, new UnitOfWork(context), new PostgresAdvisoryLock(context), NullLogger<PlatformIdentitySeeder>.Instance);
         await seeder.SeedAsync(CancellationToken.None);
     }
 
@@ -96,6 +97,34 @@ public sealed class IdentitySeedingTests : IAsyncLifetime
 
         Assert.Contains("gymos.platform.role.created", eventNames);
         Assert.Contains("gymos.platform.role.permission_granted", eventNames);
+    }
+
+    [Fact]
+    public async Task Two_concurrent_seedings_of_a_fresh_database_do_not_race()
+    {
+        // The identical exposure FeatureCatalogSeedingTests pins for the feature catalogue: two
+        // instances booting against a fresh database both see no permissions declared and both try
+        // to insert the whole set, one of them racing the permission key's unique index. The
+        // advisory lock (same "platform.catalog-seed" name as the feature seeder — both are
+        // startup-scope syncs against the same fresh database) makes the second wait, then re-read.
+        await using AppDbContext first = CreateContext();
+        await using AppDbContext second = CreateContext();
+
+        var seederOne = new PlatformIdentitySeeder(
+            first, new UnitOfWork(first), new PostgresAdvisoryLock(first), NullLogger<PlatformIdentitySeeder>.Instance);
+        var seederTwo = new PlatformIdentitySeeder(
+            second, new UnitOfWork(second), new PostgresAdvisoryLock(second), NullLogger<PlatformIdentitySeeder>.Instance);
+
+        await Task.WhenAll(
+            seederOne.SeedAsync(CancellationToken.None),
+            seederTwo.SeedAsync(CancellationToken.None));
+
+        await using AppDbContext verify = CreateContext();
+        var permissions = await verify.Set<Permission>().ToListAsync();
+        Assert.Equal(PlatformPermissions.All.Count, permissions.Count);
+        Assert.Equal(
+            permissions.Count,
+            permissions.Select(permission => permission.Key).Distinct(StringComparer.Ordinal).Count());
     }
 
     [Fact]

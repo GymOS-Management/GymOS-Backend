@@ -2,8 +2,11 @@
 
 **Module:** `GymOS.Platform` · schema `platform` · **platform-scoped** (a feature is a decision the
 platform makes *about* a gym, not data belonging to one)
-**Status:** **implemented — M4.** This document records the rules as built.
-Design: [`docs/superpowers/specs/2026-08-11-feature-flags-design.md`](../superpowers/specs/2026-08-11-feature-flags-design.md).
+**Status:** **implemented — M4, then revised by M4.1's review-fixes increment.** This document records
+the rules as built, including M4.1's corrections to what M4 originally claimed.
+Design: [`docs/superpowers/specs/2026-08-11-feature-flags-design.md`](../superpowers/specs/2026-08-11-feature-flags-design.md)
+(M4) and [`docs/superpowers/specs/2026-08-12-m4-review-fixes-design.md`](../superpowers/specs/2026-08-12-m4-review-fixes-design.md)
+(M4.1).
 
 ## Purpose
 
@@ -26,10 +29,20 @@ mistake, not a small one.
 | 2 | Plan feature | `plan_features` row for the gym's **live** subscription's plan | No override, and the plan has an opinion on this feature |
 | 3 | Platform default | `features.default_enabled` | Nothing above said anything |
 
-`FeatureResolution.Resolve` is the **single definition** of that sentence: a pure, total function of
-three nullable inputs, so the rule is exhaustively testable without a database and cannot drift
-between the endpoints that ask it. The read query and the write path both call it; resolution is
-deliberately **not** expressed in SQL, which would be a second copy.
+`FeatureResolution.Resolve` is the **single authoritative definition** of that sentence: a pure,
+total function of three nullable inputs, so the rule is exhaustively testable without a database and
+cannot drift between the endpoints that ask it. The write path and the per-gym read
+(`ResolveForGymAsync`) both call it directly.
+
+**One deliberate exception: `GET /features`' `adoptionCount` restates the rule in SQL.** Counting how
+many gyms resolve a feature *on* cannot be done by calling `Resolve` in C# without loading every gym
+into memory — the exact cost `FeatureQueries.Project()`'s own comment records rejecting an earlier,
+cleverer version over ("correct-looking and unverifiable"). So the `override ?? plan ?? default`
+chain is written a second time, as a translated LINQ expression, next to a comment naming it as the
+restatement it is. `FeatureAdoptionParityTests` is what keeps that copy honest: it builds a matrix of
+gym states and asserts the SQL count agrees with calling `FeatureResolution.Resolve` per gym, in C#,
+over the same states — because the deferred override-expiry work (below) adds a fourth input to
+`Resolve`, and without a pinning test the SQL copy could silently omit it.
 
 **A gym with no live subscription resolves at layer 3.** A gym is provisioned before it is sold
 anything — M2 supports exactly that order — so a provisioning gym stays configurable and demoable,
@@ -88,18 +101,45 @@ it was considered and rejected: it would remove the operator's ability to grant 
 exception, which is the main reason overrides exist. Any stronger meaning is a pricing rule nobody
 has specified.
 
-## An override exists only while it differs
+## An override is withdrawn once it stops differing — immediately for its own gym, within a day otherwise
 
-The invariant §2.4 states, enforced by construction rather than documented and hoped for:
+The invariant §2.4 states is enforced by construction, but **it is not a single instant any more, and
+this section says so rather than continuing to claim one.**
 
-> **`PUT /gyms/{id}/features` stores an override only when the desired value differs from what the
-> gym would get anyway.** Asking for exactly what the plan — or the platform default, when the plan
-> is silent — already gives **withdraws** any existing exception instead of restating it.
+> **A redundant override — one whose value equals what the gym would get anyway — is withdrawn
+> immediately when the change is to that gym**, and **within a day when the change is to a plan or a
+> platform default.**
+
+The first half was M4's whole claim, and it is still true at a `PUT /gyms/{id}/features` write:
+asking for exactly what the plan — or the platform default, when the plan is silent — already gives
+**withdraws** any existing exception instead of restating it, in the same request. It is also true
+whenever *this gym's own subscription* changes — assigned a plan, changed plan, or its subscription
+ending — because that write re-evaluates the gym's exceptions in the same transaction
+(`GymFeatureExceptions.Redundant`, the same `FeatureResolution.RequiresOverride` rule the write path
+already used, applied to existing rows rather than only the one being written). This covers
+`RenewalJob`'s expire-and-cancel steps too, not only an operator-driven API call.
+
+**The M4 review found the second half missing.** Three other triggers make an override redundant
+without touching the gym at all: a plan's feature opinion changing (`PUT /plans/{id}/features`,
+every gym on that plan) and a platform default flipping (`PUT /features/{id}`, every gym with an
+override on that feature). Doing those synchronously was considered and rejected: editing one plan
+feature would rewrite overrides for every gym on the plan inside the request, turning a quick billing
+edit into an unbounded write, and coupling a billing action to feature rows the design deliberately
+kept apart. Instead, **`FeatureOverrideSweepJob` runs nightly at 03:50 UTC** (after `RetentionJob`'s
+03:10 and `PlatformStatsJob`'s 03:30, M3.4's job runner, under its `IJobLock`) and re-evaluates every
+gym holding at least one override — a small population by construction. Withdrawal raises the
+existing `GymFeatureOverrideCleared` event, so the audit trail records it exactly as an
+operator-driven withdrawal. The job is built as "re-evaluate this gym's exceptions", not "delete
+redundant rows", because override **expiry** (still deferred, below) is one more predicate in the
+same pass — building the hook any other way means building it twice.
 
 Why it matters: a redundant override is a row nobody remembers creating, and it **freezes the gym at
 its old plan's answer**. A gym upgraded a year later would keep the exception and silently not get
-what it now pays for. Clearing is therefore the correct response to "set this to what it already is",
-not a no-op.
+what it now pays for; a gym downgraded a year later would keep a capability it no longer buys. Between
+a gym-scoped change and the next sweep, that is exactly the state a support conversation might hit —
+`source: Override` reported truthfully, but for at most a day before the layers beneath quietly catch
+up. Clearing is the correct response to "set this to what it already is", not a no-op, and the
+guarantee is worded to say precisely when that response runs.
 
 Three consequences worth stating:
 
@@ -162,6 +202,17 @@ ReadOnly read.
 `GET /api/v1/gyms/{id}` carries the same resolved block as `features`, which is what §3.3 always
 described. `GymQueries` delegates to `IFeatureQueries` rather than resolving a second time.
 
+**The block is omitted, not gated, when the caller lacks `features.read` (M4.1 task 4).** Gym detail
+sits behind `gyms.read` alone; before this increment that meant a `gyms.read`-without-`features.read`
+role — buildable today through `roles.manage`, though no stock role does it — bypassed the split this
+document calls "the point", reading the full resolution including the free-text `overrideReason`
+through a permission that was never meant to grant it. The route still needs only `gyms.read`; the
+`features` field becomes optional in the response and is simply absent when the caller cannot read
+features, on all six write routes that return a gym detail as well as the direct `GET`. Requiring
+both permissions on the route was considered and rejected: it would take a usable gym page away from
+a `gyms.read`-only role over one field, where omitting the field costs nothing and serves least
+privilege instead.
+
 **`adoptionCount` counts gyms that resolve the feature *on* through all three layers**, not plan rows.
 A feature can be live because of an override, because of a plan, or because of the default; a figure
 that counted only one of those would understate reality and mislead the decision it exists to inform
@@ -179,6 +230,62 @@ omission. There is no single version to match: each override is its own aggregat
 (gym, feature), and the request merges per key, so two operators editing *different* features do not
 conflict at all. Two editing the *same* one is a disagreement about policy, not a lost update — the
 later decision wins, carries its own required reason, and the audit trail keeps the earlier one.
+
+### Two concurrency guards behind `PUT /gyms/{id}/features`, not visible in the contract
+
+**A repeated identical grant retries once instead of 409ing.** Two callers granting the same
+(gym, feature) exception at the same moment both see "no existing override" and both insert; the
+unique index lets exactly one through. The loser is not told to retry with a different value — there
+is no other value — it is retried once, internally, which finds the winner's row and restates it.
+Only a second, unrelated conflict past that point surfaces as `persistence.uniqueness_conflict` (409).
+
+**The decision is made against the gym's live plan, locked for the length of the write.** The
+handler decides whether a request needs an override by reading what the gym's plan currently says;
+that read takes the plan row `FOR UPDATE` and holds it in one transaction through the save *and* the
+read-back that builds the response — not just through the save. A concurrent
+`PUT /plans/{id}/features` on the same plan blocks until that transaction ends, so it can never change
+the plan's opinion in the gap between this write's decision and the body it returns: the response is
+always exactly the resolution this transaction is committing, never one already superseded by the time
+it is read.
+
+### The same lock is missing on the subscription side — a known, narrow gap
+
+**`PUT /gyms/{id}/subscription` (`AssignSubscriptionCommandHandler`) reads the plan without the guard
+above.** It opens no explicit transaction and calls `IPlanRepository.FindByIdAsync`, not
+`FindByIdForUpdateAsync`, before deciding — via the synchronous `WithdrawRedundantAsync` call this
+increment added — which of the gym's stored exceptions the new plan makes redundant.
+
+**The interleaving that loses a capability.** T1 assigns a gym to `PRO`, reading `crm = true`. Before
+T1 commits, T2 commits `PUT /plans/PRO/features` setting `crm = false`. T1's maintainer, judging
+against the stale `crm = true` it already read, decides the gym's `crm = true` override is now
+redundant (the assignment appears to grant the same thing) and withdraws it. Final state: the gym is
+on `PRO`, which now says `crm = false`, and the exception that was protecting `crm` is gone. Withdrawal
+is a hard delete (`RemoveOverride`), not a soft one, so the next nightly sweep does not put it back —
+there is nothing left for the sweep to find redundant or not.
+
+**The loss is a missing capability, not corrupted data.** Nothing is stored incorrectly: the gym
+genuinely has no override and its plan genuinely says `crm = false`, which is a state
+`GET /gyms/{id}/features` reports truthfully. What is lost is the *decision* — the override an operator
+deliberately granted — and the only trace of it is the outbox: the withdrawal still raises
+`GymFeatureOverrideCleared` exactly as an operator-driven clear does, so an operator who goes looking
+finds the moment it disappeared and can re-grant it. It does not come back on its own.
+
+**How narrow this is.** Both writes must race — `PUT /plans/{id}/features` on the exact plan a gym is
+mid-assignment to or mid-change onto, inside the few milliseconds between this handler's plan read and
+its commit — and the outcome must specifically be the withdrawal branch of `GymFeatureExceptions.Redundant`
+finding a now-stale match. Every other interleaving converges correctly: if the plan edit lands first or
+after this transaction's commit, the maintainer sees one consistent state or the other, never a mix; if
+the assignment does not touch a feature the plan edit changed, nothing depends on the stale read; and
+the `PUT /gyms/{id}/features` write path this section describes above is already immune, because it
+takes the same lock the assignment path is missing.
+
+**Not fixed here, deliberately.** The fix is the same shape already proven on
+`SetGymFeaturesCommandHandler`: an explicit transaction plus `FindByIdForUpdateAsync` around the plan
+read in `AssignSubscriptionCommandHandler`, so a concurrent `PUT /plans/{id}/features` on the same plan
+serialises behind it exactly as it already does for the gym-features write. That touches the busiest
+handler in the subscriptions slice — every assignment, upgrade, downgrade, and cycle change — for a
+race two writes this specific have to hit, so it is recorded rather than folded into this wave. Tracked
+in `docs/STATUS.md`'s known open items.
 
 ## Value rules and stable codes
 
@@ -218,12 +325,39 @@ meaningless without its gym; FK feature → restrict; FK `set_by` → users, `Se
 the `PlanPriceId` precedent). All three join `PlatformAuditedEntities`: **who gave a gym a paid
 feature for free** is exactly what a later billing conversation turns on.
 
-## Deferred, deliberately
+## `Feature.Rename` was designed; `Feature.Describe` is what got built
+
+The M4 design named the catalogue-edit method `Feature.Rename`. The aggregate that shipped calls it
+`Describe(name, description, category)` — it edits three fields together, not one, and "rename"
+undersold what §3.5 actually lets an operator change. Recorded here as a deliberate naming deviation
+from the approved design rather than left for a reader to notice the two disagree.
+
+## M4.1 — what this increment fixed, and what remains deferred
+
+M4's headline invariant ("an override is stored only while it differs") was true only at the instant
+of a `PUT /gyms/{id}/features` write; nothing maintained it afterwards. This increment built the
+maintenance: a gym's own subscription changing withdraws its now-redundant exceptions **synchronously**
+(the section above), and `FeatureOverrideSweepJob` withdraws the ones a plan-feature change or a
+platform-default flip makes redundant **within a day**. It also closed the plan-edit race on
+`SetGymFeaturesCommandHandler` (the plan row is now read `FOR UPDATE` in the same transaction), fixed
+two seeders (`FeatureCatalogSeeder`, `PlatformIdentitySeeder`) that could crash the host on a
+concurrent first boot, gave `PUT /gyms/{id}/features` a single retry so a repeated identical grant
+converges instead of 409ing, made `PUT /plans/{id}/features` refuse `{}`/null instead of 500ing and
+refuse a repeated key instead of applying it last-one-wins, and added the three contract fields a
+console needs (`isDeclared`, the override's `overrideSetAtUtc`/`overrideSetByEmail`, and the
+`gyms.read`-only-safe optionality of `GET /gyms/{id}`'s features block). It also corrected the
+documentation above: resolution's one deliberate SQL restatement, now pinned by
+`FeatureAdoptionParityTests`, and the invariant's true two-schedule wording.
+
+**Left deferred, on purpose, and not part of this increment:**
 
 | Topic | Where it went |
 |---|---|
 | **Enforcement** — anything actually consuming a resolved flag | The first tenant-facing module that has a capability to withhold (POS, inventory, CRM) |
 | **An expiring override** — see below | Its own increment; needs a product decision first |
+| **`PlanQueries.GetAsync`'s four correlated subqueries per plan-feature row** | Bounded at 12 × 4 today; rewriting it earns nothing until the catalogue grows |
+| **`FeatureRepository.ListAllAsync` being tracked** | Twelve rows into the change tracker for a key lookup — harmless now, recorded so it is not forgotten |
+| **`LogSynced` counting orphans inside "left untouched"** | True but conflated; cosmetic |
 | A pricing rule tied to `is_premium` | Needs a specified commercial rule; today it is informational |
 | Per-feature usage analytics | M5 stats |
 | The console UI for all of this | A GymOS-Platform increment |
@@ -231,10 +365,12 @@ feature for free** is exactly what a later billing conversation turns on.
 
 ### An override never expires — and a trial is the reason overrides exist
 
-Raised by the M4 review, deliberately **not** fixed inside it. An override records who granted it,
-when, and why, but nothing time-bounded. The self-cleaning rule only withdraws an exception when
-somebody re-asserts the plan's value, so **a goodwill trial granted this way is permanent until a
-human remembers it**. That is the headline use case for the feature, and it currently has no ending.
+Raised by the M4 review, deliberately **not** fixed inside it, and still open after M4.1: the sweep
+this increment built withdraws an exception once it stops differing from the plan or default, but
+nothing withdraws one that simply runs past a time limit, because no override carries one. An
+override records who granted it, when, and why, but nothing time-bounded, so **a goodwill trial
+granted this way is permanent until a human remembers it**. That is the headline use case for the
+feature, and it currently has no ending.
 
 There is no live consequence while nothing consumes a resolved flag — but the day enforcement lands,
 this is revenue quietly leaking through the mechanism built to hand out favours.
@@ -242,5 +378,7 @@ this is revenue quietly leaking through the mechanism built to hand out favours.
 Fixing it properly is a product decision before it is a schema one: what should happen at expiry —
 does the exception simply lapse back to the plan, or does someone get told first? An expiring
 override that silently switches a customer's POS off is a worse failure than one that never expires.
-The mechanism, once that is settled, is small: an `ExpiresAtUtc` on the override plus a sweep in the
-job runner M3.4 already built, on the pattern `RenewalJob` established.
+The mechanism, once that is settled, is small: an `ExpiresAtUtc` on the override plus one more
+predicate in `FeatureOverrideSweepJob`'s existing nightly pass — the job was deliberately built as
+"re-evaluate this gym's exceptions" rather than "delete redundant rows" for exactly this reason, so
+expiry is an addition to a pass that already exists, not a second mechanism.

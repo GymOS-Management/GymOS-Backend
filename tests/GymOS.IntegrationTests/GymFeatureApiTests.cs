@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GymOS.Platform.Domain.Features;
+using GymOS.Platform.Domain.Identity;
+using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -309,50 +311,184 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
         Assert.Equal(0, await CountOverridesAsync(gym));
     }
 
+    [Fact]
+    public async Task Two_identical_concurrent_grants_both_succeed()
+    {
+        // The documented promise is "the later decision wins, and the audit trail keeps the earlier
+        // one". The loser used to get a 409 telling it to choose a value that is still free — advice
+        // that cannot be followed, for a request that would succeed on retry.
+        Guid gym = await CreateGymAsync("racing-gym");
+
+        Task<HttpResponseMessage>[] both =
+        [
+            SetGymFeatureRawAsync(gym, PlatformFeatures.Crm, true, "First."),
+            SetGymFeatureRawAsync(gym, PlatformFeatures.Crm, true, "Second."),
+        ];
+
+        HttpResponseMessage[] responses = await Task.WhenAll(both);
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        Assert.Equal(1, await CountOverridesAsync(gym));
+
+        foreach (HttpResponseMessage response in responses)
+        {
+            response.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task A_concurrent_plan_edit_cannot_make_the_gym_writes_own_answer_stale()
+    {
+        // A prior version of this test raced both writes toward the SAME value (gym asks for CRM
+        // true, plan moves to true): that can never fail, because an override, once created,
+        // outranks the plan forever, and the "no override needed" path is only reached when the
+        // locked read already agrees with the plan's new value. Every interleaving of "same value"
+        // converges, fixed or not — a test that cannot fail is worse than no test.
+        //
+        // This version uses DIVERGENT values and checks a self-consistency invariant that does not
+        // depend on which of the two writes lands first — so it needs no "and then wait, and read
+        // again later" step, which would itself be indistinguishable from the plan legitimately
+        // changing right after a perfectly correct response.
+        //
+        // SetGymFeaturesCommandHandler's own contract (see the other tests in this file) is: after a
+        // successful write, the resolved value for the touched key equals what was requested — either
+        // because an override now forces it, or because the request already matched the layer
+        // beneath and needed no override. That invariant holds under EITHER valid ordering below:
+        //
+        //   - gym decides first (against the plan's old value): the existing override, which the
+        //     request's value still matches, is correctly withdrawn or kept as appropriate — using
+        //     the value the gym write itself will still be holding the lock against.
+        //   - plan commits first (gym reads the new value): the request no longer matches the plan,
+        //     so the override is (re)needed and kept — same invariant, different reason.
+        //
+        // It can ONLY break if the decision uses a plan value that a concurrent write has already
+        // superseded by the time this transaction's own read-back runs — exactly the bug fixes 3/4
+        // exist to close. That failure is directly visible in the gym write's own response: it would
+        // report a resolved value the caller never asked for, with no override protecting it.
+        Guid plan = (await PlatformApiHelpers.CreatePlanAsync(_client, "RACEPLAN")).Id;
+        Guid gym = await CreateGymAsync("plan-race-gym");
+        using HttpResponseMessage assigned = await PlatformApiHelpers.AssignAsync(_client, gym, plan);
+        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
+
+        // Plan starts at CRM = false; the gym is granted an override to true (it needs one, since it
+        // differs from the plan). The override exists FOR the reason that the gym wants something the
+        // plan does not give it.
+        await SetPlanFeatureAsync(plan, PlatformFeatures.Crm, isEnabled: false);
+        using HttpResponseMessage granted = await SetGymFeatureRawAsync(
+            gym, PlatformFeatures.Crm, true, "Needed while the plan says no.");
+        Assert.Equal(HttpStatusCode.OK, granted.StatusCode);
+        Assert.Equal(1, await CountOverridesAsync(gym));
+
+        // Now race: the gym asks for exactly what the plan CURRENTLY gives (false) — read naively,
+        // that looks redundant and the override would be withdrawn — while the plan concurrently
+        // moves AWAY from false, to true. If the withdrawal decision is made against the old (false)
+        // plan value but the plan is already true by the time this transaction reads back its own
+        // result, the response would show CRM resolved to true (via the now-true plan, override
+        // gone) even though the request explicitly asked for false. That contradiction is the bug;
+        // it needs no comparison against a later, separately-timed read to detect.
+        //
+        // A reason is carried on the request even though the "matches, clear it" branch does not
+        // need one: if the plan wins the race and the gym write sees CRM already true, false once
+        // again differs from the plan and still needs an override — which then does need a reason.
+        // Whichever branch is actually taken, the request must not be rejected for missing one.
+        Task<HttpResponseMessage> gymWrite = SetGymFeatureRawAsync(
+            gym, PlatformFeatures.Crm, false, "Still needed if the plan has already moved.");
+        Task planWrite = SetPlanFeatureAsync(plan, PlatformFeatures.Crm, isEnabled: true);
+
+        await Task.WhenAll(gymWrite, planWrite);
+
+        using HttpResponseMessage gymResponse = await gymWrite;
+        Assert.Equal(HttpStatusCode.OK, gymResponse.StatusCode);
+        JsonElement resolved = Feature(
+            await gymResponse.Content.ReadFromJsonAsync<JsonElement>(), PlatformFeatures.Crm);
+
+        // The one assertion that matters: whichever way the race actually landed, the gym write's own
+        // answer must agree with what it was asked for. A stale decision is the only way this fails.
+        Assert.False(resolved.GetProperty("enabled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task The_gym_detail_omits_the_features_block_without_features_read()
+    {
+        // gyms.read alone must not expose overrideReason — the commercially sensitive free text the
+        // module's own docs call "what a later billing conversation turns on". The sibling route,
+        // GET /gyms/{id}/features, requires features.read at both the endpoint policy and the request
+        // type; this route reached the same data through GymQueries with only gyms.read checked,
+        // bypassing both layers.
+        //
+        // No stock role holds gyms.read without features.read (roles.manage will one day be able to
+        // create one; it cannot yet — RoleEndpoints is read-only). A role is written directly into the
+        // database instead, exactly as an operator using a future roles.manage endpoint would end up
+        // with one: gyms.read only.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "gyms-read-only-gym");
+        const string RoleName = "Gym Viewer (gyms.read only)";
+        const string Email = "gyms-read-only@gymos.test";
+
+        await using (AppDbContext context = _host.CreateDbContext())
+        {
+            Guid permissionId = await context.Set<Permission>()
+                .Where(permission => permission.Key == PlatformPermissions.GymsRead)
+                .Select(permission => permission.Id)
+                .SingleAsync();
+
+            Role role = Role.Create(RoleName, "Integration test: gyms.read without features.read.", RoleScope.Platform);
+            role.GrantPermission(permissionId);
+
+            context.Add(role);
+            await context.SaveChangesAsync();
+        }
+
+        using HttpClient limited = await PlatformApiHelpers.SignedInAsync(_host, _client, RoleName, Email);
+
+        using HttpResponseMessage detail = await limited.GetAsync(
+            new Uri($"/api/v1/gyms/{gym}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+
+        JsonElement body = await detail.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(body.TryGetProperty("features", out JsonElement features) &&
+                     features.ValueKind is not JsonValueKind.Null);
+
+        // The rest of the detail is still there — a gyms.read-only role keeps a usable gym page.
+        Assert.Equal("gyms-read-only-gym", body.GetProperty("slug").GetString());
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
+    // The five feature-specific helpers (Feature, ReadFeaturesAsync, SetGymFeaturesAsync,
+    // CountOverridesAsync, SetPlanFeatureAsync) live in FeatureApiHelpers now — GymFeatureLifecycleTests
+    // needs the same five, and two files needing them is the moment to share, not to copy. These thin
+    // wrappers bind them to this fixture's client/host so every call site above reads unchanged.
 
     private static Uri FeaturesUri(Guid gymId) =>
         new($"/api/v1/gyms/{gymId}/features", UriKind.Relative);
 
     private static JsonElement Feature(JsonElement features, string key) =>
-        features.EnumerateArray().Single(feature => feature.GetProperty("key").GetString() == key);
+        FeatureApiHelpers.Feature(features, key);
 
-    private async Task<JsonElement> ReadFeaturesAsync(Guid gymId)
-    {
-        using HttpResponseMessage response = await _client.GetAsync(FeaturesUri(gymId));
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        return await response.Content.ReadFromJsonAsync<JsonElement>();
-    }
+    private Task<JsonElement> ReadFeaturesAsync(Guid gymId) =>
+        FeatureApiHelpers.ReadFeaturesAsync(_client, gymId);
+
+    private Task<JsonElement> SetGymFeaturesAsync(
+        Guid gymId,
+        params (string Key, bool IsEnabled, string? Reason)[] features) =>
+        FeatureApiHelpers.SetGymFeaturesAsync(_client, gymId, features);
+
+    private Task<int> CountOverridesAsync(Guid gymId) =>
+        FeatureApiHelpers.CountOverridesAsync(_host, gymId);
+
+    private Task<Guid> CreateGymAsync(string slug) => PlatformApiHelpers.CreateGymAsync(_client, slug);
+
+    private Task<HttpResponseMessage> SetGymFeatureRawAsync(
+        Guid gymId, string key, bool isEnabled, string? reason) =>
+        FeatureApiHelpers.SetGymFeatureRawAsync(_client, gymId, key, isEnabled, reason);
+
+    private Task SetPlanFeatureAsync(Guid planId, string featureKey, bool isEnabled) =>
+        FeatureApiHelpers.SetPlanFeatureAsync(_client, planId, featureKey, isEnabled);
 
     private async Task<bool> EnabledAsync(Guid gymId, string key) =>
         Feature(await ReadFeaturesAsync(gymId), key).GetProperty("enabled").GetBoolean();
 
     private async Task<string?> SourceAsync(Guid gymId, string key) =>
         Feature(await ReadFeaturesAsync(gymId), key).GetProperty("source").GetString();
-
-    private async Task<JsonElement> SetGymFeaturesAsync(
-        Guid gymId,
-        params (string Key, bool IsEnabled, string? Reason)[] features)
-    {
-        using HttpResponseMessage response = await _client.PutAsJsonAsync(
-            FeaturesUri(gymId),
-            new
-            {
-                features = features
-                    .Select(feature => new { key = feature.Key, isEnabled = feature.IsEnabled, reason = feature.Reason })
-                    .ToArray(),
-            });
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        return await response.Content.ReadFromJsonAsync<JsonElement>();
-    }
-
-    private async Task<int> CountOverridesAsync(Guid gymId)
-    {
-        await using var context = _host.CreateDbContext();
-
-        return await context.Set<GymFeatureOverride>().CountAsync(over => over.GymId == gymId);
-    }
 
     /// <summary>
     /// The email of whoever set an override, joined through the user table — provenance is only worth
@@ -372,28 +508,4 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
                 """)
             .SingleAsync();
     }
-
-    private async Task SetPlanFeatureAsync(Guid planId, string featureKey, bool isEnabled)
-    {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/features", UriKind.Relative))
-        {
-            Content = JsonContent.Create(new { features = new[] { new { key = featureKey, isEnabled } } }),
-        };
-        request.Headers.TryAddWithoutValidation("If-Match", $"\"{await PlanVersionAsync(planId)}\"");
-
-        using HttpResponseMessage response = await _client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    }
-
-    private async Task<string> PlanVersionAsync(Guid planId)
-    {
-        using HttpResponseMessage plan = await _client.GetAsync(
-            new Uri($"/api/v1/plans/{planId}", UriKind.Relative));
-        Assert.Equal(HttpStatusCode.OK, plan.StatusCode);
-
-        return (await plan.Content.ReadFromJsonAsync<JsonElement>())
-            .GetProperty("rowVersion").GetString()!;
-    }
-
 }

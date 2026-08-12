@@ -31,10 +31,13 @@ public sealed class SubscriptionRenewalTests
 
         public FakeUnitOfWork UnitOfWork { get; } = new();
 
+        public FakeFeatureExceptionMaintainer FeatureExceptions { get; } = new();
+
         public SubscriptionRenewalService Service => new(
             Subscriptions,
             Plans,
             new InvoiceIssuer(Invoices, new FakeInvoiceNumberGenerator(), Clock),
+            FeatureExceptions,
             UnitOfWork);
 
         public SubscriptionPlan GivenPlan(string code = "PRO", int trialDays = 0, decimal amount = 49.99m)

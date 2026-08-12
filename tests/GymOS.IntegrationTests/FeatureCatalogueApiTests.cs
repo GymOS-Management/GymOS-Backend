@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GymOS.Platform.Domain.Features;
+using GymOS.Platform.Infrastructure.Persistence;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -224,6 +225,67 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
         supportAgent.Dispose();
     }
 
+    [Fact]
+    public async Task An_override_carries_who_set_it_and_when()
+    {
+        // The only compensating control while overrides never expire: "how old is this grant, and
+        // who made it" without going to the audit log.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "override-provenance-gym");
+        await SetGymFeatureAsync(gym, PlatformFeatures.Crm, enabled: true, "Goodwill trial.");
+
+        JsonElement crm = FeatureApiHelpers.Feature(
+            await FeatureApiHelpers.ReadFeaturesAsync(_client, gym), PlatformFeatures.Crm);
+        Assert.Equal(
+            AuthenticationHost.SuperAdminEmail, crm.GetProperty("overrideSetByEmail").GetString());
+        Assert.NotNull(crm.GetProperty("overrideSetAtUtc").GetString());
+    }
+
+    [Fact]
+    public async Task A_feature_the_code_no_longer_declares_is_marked_undeclared()
+    {
+        // Insert a row for a key no module declares, exactly as a rename would leave behind — the
+        // seeder never deletes an orphan (dropping it would cascade-delete plan contents and gym
+        // overrides that still reference it), so without this flag the row reads as a live feature.
+        const string OrphanKey = "legacy_thing";
+        await InsertUndeclaredFeatureAsync(OrphanKey);
+
+        JsonElement catalogue = await CatalogueAsync();
+        Assert.False(FeatureByKey(catalogue, OrphanKey).GetProperty("isDeclared").GetBoolean());
+        Assert.True(FeatureByKey(catalogue, PlatformFeatures.Pos).GetProperty("isDeclared").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Editing_a_feature_does_not_pay_for_adoption_counts_on_the_read_back()
+    {
+        // PUT /features/{id} shares FeatureListItem's shape with the list endpoint, but not its
+        // cost: the read-back skips the O(features x gyms) adoption scan and reports null for both
+        // counts — null, not zero, because a feature with real adopters does not lose them the
+        // moment its description is edited, and 0 would say otherwise with no way to tell it apart
+        // from a genuine zero. GET /features is where the counts are authoritative, and this proves
+        // it still pays for and returns the real numbers, unaffected by the edit that just happened.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "write-response-gym");
+        await SetGymFeatureAsync(gym, PlatformFeatures.Crm, enabled: true, "Goodwill trial.");
+
+        JsonElement crm = FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm);
+        Assert.Equal(1, crm.GetProperty("adoptionCount").GetInt32());
+        Assert.Equal(1, crm.GetProperty("overrideCount").GetInt32());
+
+        using HttpResponseMessage updated = await PutFeatureAsync(
+            crm.GetProperty("id").GetGuid(),
+            crm.GetProperty("rowVersion").GetString()!,
+            "CRM", "Leads.", "Members", defaultEnabled: false, isPremium: true);
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+
+        JsonElement body = await updated.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("adoptionCount").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("overrideCount").ValueKind);
+
+        // The list endpoint is unaffected: it still pays for, and returns, the real counts.
+        JsonElement afterEdit = FeatureByKey(await CatalogueAsync(), PlatformFeatures.Crm);
+        Assert.Equal(1, afterEdit.GetProperty("adoptionCount").GetInt32());
+        Assert.Equal(1, afterEdit.GetProperty("overrideCount").GetInt32());
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
 
     private static Uri FeatureUri(Guid featureId) =>
@@ -290,4 +352,24 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    /// <summary>
+    /// Writes a feature row for a key no module declares — there is no endpoint that can do this
+    /// (§3.5: keys are code-canonical, never runtime-creatable), so the only way to reproduce what a
+    /// rename leaves behind is straight into the table, exactly as <c>FeatureCatalogSeeder</c> would
+    /// find it on the next boot.
+    /// </summary>
+    private async Task InsertUndeclaredFeatureAsync(string key)
+    {
+        await using AppDbContext context = _host.CreateDbContext();
+
+        context.Add(Feature.FromDefinition(new FeatureDefinition(
+            key,
+            "Legacy thing",
+            "Orphaned by a rename; no module reads this key anymore.",
+            "Operations",
+            DefaultEnabled: false,
+            IsPremium: false)));
+
+        await context.SaveChangesAsync();
+    }
 }

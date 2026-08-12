@@ -57,7 +57,10 @@ public static class FeatureEndpoints
                     + "`defaultEnabled` re-answers the feature for every gym that has neither an "
                     + "override nor a plan opinion — the widest blast radius of any write here. "
                     + "`isPremium` is informational: what a gym gets is decided by its plan and its "
-                    + "overrides.")
+                    + "overrides. `adoptionCount` and `overrideCount` are **null** in this response: "
+                    + "they are a `GET /features` concern, computed there by a scan this endpoint "
+                    + "does not pay for — null means they were not computed for this edit, not that "
+                    + "they are zero.")
             .Produces<FeatureListItem>()
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)

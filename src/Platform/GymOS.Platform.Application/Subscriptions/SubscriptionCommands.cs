@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Invoices;
@@ -80,6 +81,7 @@ internal sealed class AssignSubscriptionCommandHandler
     private readonly ISubscriptionRepository _subscriptions;
     private readonly ISubscriptionQueries _subscriptionQueries;
     private readonly InvoiceIssuer _issuer;
+    private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
 
@@ -89,6 +91,7 @@ internal sealed class AssignSubscriptionCommandHandler
         ISubscriptionRepository subscriptions,
         ISubscriptionQueries subscriptionQueries,
         InvoiceIssuer issuer,
+        IFeatureExceptionMaintainer featureExceptions,
         IUnitOfWork unitOfWork,
         IClock clock)
     {
@@ -97,6 +100,7 @@ internal sealed class AssignSubscriptionCommandHandler
         _subscriptions = subscriptions;
         _subscriptionQueries = subscriptionQueries;
         _issuer = issuer;
+        _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
         _clock = clock;
     }
@@ -135,6 +139,12 @@ internal sealed class AssignSubscriptionCommandHandler
         GymSubscription? existing = await _subscriptions.FindLiveByGymAsync(
             command.GymId, cancellationToken);
 
+        // Set inside whichever branch below runs, so the withdrawal call after the try/catch can
+        // ask this in-memory subscription what its live plan now is, rather than re-querying a row
+        // this same method may not have saved yet (the redundancy maintainer must never do that —
+        // see IFeatureExceptionMaintainer's remarks).
+        GymSubscription subscription;
+
         try
         {
             if (existing is null)
@@ -150,6 +160,7 @@ internal sealed class AssignSubscriptionCommandHandler
                     command.GymId, plan, terms.Value, _clock.UtcNow);
 
                 _subscriptions.Add(assigned);
+                subscription = assigned;
 
                 if (assigned.Status == SubscriptionStatus.Active)
                 {
@@ -161,6 +172,7 @@ internal sealed class AssignSubscriptionCommandHandler
             }
             else
             {
+                subscription = existing;
                 Result version = SubscriptionWrites.ApplyExpectedVersion(
                     _subscriptions, existing, command.ExpectedRowVersion, versionRequired: false);
                 if (version.IsFailure)
@@ -259,6 +271,17 @@ internal sealed class AssignSubscriptionCommandHandler
                 Error.Conflict("subscriptions.invalid_state", exception.Message));
         }
 
+        // The assignment or plan change just applied may have made a stored exception redundant —
+        // most obviously an upgrade onto a plan that now grants what the exception granted. Passed
+        // the in-memory subscription's own plan id rather than letting the maintainer look one up:
+        // a brand-new assignment is an unsaved Add, invisible to any query run before this method's
+        // SaveChangesAsync below. Before the same save, so the withdrawal and the change that
+        // caused it commit together.
+        await _featureExceptions.WithdrawRedundantAsync(
+            command.GymId,
+            subscription.IsLive ? subscription.PlanId : null,
+            cancellationToken);
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await SubscriptionWrites.ReadBackAsync(
@@ -312,6 +335,7 @@ internal sealed class SubscriptionStateCommandHandlers :
     private readonly ISubscriptionQueries _subscriptionQueries;
     private readonly IPlanRepository _plans;
     private readonly InvoiceIssuer _issuer;
+    private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
 
@@ -320,6 +344,7 @@ internal sealed class SubscriptionStateCommandHandlers :
         ISubscriptionQueries subscriptionQueries,
         IPlanRepository plans,
         InvoiceIssuer issuer,
+        IFeatureExceptionMaintainer featureExceptions,
         IUnitOfWork unitOfWork,
         IClock clock)
     {
@@ -327,6 +352,7 @@ internal sealed class SubscriptionStateCommandHandlers :
         _subscriptionQueries = subscriptionQueries;
         _plans = plans;
         _issuer = issuer;
+        _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
         _clock = clock;
     }
@@ -497,6 +523,16 @@ internal sealed class SubscriptionStateCommandHandlers :
         {
             return Result.Failure<SubscriptionDetail>(mutation.Error!);
         }
+
+        // Covers cancel, resume, convert-trial and payment-state. Passed the in-memory subscription's
+        // own liveness and plan id rather than letting the maintainer look them up: CancelNow only
+        // sets Status in memory, so a query run before the save below would still match the
+        // not-yet-saved row as live and hand back the plan that is ending, not "no live plan" — the
+        // gap this addendum exists to close. Before the save, same transaction.
+        await _featureExceptions.WithdrawRedundantAsync(
+            gymId,
+            subscription.IsLive ? subscription.PlanId : null,
+            cancellationToken);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 

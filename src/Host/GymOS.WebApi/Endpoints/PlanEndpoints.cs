@@ -288,6 +288,18 @@ public static class PlanEndpoints
         IDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
+        // Missing entirely binds to null — there is no required-member enforcement on this record —
+        // and the handler used to dereference it straight into a 500, a caller mistake reported as a
+        // server fault. Unlike an explicitly empty array (a legitimate "change nothing", handled
+        // below like any other request), an absent list is refused rather than reinterpreted: this
+        // write requires If-Match and overwrites what the caller read, so silently treating "the
+        // caller forgot the field" the same as "the caller deliberately sent nothing" hides a mistake
+        // instead of catching it.
+        if (request.Features is null)
+        {
+            return Result.Failure<PlanDetail>(FeatureErrors.FeaturesRequired).ToProblem();
+        }
+
         Result<PlanDetail> result = await dispatcher.SendAsync(
             new SetPlanFeaturesCommand(
                 planId,

@@ -3,6 +3,7 @@ using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
 using GymOS.Platform.Application.DependencyInjection;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Invoices.Abstractions;
 using GymOS.Platform.Application.Subscriptions;
@@ -55,6 +56,12 @@ public sealed class InvoiceIssuingTests
             services.AddSingleton<ISubscriptionQueries>(SubscriptionQueries);
             services.AddSingleton<IInvoiceRepository>(Invoices);
             services.AddSingleton<IInvoiceNumberGenerator>(new FakeInvoiceNumberGenerator());
+
+            // M4.1: every subscription-changing handler withdraws exceptions its change made
+            // redundant. These tests pin invoicing behaviour, not feature resolution, so a no-op
+            // fake is enough to satisfy the constructor.
+            services.AddSingleton<IFeatureExceptionMaintainer>(FeatureExceptions);
+
             services.AddSingleton<IUnitOfWork>(UnitOfWork);
             services.AddSingleton<ICurrentUser>(CurrentUser);
             services.AddSingleton<IPermissionEvaluator>(Permissions);
@@ -85,6 +92,8 @@ public sealed class InvoiceIssuingTests
         public FakeSubscriptionQueries SubscriptionQueries { get; }
 
         public FakeUnitOfWork UnitOfWork { get; } = new();
+
+        public FakeFeatureExceptionMaintainer FeatureExceptions { get; } = new();
 
         public FakeCurrentUser CurrentUser { get; } = new();
 

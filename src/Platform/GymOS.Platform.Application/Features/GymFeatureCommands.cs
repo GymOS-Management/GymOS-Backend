@@ -128,12 +128,52 @@ internal sealed class SetGymFeaturesCommandHandler
         bool NeedsOverride,
         GymFeatureOverride? Existing);
 
+    /// <summary>
+    /// The unique index behind <c>ux_gym_feature_overrides_gym_feature</c> (one row per gym,
+    /// feature — see <c>GymFeatureOverrideConfiguration</c>). Named here so the retry below only
+    /// catches the one race it knows how to resolve.
+    /// </summary>
+    private const string GymFeatureConstraint = "ux_gym_feature_overrides_gym_feature";
+
     public async Task<Result<IReadOnlyList<ResolvedFeatureDetail>>> HandleAsync(
         SetGymFeaturesCommand command,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
 
+        try
+        {
+            return await ExecuteAsync(command, cancellationToken);
+        }
+        catch (UniquenessConflictException exception)
+            when (exception.ConstraintName == GymFeatureConstraint)
+        {
+            // Two callers granting the same (gym, feature) exception concurrently both read "no
+            // existing override" and both insert; the index lets exactly one through, and the loser
+            // used to get a 409 telling it to "choose a value that is still free" — advice nobody
+            // can follow, since there is no other value, for a request that would succeed if simply
+            // retried. Retrying here is what makes the documented promise true: "the later decision
+            // wins, and the audit trail keeps the earlier one".
+            //
+            // DiscardTrackedChanges first, or the retry inherits this attempt's poisoned state: the
+            // insert that lost is still tracked as Added (the database rolled it back, but this
+            // request-scoped DbContext does not know that), and re-running PlanChangesAsync without
+            // clearing it would try to write that same doomed row again alongside whatever the
+            // retry decides, failing the same way a second time. Clearing first means the retry's
+            // fresh reads see only what is actually committed — the winner's row — so it correctly
+            // finds an existing override and Restates it instead of trying to insert another one.
+            //
+            // A second failure past this point is a different, real conflict — not this race — and
+            // is left to surface as the 409 it is.
+            _unitOfWork.DiscardTrackedChanges();
+            return await ExecuteAsync(command, cancellationToken);
+        }
+    }
+
+    private async Task<Result<IReadOnlyList<ResolvedFeatureDetail>>> ExecuteAsync(
+        SetGymFeaturesCommand command,
+        CancellationToken cancellationToken)
+    {
         Gym? gym = await _gyms.FindByIdAsync(command.GymId, cancellationToken);
         if (gym is null)
         {
@@ -148,6 +188,14 @@ internal sealed class SetGymFeaturesCommandHandler
         {
             return Result.Failure<IReadOnlyList<ResolvedFeatureDetail>>(GymErrors.Deleted);
         }
+
+        // The whole decision-and-write is one explicit transaction over a FOR UPDATE read of the
+        // gym's live plan (inside PlanChangesAsync → LoadPlanFeaturesAsync): without the lock held
+        // across both, a concurrent PUT /plans/{id}/features could change the plan's opinion between
+        // the moment this request decides "needs an override" and the moment it saves, so the 200 it
+        // returns would assert a resolution the gym does not actually resolve to.
+        await using IUnitOfWorkTransaction transaction =
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
 
         // Everything is validated before anything is written: one bad key or one missing reason
         // rejects the whole request. A half-applied feature set is worse than a refused one, because
@@ -200,9 +248,22 @@ internal sealed class SetGymFeaturesCommandHandler
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // Read back before committing, not after. The FOR UPDATE lock above releases the instant
+        // this transaction ends, and a plan write blocked on it is free to run the moment that
+        // happens — if the resolve query ran after CommitAsync, that unblocked plan write could
+        // land in the gap between the commit and the resolve, and the body returned to the caller
+        // would already be stale by the time it left the database. IFeatureQueries and this
+        // handler's repositories share one scoped AppDbContext (registered once per request), so
+        // this query runs on the same connection, inside the same transaction, and sees exactly
+        // the row values this transaction is about to make durable — nothing else can be
+        // interleaved before it.
+        IReadOnlyList<ResolvedFeatureDetail> resolution =
+            await _featureQueries.ResolveForGymAsync(command.GymId, cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
         // The resolution, not an echo — see the command's remarks.
-        return Result.Success(
-            await _featureQueries.ResolveForGymAsync(command.GymId, cancellationToken));
+        return Result.Success(resolution);
     }
 
     /// <summary>
@@ -275,6 +336,19 @@ internal sealed class SetGymFeaturesCommandHandler
     /// which case every feature resolves against the platform default, which is what
     /// <see cref="IFeatureQueries.ResolveForGymAsync"/> does too. The two must agree, or a write
     /// would decide "no override needed" against one rule and be read back under another.
+    ///
+    /// <para>Not shared with <see cref="FeatureExceptionMaintainer"/>: that class was given exactly
+    /// this method once (M4.1 task 2), and the sharing was the defect — the read here is correct
+    /// because it answers "what does the database say right now", which is exactly the question a
+    /// fresh <c>PUT</c> request should ask, and exactly the question the maintainer must
+    /// <em>not</em> ask when it is reacting to a change its own caller has not saved yet. See
+    /// <see cref="IFeatureExceptionMaintainer.WithdrawRedundantAsync"/>.</para>
+    ///
+    /// <para>The plan itself is read <c>FOR UPDATE</c> (<see cref="IPlanRepository.
+    /// FindByIdForUpdateAsync"/>), held by the caller's transaction through the save: without the
+    /// lock, a concurrent <c>PUT /plans/{id}/features</c> could change what this plan says about a
+    /// feature after this method reads it but before this request's write commits, so the decision
+    /// made here would no longer match the plan by the time it took effect.</para>
     /// </summary>
     private async Task<IReadOnlyList<PlanFeature>> LoadPlanFeaturesAsync(
         Guid gymId,
@@ -286,7 +360,7 @@ internal sealed class SetGymFeaturesCommandHandler
             return [];
         }
 
-        SubscriptionPlan? plan = await _plans.FindByIdAsync(subscription.PlanId, cancellationToken);
+        SubscriptionPlan? plan = await _plans.FindByIdForUpdateAsync(subscription.PlanId, cancellationToken);
 
         return plan is null ? [] : [.. plan.Features];
     }

@@ -5,6 +5,7 @@ using GymOS.BuildingBlocks.Application.Security;
 using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Application.Features;
 using GymOS.Platform.Application.Features.Abstractions;
+using GymOS.Platform.Application.Gyms;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Application.UnitTests.Fakes;
@@ -30,6 +31,7 @@ public sealed class GymFeatureCommandTests
 {
     private const string FeaturesManage = PlatformPermissions.FeaturesManage;
     private const string FeaturesRead = PlatformPermissions.FeaturesRead;
+    private const string GymsRead = PlatformPermissions.GymsRead;
 
     /// <summary>
     /// <c>crm</c> is off by default and premium; <c>reports</c> is on by default and free. Both
@@ -469,15 +471,46 @@ public sealed class GymFeatureCommandTests
         await context.SetAsync(gym.Id, new GymFeatureRequest(OffByDefault, true, Reason));
 
         Gyms.Abstractions.GymDetail? detail = await context.GymQueries.GetAsync(
-            gym.Id, CancellationToken.None);
+            gym.Id, includeFeatures: true, CancellationToken.None);
 
         // §3.3: the detail view carries resolved feature flags. One resolution, two places it is
         // reported — never two implementations of it.
         Assert.NotNull(detail);
+        Assert.NotNull(detail.Features);
         Assert.Equal(PlatformFeatures.All.Count, detail.Features.Count);
         ResolvedFeatureDetail crm = detail.Features.Single(feature => feature.Key == OffByDefault);
         Assert.True(crm.Enabled);
         Assert.Equal(nameof(FeatureSource.Override), crm.Source);
+    }
+
+    [Fact]
+    public async Task TheGymDetail_OmitsFeatures_WithoutFeaturesRead()
+    {
+        // gyms.read alone is not features.read: GetGymQueryHandler asks the same IPermissionEvaluator
+        // AuthorizationBehavior already used to admit this request past its own gyms.read gate, and
+        // withholds the block rather than resolving and discarding it.
+        var context = new Context(GymsRead);
+        Gym gym = context.GivenGym();
+
+        Result<GymDetail> result = await context.Dispatcher.QueryAsync(
+            new GetGymQuery(gym.Id), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value.Features);
+    }
+
+    [Fact]
+    public async Task TheGymDetail_IncludesFeatures_WithFeaturesRead()
+    {
+        var context = new Context(GymsRead, FeaturesRead);
+        Gym gym = context.GivenGym();
+
+        Result<GymDetail> result = await context.Dispatcher.QueryAsync(
+            new GetGymQuery(gym.Id), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.NotNull(result.Value.Features);
+        Assert.Equal(PlatformFeatures.All.Count, result.Value.Features.Count);
     }
 
     [Fact]

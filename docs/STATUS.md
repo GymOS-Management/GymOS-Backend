@@ -1,12 +1,20 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-11 (late evening) · **M5 dashboard & analytics is complete on branch
+**Last updated:** 2026-08-12 · **M4.1 (the M4 review-fixes increment) is complete on branch
+`m4-review-fixes`** — all seven tasks done. M4's first whole-increment review (2026-08-12) found one
+Critical, six Important and eight Minor issues; this increment fixes the Critical (a redundant
+override was cleaned up only at the instant of its own write, never afterward), all six Importants,
+the three contract additions F4's console will need, and the documentation that had claimed things
+the code did not do. Rules revised in `docs/BusinessRules/Features.md`. **1338 tests green**, 0 build
+warnings, verified live against a rebuilt compose stack — the Critical fix demonstrated, not just
+asserted (an override survives until the gym's plan changes to include the same feature, then is
+withdrawn and `source` reads `Plan`). M4.1's own review is the next gate owed, the same protocol
+M3.3/M3.4 went through.
+**M5 dashboard & analytics is complete on branch
 `m5-dashboard-analytics`** — all six tasks done, business rules recorded in
 `docs/BusinessRules/Analytics.md`, verified live against a rebuilt compose stack. **1302 tests green**
 (1,051 unit + 251 integration), 0 build warnings. M5 now goes for review as a whole, same as M4 did.
-**M4 feature flags is complete on `main`** — all six tasks done, business rules recorded in
-`docs/BusinessRules/Features.md`, verified live, and single-pass reviewed (2 findings fixed). The
-multi-agent review gate over M4 is still owed. The whole-repository audit is fixed and merged
+The whole-repository audit is fixed and merged
 (`d22d45a`), so the long "awaiting review" backlog (M2, Money, M3.1, M3.2, AD-39, M0.X) is **cleared**.
 Only the **API reference** increment, which landed after the audit's scope, is still unreviewed.
 **Purpose:** cross-device continuation state. Read this + `GymOS-Specification/README.md`
@@ -37,7 +45,8 @@ before resuming work on any machine.
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
 | **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
-| **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1267 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · single-pass reviewed, 2 findings fixed · ⬅ **multi-agent review gate still owed** |
+| **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1267 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · single-pass reviewed, 2 findings fixed · **multi-agent whole-increment review run 2026-08-12** (1 Critical, 6 Important, 8 Minor) — fixed in **M4.1**, next row |
+| **M4.1 — M4 review fixes** (the redundant-override self-cleaning rule now maintained by construction — synchronous on a gym's own subscription change, a nightly sweep for the plan- and default-wide triggers too broad to do inline — plus the contract additions F4's console needs and the write-path/seeder races the review found) | ✅ complete — all seven tasks on branch `m4-review-fixes`, **1338 tests green**, verified live (the Critical fix demonstrated, not merely asserted) · rules revised in **`docs/BusinessRules/Features.md`** · ⬅ **its own review still owed** |
 | **M5 — dashboard & analytics** (daily read model + job, live dashboard, three analytics series, `analytics.read`) | ✅ complete — all six tasks on branch `m5-dashboard-analytics`, **1302 tests green**, verified live · rules in **`docs/BusinessRules/Analytics.md`** · ⬅ **review still owed** |
 | M6+ — per approved roadmap (monitoring, settings) | next |
 
@@ -876,9 +885,13 @@ that is deliberate (design §6): the tenant-facing modules that would — POS, i
 exist. M4 delivers the decision and its API; the first consumer enforces it.
 
 **The rule, in one line:** `override ?? plan ?? platform default`, with the layer that decided it
-reported alongside the answer. `FeatureResolution` is the single definition; both the read query and
-the write path call it rather than re-expressing it, and the resolution is deliberately **not** done
-in SQL for that reason.
+reported alongside the answer. `FeatureResolution` is the single definition; the write path and the
+per-gym read call it directly. **M4.1 correction:** this section originally went on to claim
+resolution is "deliberately not done in SQL" at all — false, and one of the three places the M4.1
+review found that exact claim. `GET /features`' `AdoptionCount` restates the rule as a translated LINQ
+expression, because counting adoption per gym in C# would mean loading every gym; it is correct, and
+now pinned against `FeatureResolution.Resolve` by `FeatureAdoptionParityTests`. See "M4.1 as built"
+below.
 
 1. **Domain** (`eb185b3`) — `Feature` (immutable key, editable copy/default/premium),
    `GymFeatureOverride` (required reason, one row per (gym, feature)), `PlanFeature` (the tri-state:
@@ -899,12 +912,16 @@ in SQL for that reason.
    `MarkAggregateChanged` moves the plan's own version so concurrent feature edits collide.
 5. **Per-gym overrides** (this task) — `GET/PUT /gyms/{id}/features` gated
    `features.read`/`features.manage`, plus the `features` block on `GET /gyms/{id}` that §3.3 always
-   described. An override is stored **only while it differs from what the gym would get anyway**, so
+   described. A `PUT` stores an override only while it differs from what the gym would get anyway, so
    asking for exactly what the plan (or default) already gives **withdraws** the exception rather
    than restating it — a gym that later changes plan then follows the new plan instead of staying
    frozen by a row nobody remembers creating. `reason` is required only when an override is genuinely
    needed, and the response is the **full resolution, not an echo**: after a withdrawal the stored
-   state is deliberately not what was sent.
+   state is deliberately not what was sent. **M4.1 correction:** this held only at the instant of that
+   one write — nothing re-checked it afterward, which is the Critical the M4.1 review found. The
+   actual guarantee, since M4.1: a redundant exception is withdrawn **immediately** when the change is
+   to that gym's own subscription, and **within a day** when the change is to a plan or a platform
+   default, via the nightly `feature-override-sweep`. See "M4.1 as built" below.
 6. **Close-out** (this commit) — `docs/BusinessRules/Features.md`, full verification, and the live
    run the design's §7 asks for.
 
@@ -976,13 +993,23 @@ intermittent connection-open failures noted after task 5.
 multi-agent adversarial gate M3.3 and M3.4 went through. It should not be read as equivalent
 assurance, and running the real gate over M4 is still worth doing.
 
-**Structure verdict: conformant.** Resolution lives in the Domain as one pure function and is never
-re-expressed in SQL; `GymQueries` delegates rather than reprojecting; the permission split matches
-the design; both `SubscriptionPlan` loaders carry the `Features` include whose absence caused the
-task-5 defect, and nothing else loads a plan. One thing checked specifically because it would have
-failed silently: a cleared override raises its event on an aggregate the repository then **removes**,
-which would be lost if the outbox interceptor filtered by entity state. It does not — every tracked
-aggregate is drained regardless of state.
+**Structure verdict: conformant**, with one clause this single-pass review got wrong and the
+2026-08-12 whole-increment review corrected (§5 of the M4.1 design): `GymQueries` delegates rather
+than reprojecting; the permission split matches the design; both `SubscriptionPlan` loaders carry the
+`Features` include whose absence caused the task-5 defect, and nothing else loads a plan. One thing
+checked specifically because it would have failed silently: a cleared override raises its event on an
+aggregate the repository then **removes**, which would be lost if the outbox interceptor filtered by
+entity state. It does not — every tracked aggregate is drained regardless of state.
+
+**The wrong clause, left visible rather than silently rewritten:** this review recorded "resolution
+lives in the Domain as one pure function and is never re-expressed in SQL" as part of the conformant
+verdict above. That is false — `FeatureQueries.Project()`'s `AdoptionCount` restates the rule as a
+translated LINQ expression, correctly, and always did. This was one of the three places (alongside
+`Features.md` and this file's M4 summary above) the 2026-08-12 whole-increment review found asserting
+a structural property the code does not have; M4.1 fixed the documentation and added
+`FeatureAdoptionParityTests` to pin the restatement against `FeatureResolution.Resolve`. Recorded here
+as history of what this review actually concluded, not as a claim still believed — see "M4.1 as
+built" below for what is true now.
 
 Fixed, each with a pinning test:
 
@@ -1011,6 +1038,185 @@ changes nothing (no EF change → no UPDATE → the `xmin` precondition never te
 409 `concurrency.conflict` either way, because setting the token's original value to a stale one is
 itself a modification. Checked live rather than reasoned about, which is why it did not become a
 "fix" for a bug that was not there.
+
+## M4.1 as built
+
+**Branch `m4-review-fixes`, seven commits (`613f517`..this commit).** Design (approved 2026-08-12):
+`docs/superpowers/specs/2026-08-12-m4-review-fixes-design.md`. Business rules revised in place:
+**`docs/BusinessRules/Features.md`**. This is M4's own whole-increment review, the gate M4 never
+received before merging to `main` — one Critical, six Important, eight Minor, this increment fixes
+the Critical and all six Importants and records the eight Minors as still-deliberate deferrals.
+
+**The Critical.** M4's headline claim — "an override is stored only while it differs from what the
+gym would get anyway" — was true for exactly one instant, the write that created it. Nothing
+subscribed to a plan's feature opinion changing, a platform default flipping, or a subscription
+ending, so a gym upgraded onto a plan that granted what it had been given by exception kept a
+redundant row: `source: Override` reported forever for a capability it now paid for, and a later
+downgrade kept a capability it no longer bought. Every earlier test moved the override while the
+layers beneath stood still; not one changed a plan or a default *underneath* an existing override.
+
+1. **The rule, re-evaluated rather than re-defined** (`613f517`) — `GymFeatureExceptions.Redundant`
+   asks the *same* `FeatureResolution.RequiresOverride` the write path already called, applied to a
+   gym's existing overrides instead of only the one being written. Pure, total, no database, the
+   `FeatureResolution` shape, for the same reason.
+2. **The synchronous half** (`af14364`, critical fix `9be8f17`, amendment `d1237a3`) — assigning a
+   gym a plan, changing its plan, or ending its subscription withdraws the exceptions that change
+   makes redundant **in the same transaction**, including `RenewalJob`'s expire-and-cancel steps, not
+   only operator-driven writes. The critical-fix commit stopped the maintainer re-querying
+   `ISubscriptionRepository` for the gym's live plan — inside the same uncommitted transaction that
+   query returned the plan being *left*, not the one being joined, since a brand-new assignment is an
+   unsaved `Add` and a cancellation has only mutated `Status` in memory — and instead has every caller
+   pass the plan id its own in-memory state already knows will be live once the transaction commits.
+   The amendment then restructured `SubscriptionRenewalService.ProcessAsync` to call the maintainer
+   once, after its branch chain and before the shared save, so the fourth branch (a pending plan
+   change applying at the renewal boundary) is covered by construction rather than by remembering a
+   fourth call site.
+3. **The nightly half** (`4f25ca5`) — `FeatureOverrideSweepJob`, daily at 03:50 UTC (after
+   `RetentionJob`'s 03:10 and `PlatformStatsJob`'s 03:30, M3.4's runner, under its `IJobLock`),
+   re-evaluates every gym holding at least one override — a small population by construction — for
+   the two triggers too wide to do inline: a plan's feature opinion changing, and a platform default
+   flipping. Built as "re-evaluate this gym's exceptions", not "delete redundant rows", because
+   override expiry (still deferred) is one more predicate in the same pass.
+4. **Contract-shaping changes** (`3af4716`, follow-up `59d4727`, correction `ace0060`) — `GET
+   /gyms/{id}` now omits the `features` block instead of leaking it to any `gyms.read` holder;
+   `ResolvedFeatureDetail` gained `overrideSetAtUtc`/`overrideSetByEmail`; `FeatureListItem` gained
+   `isDeclared`. The gate moved twice before landing right: the follow-up centralized it in
+   `IGymQueries.GetAsync` so one method covered the direct `GET` and every write's read-back at once,
+   but that put the permission check itself inside Infrastructure; the correction kept the one choke
+   point (`GymWrites.ReadBackAsync` plus `GetGymQueryHandler`) but moved the actual
+   `IPermissionEvaluator` check back into Application (AD-3), with `GymQueries` reduced to taking
+   `includeFeatures` as a plain parameter from its caller.
+5. **The write-path and seeder fixes** (`f31de42`, review fix `bd9db62`, `556c69b`, follow-up
+   `3e1d635`) — `PUT /gyms/{id}/features` retries once on the unique-index race so a repeated
+   identical grant converges instead of 409ing; `SetGymFeaturesCommandHandler` now reads the plan
+   `FOR UPDATE` in the same transaction it decides and responds in, closing the plan-edit race; `PUT
+   /plans/{id}/features` refuses `{}`/`null` (400, not 500) and a repeated key (`features.duplicate_key`,
+   not last-one-wins); `FeatureCatalogSeeder` and `PlatformIdentitySeeder` both wrap their seed in
+   `IAdvisoryLock` so two instances booting against a fresh database no longer race
+   `ux_features_key`/`ux_...` into a raw `DbUpdateException` that kills the host; `PUT
+   /features/{id}`'s read-back stopped paying for the adoption-count scan (`ProjectWithoutCounts`,
+   `null` not `0` for a write response); `ux_gym_subscriptions_one_live_per_gym`'s hard-coded
+   `status IN (1,2,3)` is now pinned against `SubscriptionStatusTransitions.Live` by a test so the two
+   cannot silently drift apart.
+6. **Documentation, the SQL/domain parity test, verification and the live run** (this commit) —
+   `FeatureAdoptionParityTests` pins `FeatureQueries.Project()`'s SQL `AdoptionCount` restatement
+   against `FeatureResolution.Resolve` over a seven-gym state matrix (no subscription, a plan that
+   includes, a plan that excludes, a plan that is silent, an override each way, a deleted gym), so the
+   deferred expiry work's fourth `Resolve` input cannot silently go missing from the SQL copy.
+   `Features.md` and this file no longer claim resolution is "never expressed in SQL" — it has one
+   authoritative definition plus one deliberate, pinned SQL restatement — and the self-cleaning
+   invariant is reworded to what is actually guaranteed: immediate withdrawal on the gym's own change,
+   within a day otherwise. `Feature.Rename` (as the M4 design named it) shipped as
+   `Feature.Describe(name, description, category)`; the deviation is now recorded rather than left for
+   a reader to notice the two disagree.
+
+### Verified live
+
+Against the compose stack (`docker compose up -d --build`, rebuilt image, real PostgreSQL), signed in
+as `admin@gymos.local` — the design's §7 scenario, the Critical finding demonstrated fixed rather than
+asserted:
+
+- **A plan that excludes, an override that compensates, a plan that already includes.** A gym was
+  assigned `LIVE_EXCL` (`crm = false`), granted an override (`crm = true`, "Goodwill trial while on
+  LIVE_EXCL."). `GET /gyms/{id}/features` read exactly what M4 always promised at that instant:
+  `enabled: true, source: Override`, carrying the reason, the timestamp, and the author's email.
+- **The exact scenario the design's §1 names.** The gym was then reassigned to `LIVE_INCL`, a plan
+  that already includes the same feature (`crm = true`) — the "upgrades onto a plan that grants what
+  the override granted" case. `GET /gyms/{id}/features` immediately after read `enabled: true,
+  source: Plan`, with `overrideReason`, `overrideSetAtUtc` and `overrideSetByEmail` all `null` — the
+  exception is gone, not merely outranked. `GET /features`' catalogue row confirmed it at the storage
+  level, not just in the response: `crm`'s `overrideCount` read back **0**. This is the row that would
+  otherwise have sat there for a year until a downgrade quietly resurrected a capability the gym no
+  longer paid for — the M4 review's second, more expensive consequence — and it no longer exists.
+- **`GET /gyms/{id}` for a SuperAdmin still carries the `features` block** — 12 entries, unchanged
+  by the omission logic that now runs for a `features.read`-less caller.
+
+Nothing about the run needed a retry, a workaround, or a second attempt — the sequence above is the
+literal, unedited order of calls made against the freshly rebuilt image.
+
+**Test counts, every project run individually to completion with no `Aborted`, 0 build warnings:**
+SharedKernel 126 · BuildingBlocks 62 · Architecture 151 · Domain 423 · Application 235 ·
+Infrastructure 67 · Integration 275 = **1339** *(1338 as at the seventh review-fix commit; the
+whole-branch review below adds the eighth)*.
+
+### Decisions and traps found
+
+- **A read inside an uncommitted transaction can return the state a caller is in the middle of
+  leaving, and the task-2 critical fix exists because of exactly that.** `FeatureExceptionMaintainer`
+  queried the gym's live plan through the repository to decide what was now redundant, but the query
+  ran inside the same transaction as the subscription change it was reacting to — an unsaved `Add` is
+  invisible to it, and `CancelNow`/`Expire` had only changed `Status` in memory, so the query matched
+  the row as it stood before either commit. The three lifecycle tests had passed anyway, by accident:
+  EF's identity resolution happened to hand back an object a caller had already mutated earlier in
+  the same method, a coincidence `.AsNoTracking()` would have silently broken. The fix removes the
+  repository dependency entirely — every caller now passes the post-change plan id from its own
+  in-memory state — and two regression tests were written and confirmed failing against the prior
+  implementation before the fix landed.
+- **Centralizing a gate and honouring AD-3 pulled in different directions, briefly.** Moving the
+  `features.read` check into `IGymQueries.GetAsync` gave one method that covers the direct `GET` and
+  every write's read-back by construction — but doing the permission check itself from there put an
+  authorization decision in Infrastructure, a deviation from AD-3 that would need a superseding ADR,
+  and a discoverability regression (a query method whose signature gives no sign it checks a
+  permission). The fix keeps the single choke point (`GymWrites.ReadBackAsync`, plus
+  `GetGymQueryHandler` for the direct read) but does the actual check in Application, passing the
+  answer down as a plain `includeFeatures` parameter — both role-based tests passed unmodified, and
+  the OpenAPI snapshot diff was empty, because the observable behaviour never changed.
+- **A race test that pushes both writes toward the same value can never fail, protection or not — a
+  review fix (`bd9db62`) caught this in the plan-edit-race test itself.** The first version had the
+  gym ask for CRM `true` while the plan concurrently moved to `true`: every interleaving converges,
+  because an override outranks the plan once created and the "no override needed" branch is only
+  reached when the locked read already agrees with the plan's new value — so the test proved nothing
+  about whether `FindByIdForUpdateAsync`'s lock actually did its job. Rewritten around a
+  self-consistency invariant instead — the gym asks for the *opposite* of what the plan is racing
+  towards, and the one assertion that matters is that the write's own response matches what was
+  asked for, which can only fail if the decision used a plan value a concurrent write had already
+  superseded. Confirmed failing against the prior implementation before the fix landed.
+- **A lock held across the decision is not the same as a lock held across the response.** The same
+  review fix found `SetGymFeaturesCommandHandler` releasing the plan's `FOR UPDATE` lock at
+  `CommitAsync`, *before* the read-back that builds the response — a gap where a blocked concurrent
+  plan write could land between commit and read-back, so the body returned could already be stale by
+  the time the caller saw it. The read-back moved inside the transaction, before commit, so the
+  response is always exactly the resolution that transaction is committing.
+
+### Whole-branch review (2026-08-12) — 1 fixed, 1 recorded, 1 cheap fake fix
+
+The gate before a human decides whether to merge `m4-review-fixes` — the same protocol as the "M4
+review" above, run over the seven review-fix commits together rather than over M4 itself.
+
+Fixed, with a regression test confirmed failing before the fix landed:
+
+- **`DeleteGymCommandHandler` was the one `CancelNow`/`Expire`/`ChangePlan`/`Assign` site never wired
+  to `IFeatureExceptionMaintainer`.** Deleting a gym cancels its live subscription — the plan layer
+  goes silent exactly as an expiry does — but nothing re-evaluated the gym's exceptions afterward, so
+  an override made redundant by the deletion survived until the nightly sweep. This was not merely a
+  gap in behaviour: the design's §2 table, `Features.md`'s guarantee, and this file's own §5 summary
+  all stated "assigned a plan, changes plan, **or its subscription ends**" is synchronous, and the
+  code did not do that for one of the three ways a subscription ends. Fixed by adding the same
+  `WithdrawRedundantAsync(command.GymId, null, cancellationToken)` call, before the same save, that
+  the other three call sites already make — `null` because `CancelNow` has already set the
+  in-memory subscription to non-live, the same reasoning `SubscriptionRenewalService` and
+  `SubscriptionStateCommandHandlers` already document. `GymFeatureLifecycleTests
+  .A_gym_deletion_withdraws_an_exception_it_has_made_redundant` failed with 1 override still present
+  where 0 was expected before the fix, and passes now.
+
+Recorded rather than fixed:
+
+- **`AssignSubscriptionCommandHandler` decides feature redundancy against a plan read with no lock**,
+  unlike the sibling `SetGymFeaturesCommandHandler` this same increment already closed the same race
+  for. Narrow — only a `PUT /plans/{id}/features` racing a subscription assignment/change on the exact
+  same plan can lose a capability — and a lost capability rather than corrupted data, traceable via
+  `GymFeatureOverrideCleared` in the outbox. Full reasoning in `docs/BusinessRules/Features.md`; listed
+  under "Known open items" below rather than fixed here, since the fix is the same `FindByIdForUpdateAsync`
+  shape sized for the busiest handler in the subscriptions slice, not this wave.
+
+Cheap, fixed:
+
+- **`FakeFeatureQueries` shared one projection between `ListCatalogueAsync` and `GetAsync`**, hard-coding
+  `AdoptionCount: 0` where production's `GetAsync` (backing `PUT /features/{id}`'s read-back) uses
+  `ProjectWithoutCounts` and returns `null` for both counts. Inert today — no test asserted on
+  `GetAsync`'s counts — but the same missing-`Include` shape as the `PlanRepository` trap M4 already
+  paid for: a fake whose shape differs from the real thing teaches the wrong contract to whichever
+  test relies on it next. The fake now mirrors the split.
 
 ## M5 as built
 
@@ -1198,40 +1404,87 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
 
 ## Next step (resume here)
 
-**M5 is built, verified, and documented. It now goes for review as a whole** — the same protocol M4
-went through, over the six commits on branch `m5-dashboard-analytics` plus this close-out. The
-reviewer's sharpest questions are probably: whether the two recorded deviations from the frozen spec
-(per-currency MRR instead of one summed column; split `canceled_gyms`/`expired_gyms` instead of one
-`churned_gyms`) should be accepted as written or need their own ADR; whether the population/event
-split for `new_gyms` (§3 of `Analytics.md`, corrected mid-increment by an owner ruling) is the right
-line to have drawn; and whether `/dashboard/summary`'s live computation is cheap enough to stay live
-once real gym counts grow, or should move to the read model sooner than "when it stops being cheap."
+**M4's whole-increment review has now happened, and M4.1 is its fix-up** — built, verified, and
+proved live on branch `m4-review-fixes`. That review is the gate M3.3 and M3.4 went through and M4
+never received before merging; M4.1 closes the Critical and all six Importants it found, and this
+close-out corrected the documentation the review flagged as claiming a structural property
+(resolution "never expressed in SQL") the code did not have. **M4.1 now owes its own review** — the
+same adversarial protocol, over the seven commits on `m4-review-fixes` plus this close-out. The
+reviewer's sharpest questions here are probably: whether a day's window between a plan/default change
+and the next sweep is an acceptable guarantee or should be tighter; whether the retry-once fix on
+`PUT /gyms/{id}/features` could still surface a real conflict as a false convergence; and whether the
+gym-detail permission gate's two false starts (into the read side, then back to Application) leave
+any other read-side query with the same latent AD-3 temptation.
 
-**M4 also still awaits its own review** — the same adversarial gate M3.3 and M3.4 went through, over
-the six commits `eb185b3..` on `main` plus its close-out. The reviewer's sharpest questions there are
-probably: whether the clear-vs-upsert decision is right in every case the handler can reach, whether
-"no `If-Match` on the gym write" survives contact with two operators, and whether the resolution query
-and the write path can still disagree about a gym with no live subscription (they share
-`FeatureResolution`, but they load the plan by different routes).
+**M5 also still awaits its own review**, unrelated to M4.1's — over the six commits on branch
+`m5-dashboard-analytics` plus its close-out. The reviewer's sharpest questions there are probably:
+whether the two recorded deviations from the frozen spec (per-currency MRR instead of one summed
+column; split `canceled_gyms`/`expired_gyms` instead of one `churned_gyms`) should be accepted as
+written or need their own ADR; whether the population/event split for `new_gyms` (§3 of
+`Analytics.md`, corrected mid-increment by an owner ruling) is the right line to have drawn; and
+whether `/dashboard/summary`'s live computation is cheap enough to stay live once real gym counts
+grow, or should move to the read model sooner than "when it stops being cheap."
 
-Then, in priority order:
+**Neither review blocks the frontend, and that is where the next unblocked step is.** Then, in
+priority order:
 
-1. **M5's review**, and **M4's multi-agent review gate**, both outstanding — pick the order that suits
-   the reviewer; neither blocks the other since M5 branched from `main` after M4 merged.
-2. **The API reference increment awaits review** (Konstantinos's) — unchanged by this work, and the
+1. **F3 — the GymOS-Platform console's dashboard-and-analytics screens** (`GymOS-Platform/docs/F3-DESIGN.md`,
+   approved 2026-08-12, not yet built). It is the frontend share of M5, against a contract already
+   frozen (six operations, `GET /dashboard/summary`/`/health`/`/activity`, `GET
+   /analytics/revenue`/`gyms-growth`/`churn`), so it does not wait on M5's review landing — the API it
+   consumes does not move if that review only touches the two recorded deviations above. This is the
+   most immediately actionable next step of anything in this section.
+2. **M4.1's review**, and **M5's review**, both outstanding — pick the order that suits the reviewer;
+   neither blocks the other or F3.
+3. **F4 — the M4 feature-flags console** waits specifically on M4.1's review landing, since it would
+   otherwise be built against a contract three fixes (§3.1–3.3 of the M4.1 design) already moved once
+   this increment.
+4. **The API reference increment awaits review** (Konstantinos's) — unchanged by this work, and the
    only thing left over from before the audit's scope.
-3. **Audit finding 7** wants its own increment: concurrent failed sign-ins collide on the user row's
+5. **Audit finding 7** wants its own increment: concurrent failed sign-ins collide on the user row's
    version, so `/auth/login` can answer 409 and lockout under-counts. Small domain change, listed in
    full under "Known open items".
-4. **M6** — per the approved roadmap (monitoring, settings). `GET /monitoring/*` (§3.7) and the device
+6. **M6** — per the approved roadmap (monitoring, settings). `GET /monitoring/*` (§3.7) and the device
    registry it needs are M6's; M5 deliberately left them out (`Analytics.md` §10).
 
-Nothing in M5 changed the standing debts: **R14 (RLS) has still never run** and is owed with the
-first tenant-scoped entity, and the Members domain remains frozen and ready to implement. M5's own
-platform stats did **not** end up needing `Money` currency conversion (AD-43) — the owner's ruling to
-report MRR per currency rather than summed avoided that dependency rather than building it.
+Nothing in M4.1 or M5 changed the standing debts: **R14 (RLS) has still never run** and is owed with
+the first tenant-scoped entity, and the Members domain remains frozen and ready to implement. M5's
+own platform stats did **not** end up needing `Money` currency conversion (AD-43) — the owner's ruling
+to report MRR per currency rather than summed avoided that dependency rather than building it. M4.1's
+own deferrals (override expiry, the four-subquery plan projection, tracked catalogue reads, the
+log-count conflation) are recorded in `docs/BusinessRules/Features.md`'s deferred-list section and
+above, not repeated here.
 
 ## Known open items / honest notes
+
+- **Five minor findings were deliberately carried out of M4.1's reviews**, each judged not worth the
+  change it would cost, and recorded here so the judgement is visible rather than forgotten:
+  - **A withdrawal leaves no trace in the application log.** `WithdrawRedundantAsync` returns how many
+    exceptions it withdrew and all four synchronous callers discard it; only the sweep logs a count.
+    The `gymos.platform.gym_feature.override_cleared` event does reach the outbox, so this is
+    legibility rather than auditability — but a support engineer reading logs sees a subscription
+    change with nothing saying it deleted an operator's grant.
+  - **`IUnitOfWork.DiscardTrackedChanges()` widens a core abstraction for one call site** (the
+    retry in `SetGymFeaturesCommandHandler`). The sequence is correct and the doc comment is careful,
+    but a future caller outside a bounded retry would silently drop pending state with no compiler or
+    test signal. A `BannedSymbols.txt` entry carrying "use only inside a single-attempt retry" would
+    close it without another interface.
+  - **The plan-edit race test detects a regression roughly one run in eight.** The asymmetry is the
+    right way round — it cannot flake red on correct code — and it was proved able to fail by stashing
+    the fix. But it is a probe, not a gate; a deterministic interleaving hook would make it one.
+  - **"Load the plan by id, map null to `[]`" now exists twice**, in `GymFeatureCommands` and
+    `FeatureExceptionMaintainer`, differing only in output shape. Deliberate: the shared helper they
+    were extracted from forced one answer onto two different questions ("what does the database say
+    now" versus "what will be true after this commit"), which was part of the Critical's root cause.
+    Re-sharing it would reintroduce the defect.
+  - **`StoredException`'s CA1711 suppression is per-type**, while `.editorconfig` uses
+    `allowed_suffixes` for the same analyzer elsewhere. Two mechanisms for one rule; the narrower one
+    was chosen deliberately, but the inconsistency is worth knowing.
+
+  Also unfixed at the unit-test layer: no test asserts that `DeleteGymCommandHandler` calls the
+  maintainer — that wiring is covered only by its integration test, so a future regression in the
+  wiring would not fail fast.
+
 
 - **Four minor findings were deliberately carried out of M5's reviews**, each judged not worth the
   change it would cost, and recorded here so the judgement is visible rather than forgotten:
@@ -1272,20 +1525,54 @@ report MRR per currency rather than summed avoided that dependency rather than b
   same way. Harmless as a known approximation; worth knowing before treating the two columns, or their
   sum, as aligned day-by-day. Reasoning in `docs/BusinessRules/Analytics.md` §11.
 
-- **A gym feature override never expires** (M4 review, deliberately deferred): the aggregate records
-  who granted the exception, when, and why, but nothing time-bounded, and an exception is only
-  withdrawn when somebody re-asserts the plan's value. So the goodwill trial that is the headline
-  reason overrides exist has **no ending** — harmless while nothing consumes a resolved flag, and
-  revenue leakage the day enforcement lands. The product decision comes first (does an expiring
-  override lapse silently, or does someone get told?), then `ExpiresAtUtc` plus a sweep on M3.4's job
-  runner. Reasoning in `docs/BusinessRules/Features.md`.
+- **A gym feature override never expires** (M4 review, still deferred after M4.1): the aggregate
+  records who granted the exception, when, and why, but nothing time-bounded. M4.1 built the
+  self-cleaning half of the fix — an exception is now withdrawn once it stops *differing* from the
+  plan or default, immediately for the gym's own change and within a day via `FeatureOverrideSweepJob`
+  otherwise — but nothing withdraws one that simply runs past a time limit, because no override
+  carries one. So the goodwill trial that is the headline reason overrides exist still has **no
+  ending** — harmless while nothing consumes a resolved flag, and revenue leakage the day enforcement
+  lands. The product decision comes first (does an expiring override lapse silently, or does someone
+  get told?), then `ExpiresAtUtc` plus one more predicate in the sweep that now already exists, rather
+  than a new mechanism. Reasoning in `docs/BusinessRules/Features.md`.
+
+- **`AssignSubscriptionCommandHandler` decides feature redundancy against a plan read with no lock**
+  (M4.1 whole-branch review, deliberately deferred): unlike `SetGymFeaturesCommandHandler`, it opens
+  no explicit transaction and calls `IPlanRepository.FindByIdAsync`, not `FindByIdForUpdateAsync`,
+  before the synchronous `WithdrawRedundantAsync` call decides which of the gym's exceptions the new
+  plan makes redundant. A `PUT /plans/{id}/features` that commits between that read and this
+  handler's own commit can make the decision stale: T1 assigns a gym to a plan read as `crm = true`,
+  T2 concurrently flips that plan's `crm` to `false`, and T1's maintainer — judging against its now-
+  stale read — withdraws the gym's `crm = true` override as apparently redundant. The gym ends up on
+  a plan that says `crm = false` with the protecting exception gone; withdrawal is a hard delete, so
+  the nightly sweep does not restore it. This is a lost **capability**, not corrupted data — the
+  stored state is internally consistent and reported truthfully — and it is traceable: the withdrawal
+  still raises `GymFeatureOverrideCleared` in the outbox, exactly as an operator-driven clear would.
+  **Narrow by construction**: only a plan-feature edit racing a subscription assignment/change on that
+  exact plan, inside the few milliseconds between the read and the commit, can lose a capability this
+  way; every other interleaving converges to one consistent state or the other. The fix is the same
+  shape already proven on `SetGymFeaturesCommandHandler` — an explicit transaction plus
+  `FindByIdForUpdateAsync` around the plan read — sized for its own change rather than this wave,
+  since it touches the busiest handler in the subscriptions slice. Reasoning in
+  `docs/BusinessRules/Features.md`.
 
 - **`GET /features` computes adoption with two correlated subqueries per gym per feature**, with no
   bound and no cache — 12 features × every gym, on every catalogue page load. Fine at present scale
   and deliberately not optimized: the query is written to be readable against `FeatureResolution`,
   and its own comment records that a cleverer earlier version was "correct-looking and
-  unverifiable". Revisit when the console shows it on a hot path or gym counts reach the thousands,
-  and pin the counts with the existing integration test before touching the shape.
+  unverifiable". **M4.1 added `FeatureAdoptionParityTests`**, which pins this exact restatement
+  against `FeatureResolution.Resolve` over a seven-gym state matrix — the reason to revisit the shape
+  is now a cost problem only, never a correctness one, since a drift (e.g. the deferred expiry work
+  adding a fourth `Resolve` input and the SQL copy missing it) fails that test first. Revisit the
+  shape itself when the console shows it on a hot path or gym counts reach the thousands.
+
+- **Three Minor findings from M4's review were carried past M4.1, deliberately** (design §6 —
+  `docs/superpowers/specs/2026-08-12-m4-review-fixes-design.md`): `PlanQueries.GetAsync`'s four
+  correlated subqueries per plan-feature row (bounded at 12 × 4 today; rewriting it earns nothing
+  until the catalogue grows); `FeatureRepository.ListAllAsync` being tracked (twelve rows into the
+  change tracker for a key lookup — harmless now); and `LogSynced` counting orphans inside "left
+  untouched" (true but conflated, cosmetic). None has a live consequence yet; all three are recorded
+  in `docs/BusinessRules/Features.md`'s deferred list rather than left only here.
 
 - **Concurrent failed sign-ins for one account collide on the user row's version** (audit finding 7,
   deliberately deferred): four of five parallel guesses raise a concurrency conflict, so

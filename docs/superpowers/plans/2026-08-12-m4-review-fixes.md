@@ -294,7 +294,9 @@ Create `tests/GymOS.IntegrationTests/GymFeatureLifecycleTests.cs`, mirroring `Gy
     }
 ```
 
-Copy `CountOverridesAsync`, `ReadFeaturesAsync`, `Feature`, `SetGymFeaturesAsync`, `SetPlanFeatureAsync`, `CreatePlanAsync`, `CreateGymAsync` and `AssignAsync` **by reference, not by duplication**: `GymFeatureApiTests.cs` already has all of them. If moving them to a shared helper is more than a few minutes, leave them and record it as a deferred minor — this task's value is the assertions, not the plumbing.
+**Do not copy helper bodies out of `GymFeatureApiTests.cs`.** `tests/GymOS.IntegrationTests/PlatformApiHelpers.cs` already exists and already provides `CreateGymAsync`, `CreatePlanAsync`, `AssignAsync`, `SignedInAsync` and `DeleteGymAsync` — it was created precisely to collapse this duplication, and copying from a test file would re-open it.
+
+The feature-specific helpers (`CountOverridesAsync`, `ReadFeaturesAsync`, `Feature`, `SetGymFeaturesAsync`, `SetPlanFeatureAsync`) are **not** in the shared file and currently live privately in `GymFeatureApiTests`. Move them into `PlatformApiHelpers` — or a sibling `FeatureApiHelpers` if that reads better — and update `GymFeatureApiTests` to call them there. Two test files needing the same five helpers is the moment to share them, not the moment to copy them.
 
 - [ ] **Step 2: Run it and watch it fail**
 

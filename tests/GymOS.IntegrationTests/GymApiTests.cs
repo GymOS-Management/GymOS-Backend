@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Identity;
+using GymOS.Platform.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -65,6 +67,56 @@ public sealed class GymApiTests : IAsyncLifetime
         // Branding is present and empty rather than absent, so a client never has to special-case it.
         JsonElement branding = body.GetProperty("branding");
         Assert.Equal(JsonValueKind.Null, branding.GetProperty("logoUrl").ValueKind);
+    }
+
+    [Fact]
+    public async Task Provisioning_Returns201WithoutFeatures_WhenTheCallerLacksFeaturesRead()
+    {
+        // The same finding the review made about GET /gyms/{id}, through a write instead: the 201's
+        // body is a GymDetail too, and one entry can carry overrideReason. gyms.create without
+        // features.read is not a stock combination today, but roles.manage will be able to create
+        // one — the same reasoning the review already applied to the read route. IGymQueries.GetAsync
+        // is the single point both the direct GET and this write's read-back share (M4.1 task 4), so
+        // gating it there — rather than in each write handler — covers this route without anyone
+        // having to remember it.
+        const string RoleName = "Gym Creator (gyms.create only)";
+        const string Email = "gyms-create-only@gymos.test";
+
+        await using (AppDbContext context = _host.CreateDbContext())
+        {
+            Guid permissionId = await context.Set<Permission>()
+                .Where(permission => permission.Key == PlatformPermissions.GymsCreate)
+                .Select(permission => permission.Id)
+                .SingleAsync();
+
+            Role role = Role.Create(
+                RoleName, "Integration test: gyms.create without features.read.", RoleScope.Platform);
+            role.GrantPermission(permissionId);
+
+            context.Add(role);
+            await context.SaveChangesAsync();
+        }
+
+        using HttpClient limited = await PlatformApiHelpers.SignedInAsync(_host, _client, RoleName, Email);
+
+        using HttpResponseMessage created = await limited.PostAsJsonAsync(
+            Gyms, NewGym("gyms-create-only-gym"));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+
+        JsonElement body = await created.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(body.TryGetProperty("features", out JsonElement features) &&
+                     features.ValueKind is not JsonValueKind.Null);
+
+        // A SuperAdmin provisioning the same way still gets the whole block — this is a permission
+        // gate, not a change to what provisioning returns.
+        using HttpResponseMessage createdBySuperAdmin = await _client.PostAsJsonAsync(
+            Gyms, NewGym("gyms-create-full-gym"));
+        Assert.Equal(HttpStatusCode.Created, createdBySuperAdmin.StatusCode);
+
+        JsonElement fullBody = await createdBySuperAdmin.Content.ReadFromJsonAsync<JsonElement>();
+        JsonElement fullFeatures = fullBody.GetProperty("features");
+        Assert.NotEqual(JsonValueKind.Null, fullFeatures.ValueKind);
+        Assert.True(fullFeatures.GetArrayLength() > 0);
     }
 
     [Fact]

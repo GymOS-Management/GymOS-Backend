@@ -58,8 +58,19 @@ public sealed record GymDetail(
     /// Every feature resolved for this gym, each carrying the layer that decided it. Always the whole
     /// catalogue, never only the exceptions: "what can this gym actually do" is the question an
     /// operator opens this screen with, and a list of overrides answers a different one.
+    ///
+    /// <para><b>Null when the caller does not hold <c>features.read</c></b> (M4.1 task 4). One entry
+    /// carries <c>overrideReason</c> — the free text an operator writes when granting a paid
+    /// capability for free, commercially sensitive on its own — so a caller who only holds
+    /// <c>gyms.read</c> gets the rest of the gym's detail without it, exactly as the dedicated
+    /// <c>GET /gyms/{id}/features</c> route already requires at both its endpoint policy and its
+    /// request type. The permission is checked in Application, by <c>GetGymQueryHandler</c> and by
+    /// <c>GymWrites.ReadBackAsync</c> — the two production callers of <see cref="IGymQueries.GetAsync"/>
+    /// — never inside this read side itself (AD-3): a query object asking
+    /// <c>IPermissionEvaluator</c> would put an authorization decision one layer further from
+    /// <c>AuthorizationBehavior</c> than every other permission check in the codebase.</para>
     /// </summary>
-    IReadOnlyList<ResolvedFeatureDetail> Features,
+    IReadOnlyList<ResolvedFeatureDetail>? Features,
     string RowVersion);
 
 /// <param name="Status">Optional exact-match filter on <c>GymStatus</c>, by name.</param>
@@ -80,7 +91,16 @@ public interface IGymQueries
 {
     Task<PagedResult<GymListItem>> ListAsync(GymListFilter filter, CancellationToken cancellationToken);
 
-    Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken);
+    /// <param name="includeFeatures">
+    /// Whether to resolve and attach the feature block. A plain flag, decided by the caller rather
+    /// than by this method: <c>features.read</c> is an authorization concept, and the read side
+    /// (AD-3) has never known about those — every permission decision in this codebase sits at the
+    /// endpoint policy, on the request type, and in <c>AuthorizationBehavior</c>, all in Application.
+    /// <c>GetGymQueryHandler</c> and <c>GymWrites.ReadBackAsync</c> — the two production callers —
+    /// each ask the same <c>IPermissionEvaluator</c> that pipeline uses, so the two routes cannot
+    /// disagree about who holds it even though neither asks this method to decide.
+    /// </param>
+    Task<GymDetail?> GetAsync(Guid gymId, bool includeFeatures, CancellationToken cancellationToken);
 
     /// <summary>
     /// Whether the gym exists at all, deleted or not. For handlers that need to tell "no such gym"

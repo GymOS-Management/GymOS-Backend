@@ -2,6 +2,7 @@ using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.Platform.Application.DependencyInjection;
+using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Application.UnitTests.Fakes;
@@ -44,6 +45,11 @@ internal sealed class GymTestContext
         // Deleting a gym cancels its live subscription in the same transaction, so the lifecycle
         // handlers reach the subscription write side even in gym-only tests.
         services.AddSingleton<ISubscriptionRepository>(Subscriptions);
+
+        // Deleting a gym also re-evaluates its feature exceptions in the same transaction (M4.1
+        // review fix 1) — the fake only records that it was asked; these tests are not about
+        // feature withdrawal.
+        services.AddSingleton<IFeatureExceptionMaintainer>(FeatureExceptions);
         services.AddSingleton<IUnitOfWork>(UnitOfWork);
         services.AddSingleton<ICurrentUser>(CurrentUser);
         services.AddSingleton<IPermissionEvaluator>(Permissions);
@@ -59,6 +65,8 @@ internal sealed class GymTestContext
 
     /// <summary>Deleting a gym must also end what it was paying for — see the delete handler.</summary>
     public FakeSubscriptionRepository Subscriptions { get; } = new();
+
+    public FakeFeatureExceptionMaintainer FeatureExceptions { get; } = new();
 
     public FakeGymQueries GymQueries { get; }
 

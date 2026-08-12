@@ -37,15 +37,18 @@ internal sealed class ProvisionGymCommandHandler : ICommandHandler<ProvisionGymC
 {
     private readonly IGymRepository _gyms;
     private readonly IGymQueries _gymQueries;
+    private readonly IPermissionEvaluator _permissionEvaluator;
     private readonly IUnitOfWork _unitOfWork;
 
     public ProvisionGymCommandHandler(
         IGymRepository gyms,
         IGymQueries gymQueries,
+        IPermissionEvaluator permissionEvaluator,
         IUnitOfWork unitOfWork)
     {
         _gyms = gyms;
         _gymQueries = gymQueries;
+        _permissionEvaluator = permissionEvaluator;
         _unitOfWork = unitOfWork;
     }
 
@@ -101,6 +104,6 @@ internal sealed class ProvisionGymCommandHandler : ICommandHandler<ProvisionGymC
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await GymWrites.ReadBackAsync(_gymQueries, gym.Id, cancellationToken);
+        return await GymWrites.ReadBackAsync(_gymQueries, _permissionEvaluator, gym.Id, cancellationToken);
     }
 }

@@ -45,6 +45,8 @@ internal sealed class UnitOfWork : IUnitOfWork
     public async Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         new Transaction(await _dbContext.Database.BeginTransactionAsync(cancellationToken));
 
+    public void DiscardTrackedChanges() => _dbContext.ChangeTracker.Clear();
+
     private sealed class Transaction : IUnitOfWorkTransaction
     {
         private readonly Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction _transaction;

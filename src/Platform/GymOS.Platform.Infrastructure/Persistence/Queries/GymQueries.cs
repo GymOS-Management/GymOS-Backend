@@ -110,7 +110,8 @@ internal sealed class GymQueries : IGymQueries
         return new PagedResult<GymListItem>(items, filter.Page.Page, filter.Page.PageSize, totalCount);
     }
 
-    public async Task<GymDetail?> GetAsync(Guid gymId, CancellationToken cancellationToken)
+    public async Task<GymDetail?> GetAsync(
+        Guid gymId, bool includeFeatures, CancellationToken cancellationToken)
     {
         var projection = await _dbContext.Set<Gym>()
             .AsNoTracking()
@@ -214,9 +215,14 @@ internal sealed class GymQueries : IGymQueries
 
         // A second round trip, deliberately: resolution reads the catalogue, the plan's opinions, and
         // the gym's overrides, and folding that into the projection above would duplicate the rule the
-        // domain already owns.
-        IReadOnlyList<ResolvedFeatureDetail> features = await _featureQueries.ResolveForGymAsync(
-            projection.Id, cancellationToken);
+        // domain already owns. Skipped entirely — not resolved and discarded — when the caller lacks
+        // features.read: one entry carries overrideReason, and there is no reason to pay for the
+        // resolution just to withhold it. Whether to include it is decided by the caller (M4.1 task
+        // 4): features.read is an authorization concept, and this read side (AD-3) stays free of
+        // them.
+        IReadOnlyList<ResolvedFeatureDetail>? features = includeFeatures
+            ? await _featureQueries.ResolveForGymAsync(projection.Id, cancellationToken)
+            : null;
 
         return new GymDetail(
             projection.Id,

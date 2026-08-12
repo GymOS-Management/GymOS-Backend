@@ -4,6 +4,28 @@ using GymOS.Platform.Domain.Features;
 
 namespace GymOS.Platform.Application.UnitTests.Fakes;
 
+/// <summary>
+/// No-op stand-in for the redundancy sweep. The subscription handler tests are not testing feature
+/// withdrawal — they exist to pin subscription behaviour — so this simply records that it was asked
+/// and, unless a test configures otherwise, reports nothing to withdraw.
+/// </summary>
+internal sealed class FakeFeatureExceptionMaintainer : IFeatureExceptionMaintainer
+{
+    public List<Guid> CalledForGymIds { get; } = [];
+
+    public List<Guid?> CalledWithLivePlanIds { get; } = [];
+
+    public int ReturnValue { get; set; }
+
+    public Task<int> WithdrawRedundantAsync(
+        Guid gymId, Guid? livePlanIdAfterChange, CancellationToken cancellationToken)
+    {
+        CalledForGymIds.Add(gymId);
+        CalledWithLivePlanIds.Add(livePlanIdAfterChange);
+        return Task.FromResult(ReturnValue);
+    }
+}
+
 /// <summary>In-memory stand-in for the feature catalogue and override write side.</summary>
 internal sealed class FakeFeatureRepository : IFeatureRepository
 {
@@ -107,7 +129,7 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
     public Task<FeatureListItem?> GetAsync(Guid featureId, CancellationToken cancellationToken)
     {
         Feature? feature = _features.Features.SingleOrDefault(candidate => candidate.Id == featureId);
-        return Task.FromResult(feature is null ? null : Project(feature));
+        return Task.FromResult(feature is null ? null : ProjectWithoutCounts(feature));
     }
 
     public Task<IReadOnlyList<ResolvedFeatureDetail>> ResolveForGymAsync(
@@ -137,6 +159,8 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
                 ResolvedFeature answer = FeatureResolution.Resolve(
                     feature.Key, over?.IsEnabled, planEnabled, feature.DefaultEnabled);
 
+                bool decidedByOverride = answer.Source == FeatureSource.Override;
+
                 return new ResolvedFeatureDetail(
                     feature.Id,
                     feature.Key,
@@ -145,7 +169,14 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
                     answer.Enabled,
                     answer.Source.ToString(),
                     feature.IsPremium,
-                    answer.Source == FeatureSource.Override ? over?.Reason : null);
+                    decidedByOverride ? over?.Reason : null,
+                    decidedByOverride ? over?.SetAtUtc : null,
+
+                    // Not resolved here: this fake has no user directory to join against, and the
+                    // email round trip is exactly what GymFeatureApiTests.SetByEmailAsync (and the
+                    // integration-only An_override_carries_who_set_it_and_when) proves against
+                    // real PostgreSQL instead.
+                    null);
             })
             .ToList();
 
@@ -165,5 +196,29 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
         // override tally only, and the tests that care about adoption are the integration ones.
         AdoptionCount: 0,
         OverrideCount: _features.Overrides.Count(over => over.FeatureId == feature.Id),
-        RowVersion.ToString(CultureInfo.InvariantCulture));
+        RowVersion.ToString(CultureInfo.InvariantCulture),
+        IsDeclared: PlatformFeatures.All.Any(definition =>
+            string.Equals(definition.Key, feature.Key, StringComparison.Ordinal)));
+
+    /// <summary>
+    /// Mirrors production's split: <see cref="GetAsync"/> backs <c>PUT /features/{id}</c>'s
+    /// read-back and uses <c>FeatureQueries.ProjectWithoutCounts</c> there, returning <c>null</c>
+    /// for both counts rather than paying for (or faking) the adoption/override scan. Only
+    /// <see cref="ListCatalogueAsync"/> reports real counts, via <see cref="Project"/> above — a
+    /// fake that shared one projection between the two taught the wrong contract, the same
+    /// missing-<c>Include</c> shape the <c>PlanRepository</c> trap already cost this codebase once.
+    /// </summary>
+    private FeatureListItem ProjectWithoutCounts(Feature feature) => new(
+        feature.Id,
+        feature.Key,
+        feature.Name,
+        feature.Description,
+        feature.Category,
+        feature.DefaultEnabled,
+        feature.IsPremium,
+        AdoptionCount: null,
+        OverrideCount: null,
+        RowVersion.ToString(CultureInfo.InvariantCulture),
+        IsDeclared: PlatformFeatures.All.Any(definition =>
+            string.Equals(definition.Key, feature.Key, StringComparison.Ordinal)));
 }

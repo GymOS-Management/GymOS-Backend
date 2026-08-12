@@ -172,6 +172,8 @@ internal sealed class FakeUnitOfWork : IUnitOfWork
 
     public int TransactionCount { get; private set; }
 
+    public int DiscardCount { get; private set; }
+
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         SaveCount++;
@@ -183,6 +185,9 @@ internal sealed class FakeUnitOfWork : IUnitOfWork
         TransactionCount++;
         return Task.FromResult<IUnitOfWorkTransaction>(new NoOpTransaction());
     }
+
+    // No change tracker to clear in-memory; counted so a retry test can still assert it was asked for.
+    public void DiscardTrackedChanges() => DiscardCount++;
 
     private sealed class NoOpTransaction : IUnitOfWorkTransaction
     {

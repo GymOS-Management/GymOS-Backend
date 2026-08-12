@@ -38,7 +38,7 @@ public sealed class FeatureCatalogSeedingTests : IAsyncLifetime
     }
 
     private static FeatureCatalogSeeder Seeder(AppDbContext context) =>
-        new(context, NullLogger<FeatureCatalogSeeder>.Instance);
+        new(context, new UnitOfWork(context), new PostgresAdvisoryLock(context), NullLogger<FeatureCatalogSeeder>.Instance);
 
     [Fact]
     public async Task The_first_run_inserts_every_declared_feature()
@@ -154,6 +154,31 @@ public sealed class FeatureCatalogSeedingTests : IAsyncLifetime
             .AsNoTracking()
             .SingleAsync(feature => feature.Key == PlatformFeatures.Crm);
         Assert.True(crm.DefaultEnabled);
+    }
+
+    [Fact]
+    public async Task Two_concurrent_seedings_of_a_fresh_database_do_not_race()
+    {
+        // The defect this task fixes: two instances booting against a fresh database both read an
+        // empty catalogue and both try to insert the same declared rows. Without serialising them,
+        // one loses to ux_features_key with a raw DbUpdateException that used to escape SeedAsync
+        // uncaught (it called SaveChangesAsync directly, not through IUnitOfWork) and take the host
+        // down with it. The advisory lock now makes the second instance wait for the first's
+        // transaction to commit, then re-read the catalogue and find nothing left to insert.
+        await using AppDbContext first = CreateContext();
+        await using AppDbContext second = CreateContext();
+
+        await Task.WhenAll(
+            Seeder(first).SeedAsync(CancellationToken.None),
+            Seeder(second).SeedAsync(CancellationToken.None));
+
+        await using AppDbContext verify = CreateContext();
+        List<Feature> features = await verify.Set<Feature>().AsNoTracking().ToListAsync();
+
+        Assert.Equal(PlatformFeatures.All.Count, features.Count);
+        Assert.Equal(
+            features.Count,
+            features.Select(feature => feature.Key).Distinct(StringComparer.Ordinal).Count());
     }
 
     [Fact]

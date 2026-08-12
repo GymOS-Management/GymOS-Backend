@@ -24,6 +24,23 @@ internal sealed class PlanRepository : IPlanRepository
             .Include(plan => plan.Features)
             .SingleOrDefaultAsync(plan => plan.Id == planId, cancellationToken);
 
+    public async Task<SubscriptionPlan?> FindByIdForUpdateAsync(
+        Guid planId,
+        CancellationToken cancellationToken)
+    {
+        // Same two-statement shape as ISubscriptionRepository.FindByIdForUpdateAsync, for the same
+        // reason: PlanPrice maps a Money complex property, so EF cannot FromSql this entity — the
+        // composed projection loses the complex property's column names. The lock is taken as a
+        // bare scalar statement instead, and the aggregate then loads through the normal Include
+        // pipeline on the same connection and transaction, where the lock is already held. Callers
+        // hold an IUnitOfWork transaction, or the lock would die with statement one.
+        await _dbContext.Database.ExecuteSqlAsync(
+            $"SELECT 1 FROM platform.subscription_plans WHERE id = {planId} FOR UPDATE",
+            cancellationToken);
+
+        return await FindByIdAsync(planId, cancellationToken);
+    }
+
     public Task<SubscriptionPlan?> FindByCodeAsync(string code, CancellationToken cancellationToken)
     {
         string normalized = (code ?? string.Empty).Trim().ToUpperInvariant();

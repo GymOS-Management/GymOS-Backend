@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using GymOS.Platform.Domain.Features;
 using GymOS.Platform.Domain.Identity;
 using Xunit;
 
@@ -19,6 +21,7 @@ public sealed class PlanApiTests : IAsyncLifetime
     private readonly PostgresFixture _postgres;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
+    private Guid _plan;
 
     public PlanApiTests(PostgresFixture postgres) => _postgres = postgres;
 
@@ -35,6 +38,9 @@ public sealed class PlanApiTests : IAsyncLifetime
             _client, AuthenticationHost.SuperAdminEmail, AuthenticationHost.SuperAdminPassword);
         Assert.Equal(HttpStatusCode.OK, signIn.StatusCode);
         AuthApi.Authorize(_client, await AuthApi.ReadAccessTokenAsync(signIn));
+
+        // Shared by the feature-write tests below, which only need some plan to PUT against.
+        _plan = await CreateAsync("FEATURETESTS");
     }
 
     public async Task DisposeAsync()
@@ -408,6 +414,26 @@ public sealed class PlanApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_empty_body_is_refused_not_a_server_error()
+    {
+        using HttpResponseMessage response = await PutFeaturesRawAsync(_plan, "{}");
+
+        // Was a 500: Features bound to null and the handler dereferenced it. A caller mistake must
+        // never be reported as a server fault, and the sibling gym route already guarded this.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task The_same_key_twice_is_refused_here_too()
+    {
+        using HttpResponseMessage response = await SetFeaturesAsync(
+            _plan, [(PlatformFeatures.Crm, true), (PlatformFeatures.Crm, null)]);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("features.duplicate_key", await AuthApi.ReadProblemCodeAsync(response));
+    }
+
+    [Fact]
     public async Task AnAnonymousCallerGets401()
     {
         using HttpClient anonymous = _host.CreateClient();
@@ -499,6 +525,30 @@ public sealed class PlanApiTests : IAsyncLifetime
         request.Headers.TryAddWithoutValidation("If-Match", $"\"{await RowVersionAsync(planId)}\"");
 
         return await _client.SendAsync(request);
+    }
+
+    /// <summary>Sends an arbitrary JSON body to the features route, with a valid If-Match attached.</summary>
+    private async Task<HttpResponseMessage> PutFeaturesRawAsync(Guid planId, string rawJsonBody)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, new Uri($"/api/v1/plans/{planId}/features", UriKind.Relative))
+        {
+            Content = new StringContent(rawJsonBody, Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{await RowVersionAsync(planId)}\"");
+
+        return await _client.SendAsync(request);
+    }
+
+    private Task<HttpResponseMessage> SetFeaturesAsync(
+        Guid planId, params (string Key, bool? IsEnabled)[] features)
+    {
+        string json = JsonSerializer.Serialize(new
+        {
+            features = features.Select(feature => new { key = feature.Key, isEnabled = feature.IsEnabled }),
+        });
+
+        return PutFeaturesRawAsync(planId, json);
     }
 
     private async Task<HttpResponseMessage> PutAsync(Guid planId, object payload, string rowVersion)

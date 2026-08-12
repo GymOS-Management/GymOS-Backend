@@ -18,12 +18,27 @@ public interface IUnitOfWork
 
     /// <summary>
     /// Opens an explicit transaction so reads taken with locks (a repository's for-update
-    /// lookup) hold them until <see cref="IUnitOfWorkTransaction.CommitAsync"/>. Request handlers
-    /// do not need this — one save is already one transaction; it exists for the background
-    /// sweeps, where losing a race means burning an invoice number rather than returning a 409.
+    /// lookup) hold them until <see cref="IUnitOfWorkTransaction.CommitAsync"/>. Most request
+    /// handlers do not need this — one save is already one transaction — but a handler that reads
+    /// a second aggregate with a for-update lock before deciding what to write needs the lock held
+    /// across both the read and the eventual save, which requires wrapping them in one of these.
     /// Disposing without committing rolls back.
     /// </summary>
     Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Detaches every tracked entity, discarding whatever a failed <see cref="SaveChangesAsync"/>
+    /// left mid-flight.
+    ///
+    /// <para>Exists for a handler that catches a transient persistence failure — a unique-index
+    /// race it can resolve by retrying itself once — and re-runs its own logic from scratch.
+    /// Without this, the retry's fresh reads merge into entities the failed attempt already added
+    /// or modified (an insert the database never committed is still tracked as <c>Added</c>), so
+    /// the second attempt would try to write the first attempt's poisoned state alongside its own
+    /// and fail the same way. Calling this first makes the retry start from what is actually
+    /// committed, exactly as if it were a fresh request.</para>
+    /// </summary>
+    void DiscardTrackedChanges();
 }
 
 /// <summary>An explicit transaction from <see cref="IUnitOfWork.BeginTransactionAsync"/>.</summary>

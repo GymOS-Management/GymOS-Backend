@@ -87,12 +87,22 @@ internal sealed class SetPlanFeaturesCommandHandler
             feature => feature.Key, StringComparer.OrdinalIgnoreCase);
 
         var resolved = new List<(Feature Feature, bool? IsEnabled)>(command.Features.Count);
+        var seen = new HashSet<Guid>();
         foreach (PlanFeatureRequest requested in command.Features)
         {
             if (!byKey.TryGetValue((requested.Key ?? string.Empty).Trim(), out Feature? feature))
             {
                 return Result.Failure<PlanDetail>(
                     FeatureErrors.UnknownKey(requested.Key ?? string.Empty));
+            }
+
+            // The same key twice is a contradiction, not an instruction: there is one opinion per
+            // (plan, feature), so silently applying the last one would honour half of what was
+            // asked while reporting success. SetGymFeaturesCommandHandler.PlanChangesAsync refuses
+            // its own repeated key for exactly this reason, and it applies verbatim here.
+            if (!seen.Add(feature.Id))
+            {
+                return Result.Failure<PlanDetail>(FeatureErrors.DuplicateKey(feature.Key));
             }
 
             resolved.Add((feature, requested.IsEnabled));

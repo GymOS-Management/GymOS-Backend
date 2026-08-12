@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Domain.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -24,6 +25,8 @@ namespace GymOS.Platform.Infrastructure.Persistence.Seeding;
 public sealed partial class FeatureCatalogSeeder
 {
     private readonly AppDbContext _dbContext;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IAdvisoryLock _advisoryLock;
     private readonly ILogger<FeatureCatalogSeeder> _logger;
 
     [LoggerMessage(Level = LogLevel.Information, Message =
@@ -42,19 +45,40 @@ public sealed partial class FeatureCatalogSeeder
         "migration once those references are reviewed.")]
     private static partial void LogOrphanedFeature(ILogger logger, string featureKey);
 
-    public FeatureCatalogSeeder(AppDbContext dbContext, ILogger<FeatureCatalogSeeder> logger)
+    public FeatureCatalogSeeder(
+        AppDbContext dbContext,
+        IUnitOfWork unitOfWork,
+        IAdvisoryLock advisoryLock,
+        ILogger<FeatureCatalogSeeder> logger)
     {
         _dbContext = dbContext;
+        _unitOfWork = unitOfWork;
+        _advisoryLock = advisoryLock;
         _logger = logger;
     }
 
     public async Task SeedAsync(CancellationToken cancellationToken)
     {
+        // Checked before the transaction opens: a database with pending migrations gets no lock
+        // and no transaction, exactly as before this change — this guard must run whether or not
+        // seeding proceeds.
         if ((await _dbContext.Database.GetPendingMigrationsAsync(cancellationToken)).Any())
         {
             LogSkippedPendingMigrations(_logger);
             return;
         }
+
+        // Two instances booting against a fresh database both see an empty catalogue and both try
+        // to insert every declared feature — one of them loses to ux_features_key. The lock is
+        // held for the life of this transaction (PostgresAdvisoryLock), so the instance that waits
+        // re-reads existingKeys below only after the other has committed, and finds nothing left
+        // to insert. Saving through IUnitOfWork rather than the context directly also means that if
+        // a race is ever lost anyway, the failure surfaces as UniquenessConflictException rather
+        // than a raw DbUpdateException escaping SeedAsync and killing the host via Program.cs's
+        // catch-all.
+        await using IUnitOfWorkTransaction transaction =
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
+        await _advisoryLock.AcquireAsync(SeedingLocks.CatalogSeed, cancellationToken);
 
         HashSet<string> existingKeys = (await _dbContext.Set<Feature>()
                 .Select(feature => feature.Key)
@@ -85,8 +109,10 @@ public sealed partial class FeatureCatalogSeeder
 
         if (inserted > 0)
         {
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
+
+        await transaction.CommitAsync(cancellationToken);
 
         LogSynced(_logger, inserted, existingKeys.Count);
     }
