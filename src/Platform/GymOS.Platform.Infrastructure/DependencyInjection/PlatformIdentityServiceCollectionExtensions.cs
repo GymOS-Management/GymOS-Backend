@@ -3,6 +3,7 @@ using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Application.Auditing;
 using GymOS.Platform.Application.Identity;
 using GymOS.Platform.Application.Identity.Abstractions;
+using GymOS.Platform.Infrastructure.Email;
 using GymOS.Platform.Infrastructure.Identity;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Queries;
@@ -54,12 +55,48 @@ public static class PlatformIdentityServiceCollectionExtensions
             .Bind(configuration.GetSection(SuperAdminSeedOptions.SectionName))
             .ValidateOnStart();
 
+        // ADR-53. Validated at startup rather than at first send, and only when enabled: a
+        // misconfigured mail server that reveals itself when somebody invites an administrator is a
+        // defect found by a person waiting for an email. Off by default, so the integration suite and
+        // a developer without the Mailpit profile need no SMTP server.
+        services.AddOptions<EmailOptions>()
+            .Bind(configuration.GetSection(EmailOptions.SectionName))
+            .Validate(
+                options => !options.Enabled || !string.IsNullOrWhiteSpace(options.Smtp.Host),
+                $"{EmailOptions.SectionName}:Smtp:Host is required when {EmailOptions.SectionName}:Enabled is true.")
+            .Validate(
+                options => !options.Enabled || !string.IsNullOrWhiteSpace(options.From.Address),
+                $"{EmailOptions.SectionName}:From:Address is required when {EmailOptions.SectionName}:Enabled is true.")
+            .Validate(
+                options => !options.Enabled || Uri.TryCreate(options.ConsoleBaseUrl, UriKind.Absolute, out _),
+                $"{EmailOptions.SectionName}:ConsoleBaseUrl must be an absolute URL when " +
+                $"{EmailOptions.SectionName}:Enabled is true — every activation link is built from it, " +
+                "and a wrong one is already delivered before anyone notices.")
+            .ValidateOnStart();
+
         services.TryAddScoped<IPasswordHasher, Argon2PasswordHasher>();
         services.TryAddScoped<IAccessTokenIssuer, JwtTokenService>();
         services.TryAddScoped<IRefreshTokenGenerator, RefreshTokenGenerator>();
+        services.TryAddScoped<IActivationTokenGenerator, ActivationTokenGenerator>();
+
+        // The transport is chosen by configuration, so every path that sends mail is exercised in
+        // development and in tests without an SMTP server existing (ADR-53).
+        bool emailEnabled = configuration.GetSection(EmailOptions.SectionName).GetValue<bool>("Enabled");
+
+        if (emailEnabled)
+        {
+            services.TryAddScoped<IEmailSender, SmtpEmailSender>();
+        }
+        else
+        {
+            services.TryAddScoped<IEmailSender, LoggingEmailSender>();
+        }
+
+        services.TryAddScoped<IActivationLinks, ActivationLinks>();
 
         services.TryAddScoped<IUserRepository, UserRepository>();
         services.TryAddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+        services.TryAddScoped<IUserActivationTokenRepository, UserActivationTokenRepository>();
         services.TryAddScoped<IRoleRepository, RoleRepository>();
         services.TryAddScoped<IIdentityQueries, IdentityQueries>();
         services.TryAddScoped<IUserQueries, UserQueries>();

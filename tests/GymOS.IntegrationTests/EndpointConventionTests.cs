@@ -27,6 +27,11 @@ public sealed class EndpointConventionTests : IAsyncLifetime
     {
         "/api/v{version:apiVersion}/auth/login",   // how a caller obtains permissions
         "/api/v{version:apiVersion}/auth/refresh", // authorized by the refresh cookie
+
+        // ADR-53. The person following an invitation link cannot sign in — that is the situation
+        // these exist to resolve — so the one-time token in the link is the credential. Both the
+        // GET (is this link still usable?) and the POST (set the password) share the pattern.
+        "/api/v{version:apiVersion}/auth/set-password",
     };
 
     /// <summary>

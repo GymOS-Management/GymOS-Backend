@@ -1,5 +1,6 @@
 using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.Platform.Application.Identity;
+using GymOS.Platform.Application.Identity.Activation;
 using GymOS.Platform.Application.Identity.Users;
 using GymOS.Platform.Application.Invoices;
 using GymOS.Platform.Application.Subscriptions;
@@ -22,6 +23,7 @@ public static class PlatformApplicationServiceCollectionExtensions
         services.TryAddScoped<SessionFactory>();
         services.TryAddScoped<SuperAdminGuard>();
         services.TryAddScoped<InvoiceIssuer>();
+        services.TryAddScoped<ActivationIssuer>();
         services.TryAddScoped<SubscriptionRenewalService>();
         services.TryAddScoped<InvoiceOverdueService>();
 

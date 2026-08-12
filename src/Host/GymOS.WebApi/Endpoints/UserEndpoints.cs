@@ -3,6 +3,7 @@ using Asp.Versioning.Builder;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Models;
 using GymOS.Platform.Application.Identity.Abstractions;
+using GymOS.Platform.Application.Identity.Activation;
 using GymOS.Platform.Application.Identity.Users;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
@@ -19,6 +20,15 @@ namespace GymOS.WebApi.Endpoints;
 /// </summary>
 public static class UserEndpoints
 {
+    /// <summary>
+    /// Whether an invitation or reset reached the mail server. <b>Not whether it arrived</b> — a
+    /// bounce, a spam filing, and a wrong-but-well-formed address are indistinguishable from here.
+    /// </summary>
+    internal const string InvitationEmailHeader = "X-Invitation-Email";
+
+    internal const string EmailSentValue = "sent";
+    internal const string EmailFailedValue = "failed";
+
     public static IEndpointRouteBuilder MapUserEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -115,6 +125,35 @@ public static class UserEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
+        group.MapPost("/{userId:guid}/resend-invitation", ResendInvitationAsync)
+            .RequireAuthorization(PlatformPermissions.UsersManage)
+            .WithName("ResendInvitation")
+            .WithSummary("Send the activation link again")
+            .WithDescription(
+                "For an administrator who has not activated yet. Issuing a new link invalidates the " +
+                "previous one, so at most one is ever live. Refused with `users.not_pending_activation` " +
+                "for an account that has already activated — that case wants a password reset instead. " +
+                "`X-Invitation-Email` reports whether the message reached the mail server; it never " +
+                "means delivered.")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        group.MapPost("/{userId:guid}/reset-password", SendPasswordResetAsync)
+            .RequireAuthorization(PlatformPermissions.UsersManage)
+            .WithName("SendPasswordReset")
+            .WithSummary("Email a password-reset link")
+            .WithDescription(
+                "Sends the account's owner a one-time link. **It does not set a password** — an " +
+                "administrator who could set another administrator's password would hold a credential " +
+                "that is no longer one (§3.6). Refused for an account that has never activated " +
+                "(re-send the invitation instead) and for a suspended one (reactivate first).")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
         group.MapPut("/{userId:guid}/roles", SetRolesAsync)
             .RequireAuthorization(PlatformPermissions.UsersManage)
             .RequiresIfMatch()
@@ -163,19 +202,73 @@ public static class UserEndpoints
         return WriteResults.Read(result, result.IsSuccess ? result.Value.RowVersion : null);
     }
 
+    /// <summary>
+    /// The response body is unchanged — the created administrator, exactly as before. Whether the
+    /// invitation reached the mail server rides in <c>X-Invitation-Email</c> instead, the shape
+    /// <c>Idempotency-Replayed</c> already established: the account is created either way (ADR-53),
+    /// and the console needs to know whether to say "invitation sent" or "created, but the email did
+    /// not go — re-send it".
+    /// </summary>
     private static async Task<IResult> InviteAsync(
         InviteUserRequest request,
+        HttpContext httpContext,
         IDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        Result<UserDetail> result = await dispatcher.SendAsync(
+        Result<InvitedUser> result = await dispatcher.SendAsync(
             new InviteUserCommand(request.Email, request.FirstName, request.LastName, request.RoleIds ?? []),
             cancellationToken);
 
+        if (result.IsSuccess)
+        {
+            httpContext.Response.Headers[InvitationEmailHeader] =
+                result.Value.EmailSent ? EmailSentValue : EmailFailedValue;
+        }
+
+        Result<UserDetail> user = result.IsSuccess
+            ? Result.Success(result.Value.User)
+            : Result.Failure<UserDetail>(result.Error!);
+
         return WriteResults.Created(
-            result,
-            location: result.IsSuccess ? $"/api/v1/users/{result.Value.Id}" : string.Empty,
-            rowVersion: result.IsSuccess ? result.Value.RowVersion : null);
+            user,
+            location: user.IsSuccess ? $"/api/v1/users/{user.Value.Id}" : string.Empty,
+            rowVersion: user.IsSuccess ? user.Value.RowVersion : null);
+    }
+
+    private static async Task<IResult> ResendInvitationAsync(
+        Guid userId,
+        HttpContext httpContext,
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        Result<ActivationDispatch> result = await dispatcher.SendAsync(
+            new ResendInvitationCommand(userId), cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            httpContext.Response.Headers[InvitationEmailHeader] =
+                result.Value.EmailSent ? EmailSentValue : EmailFailedValue;
+        }
+
+        return WriteResults.NoContent(result);
+    }
+
+    private static async Task<IResult> SendPasswordResetAsync(
+        Guid userId,
+        HttpContext httpContext,
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        Result<ActivationDispatch> result = await dispatcher.SendAsync(
+            new SendPasswordResetCommand(userId), cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            httpContext.Response.Headers[InvitationEmailHeader] =
+                result.Value.EmailSent ? EmailSentValue : EmailFailedValue;
+        }
+
+        return WriteResults.NoContent(result);
     }
 
     private static async Task<IResult> UpdateAsync(

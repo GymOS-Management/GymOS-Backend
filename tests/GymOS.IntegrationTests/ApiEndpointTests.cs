@@ -115,7 +115,7 @@ public sealed class ApiEndpointTests : IAsyncLifetime
     /// new endpoint that forgets <c>RequireAuthorization</c> lands in this list and fails here.
     /// </summary>
     [Fact]
-    public async Task EveryOperation_DeclaresBearerAuth_ExceptTheTwoThatCannotRequireIt()
+    public async Task EveryOperation_DeclaresBearerAuth_ExceptTheFewThatCannotRequireIt()
     {
         JsonElement document = await GetOpenApiDocumentAsync();
 
@@ -149,7 +149,12 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         }
 
         Assert.Equal(
-            ["POST /api/v1/auth/login", "POST /api/v1/auth/refresh"],
+            [
+                "GET /api/v1/auth/set-password",
+                "POST /api/v1/auth/login",
+                "POST /api/v1/auth/refresh",
+                "POST /api/v1/auth/set-password",
+            ],
             anonymous.Order(StringComparer.Ordinal));
 
         // A tripwire, not a specification: this number is expected to change whenever an endpoint
@@ -159,7 +164,10 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         // gym-feature operations.
         // 49 → 52 in M5 task 4: the three dashboard operations (summary, health, activity).
         // 52 → 55 in M5 task 5: the three analytics series operations (revenue, gyms-growth, churn).
-        Assert.Equal(55, secured.Count);
+        // 55 → 57 with ADR-53: resend-invitation and reset-password. The two set-password
+        // operations landed in the anonymous list above, which is the answer this tripwire exists
+        // to make somebody check.
+        Assert.Equal(57, secured.Count);
     }
 
     /// <summary>

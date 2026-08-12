@@ -947,6 +947,61 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("users", "platform");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Identity.UserActivationToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("ConsumedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("consumed_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<DateTimeOffset>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at_utc");
+
+                    b.Property<int>("Purpose")
+                        .HasColumnType("integer")
+                        .HasColumnName("purpose");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("token_hash");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_user_activation_tokens");
+
+                    b.HasIndex("CreatedByUserId")
+                        .HasDatabaseName("ix_user_activation_tokens_created_by_user_id");
+
+                    b.HasIndex("ExpiresAtUtc")
+                        .HasDatabaseName("ix_user_activation_tokens_expires_at_utc");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasDatabaseName("ix_user_activation_tokens_token_hash");
+
+                    b.HasIndex("UserId", "ConsumedAtUtc")
+                        .HasDatabaseName("ix_user_activation_tokens_user_id_consumed_at_utc");
+
+                    b.ToTable("user_activation_tokens", "platform");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.UserRole", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1506,6 +1561,22 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_role_permissions_roles_role_id");
+                });
+
+            modelBuilder.Entity("GymOS.Platform.Domain.Identity.UserActivationToken", b =>
+                {
+                    b.HasOne("GymOS.Platform.Domain.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_user_activation_tokens_user_created_by_user_id");
+
+                    b.HasOne("GymOS.Platform.Domain.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_activation_tokens_user_user_id");
                 });
 
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.UserRole", b =>

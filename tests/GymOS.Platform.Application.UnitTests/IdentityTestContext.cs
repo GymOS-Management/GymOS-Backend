@@ -57,6 +57,9 @@ internal sealed class IdentityTestContext
         services.AddSingleton<IPasswordHasher>(PasswordHasher);
         services.AddSingleton<IAccessTokenIssuer>(AccessTokens);
         services.AddSingleton<IRefreshTokenGenerator>(RefreshTokenGenerator);
+        services.AddSingleton<IUserActivationTokenRepository>(ActivationTokens);
+        services.AddSingleton<IActivationTokenGenerator>(ActivationTokenGenerator);
+        services.AddSingleton<IActivationLinks>(ActivationLinks);
         services.AddSingleton<IUnitOfWork>(UnitOfWork);
         services.AddSingleton<ICurrentUser>(CurrentUser);
         services.AddSingleton<IPermissionEvaluator>(Permissions);
@@ -95,6 +98,12 @@ internal sealed class IdentityTestContext
     public FakePermissionEvaluator Permissions { get; } = new();
 
     public FakeAuditTrail AuditTrail { get; } = new();
+
+    public FakeActivationTokenRepository ActivationTokens { get; } = new();
+
+    public FakeActivationTokenGenerator ActivationTokenGenerator { get; } = new();
+
+    public FakeActivationLinks ActivationLinks { get; } = new();
 
     public LoginPolicyOptions Policy { get; }
 

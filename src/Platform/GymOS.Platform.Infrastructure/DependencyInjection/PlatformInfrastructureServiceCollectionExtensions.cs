@@ -79,6 +79,7 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         // Refresh tokens accumulate one row per refresh; the retention job deletes the unusable
         // ones (the purge IRefreshTokenRepository has always documented).
         services.TryAddScoped<RefreshTokenMaintainer>();
+        services.TryAddScoped<ActivationTokenMaintainer>();
 
         // The recurring half of retention (AD-23) — the startup maintainers above cover first
         // boot; this covers every night after.

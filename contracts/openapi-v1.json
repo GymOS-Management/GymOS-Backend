@@ -1948,6 +1948,21 @@
         ],
         "type": "object"
       },
+      "SetPasswordRequest": {
+        "properties": {
+          "newPassword": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "newPassword"
+        ],
+        "type": "object"
+      },
       "SetPaymentStateRequest": {
         "properties": {
           "pastDue": {
@@ -3199,6 +3214,103 @@
           }
         },
         "summary": "Exchange the refresh cookie for a new access token",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/auth/set-password": {
+      "get": {
+        "description": "Lets the console show \u0022this link has expired, ask for another\u0022 instead of a form that fails on submit. Answers **validity and nothing else** \u2014 no email, no name, no roles \u2014 so holding a token reveals nothing about the account behind it. Every failure (unknown, expired, already used, account gone or suspended) returns the same \u0060410\u0060 with the same body, deliberately: a distinct \u0022expired\u0022 would confirm the token had once been real.",
+        "operationId": "CheckActivationLink",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "429": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Is this activation link still usable?",
+        "tags": [
+          "Authentication"
+        ]
+      },
+      "post": {
+        "description": "Consumes the link \u2014 it works once, and is spent even when the password is rejected by policy, so a refused attempt cannot leave a replayable link behind. Activates a PendingActivation account, rotates the security stamp, and revokes every existing refresh token: a reset ends any session that was already open, which is the point when the reason for resetting is that somebody else is in.",
+        "operationId": "SetPassword",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "429": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Set a password from an invitation or reset link",
         "tags": [
           "Authentication"
         ]
@@ -6956,6 +7068,128 @@
           }
         ],
         "summary": "Lift a suspension",
+        "tags": [
+          "Platform users"
+        ]
+      }
+    },
+    "/api/v1/users/{userId}/resend-invitation": {
+      "post": {
+        "description": "For an administrator who has not activated yet. Issuing a new link invalidates the previous one, so at most one is ever live. Refused with \u0060users.not_pending_activation\u0060 for an account that has already activated \u2014 that case wants a password reset instead. \u0060X-Invitation-Email\u0060 reports whether the message reached the mail server; it never means delivered.",
+        "operationId": "ResendInvitation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Send the activation link again",
+        "tags": [
+          "Platform users"
+        ]
+      }
+    },
+    "/api/v1/users/{userId}/reset-password": {
+      "post": {
+        "description": "Sends the account\u0027s owner a one-time link. **It does not set a password** \u2014 an administrator who could set another administrator\u0027s password would hold a credential that is no longer one (\u00A73.6). Refused for an account that has never activated (re-send the invitation instead) and for a suspended one (reactivate first).",
+        "operationId": "SendPasswordReset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Email a password-reset link",
         "tags": [
           "Platform users"
         ]

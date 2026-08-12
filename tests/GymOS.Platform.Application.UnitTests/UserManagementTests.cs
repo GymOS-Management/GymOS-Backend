@@ -22,7 +22,7 @@ public sealed class UserManagementTests
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
         Role admin = context.GivenPlatformRole(SystemRoles.PlatformAdmin);
 
-        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+        Result<InvitedUser> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand("new.admin@gymos.test", "New", "Admin", [admin.Id]),
             CancellationToken.None);
 
@@ -40,7 +40,7 @@ public sealed class UserManagementTests
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
         User existing = context.GivenActiveUser("taken@gymos.test");
 
-        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+        Result<InvitedUser> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand(existing.Email.ToUpperInvariant(), "Someone", "Else", []),
             CancellationToken.None);
 
@@ -56,7 +56,7 @@ public sealed class UserManagementTests
     {
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
 
-        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+        Result<InvitedUser> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand(email, "New", "Admin", []),
             CancellationToken.None);
 
@@ -69,7 +69,7 @@ public sealed class UserManagementTests
     {
         var context = new IdentityTestContext().ActingAs(Guid.NewGuid(), Manage);
 
-        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+        Result<InvitedUser> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand("new.admin@gymos.test", "New", "Admin", [Guid.NewGuid()]),
             CancellationToken.None);
 
@@ -84,7 +84,7 @@ public sealed class UserManagementTests
         Role tenantRole = Role.Create("Reception", "Front desk", RoleScope.Tenant, tenantId: Guid.NewGuid());
         context.Roles.Seed(tenantRole);
 
-        Result<UserDetail> result = await context.Dispatcher.SendAsync(
+        Result<InvitedUser> result = await context.Dispatcher.SendAsync(
             new InviteUserCommand("new.admin@gymos.test", "New", "Admin", [tenantRole.Id]),
             CancellationToken.None);
 

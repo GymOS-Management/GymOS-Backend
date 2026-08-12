@@ -37,6 +37,10 @@ public sealed class ForbiddenPackagesTests
 
         // Approved with the API reference UI — MIT, host-only. See DEPENDENCY_POLICY.md.
         "Scalar.AspNetCore",
+
+        // Approved with ADR-53's activation email — MIT, Infrastructure-only by the provider-SDK
+        // rule below. See DEPENDENCY_POLICY.md.
+        "MailKit",
     };
 
     /// <summary>Approved package families (prefix match, pre-approved by the frozen spec).</summary>

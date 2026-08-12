@@ -25,15 +25,18 @@ internal sealed class RetentionJob : IScheduledJob
     private readonly AuditLogPartitionMaintainer _auditPartitions;
     private readonly IdempotencyRecordMaintainer _idempotencyRecords;
     private readonly RefreshTokenMaintainer _refreshTokens;
+    private readonly ActivationTokenMaintainer _activationTokens;
 
     public RetentionJob(
         AuditLogPartitionMaintainer auditPartitions,
         IdempotencyRecordMaintainer idempotencyRecords,
-        RefreshTokenMaintainer refreshTokens)
+        RefreshTokenMaintainer refreshTokens,
+        ActivationTokenMaintainer activationTokens)
     {
         _auditPartitions = auditPartitions;
         _idempotencyRecords = idempotencyRecords;
         _refreshTokens = refreshTokens;
+        _activationTokens = activationTokens;
     }
 
     public string Name => "retention";
@@ -49,5 +52,9 @@ internal sealed class RetentionJob : IScheduledJob
         // The purge IRefreshTokenRepository always documented: rotation inserts a row per refresh,
         // and the session-ending paths load every token a user ever held.
         await _refreshTokens.PurgeUnusableAsync(cancellationToken);
+
+        // Same shape, same reason (ADR-53): every invitation, reset and re-send leaves a row, and
+        // spent credentials must not accumulate forever.
+        await _activationTokens.PurgeExpiredAsync(cancellationToken);
     }
 }

@@ -52,3 +52,10 @@ public sealed record CurrentUserResponse(
     string Status,
     IReadOnlyCollection<string> Roles,
     IReadOnlyCollection<string> Permissions);
+
+/// <param name="Token">The one-time value from the emailed link. Opaque to the client.</param>
+/// <param name="NewPassword">
+/// Checked against the same policy every other password goes through. A rejection still spends the
+/// link — see the endpoint description.
+/// </param>
+public sealed record SetPasswordRequest(string Token, string NewPassword);

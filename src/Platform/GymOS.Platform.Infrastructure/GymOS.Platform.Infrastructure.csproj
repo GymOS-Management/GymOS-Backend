@@ -14,6 +14,7 @@
     <PackageReference Include="EFCore.NamingConventions" />
     <!-- Argon2id password hashing (AD-4) — provider SDK, adapter-only by policy. -->
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
+    <PackageReference Include="MailKit" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

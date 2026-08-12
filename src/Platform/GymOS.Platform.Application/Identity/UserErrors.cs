@@ -65,4 +65,27 @@ public static class UserErrors
     public static Error AlreadySuspended => Error.Conflict(
         "users.already_suspended",
         "The administrator is already suspended.");
+
+    /// <summary>
+    /// Re-sending an invitation to somebody who has already activated. Refused rather than silently
+    /// converted to a reset: the two messages read differently, and telling an established
+    /// administrator their account was never set up is worse than an error.
+    /// </summary>
+    public static Error NotPendingActivation(string email) => Error.Conflict(
+        "users.not_pending_activation",
+        $"{email} has already activated their account. Send a password reset instead.");
+
+    /// <summary>The mirror: resetting the password of somebody who never had one.</summary>
+    public static Error StillPendingActivation(string email) => Error.Conflict(
+        "users.still_pending_activation",
+        $"{email} has never activated their account, so there is no password to reset. " +
+        "Re-send the invitation instead.");
+
+    /// <summary>
+    /// A suspended administrator must not be handed a way back in. Reactivate first, deliberately —
+    /// a reset that quietly undid a suspension would be a suspension that did not hold.
+    /// </summary>
+    public static Error SuspendedCannotReset(string email) => Error.Conflict(
+        "users.suspended_cannot_reset",
+        $"{email} is suspended. Reactivate the account before sending a password reset.");
 }

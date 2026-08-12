@@ -4,6 +4,7 @@ using Asp.Versioning.Builder;
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.Platform.Application.Identity;
+using GymOS.Platform.Application.Identity.Activation;
 using GymOS.Platform.Application.Identity.ChangePassword;
 using GymOS.Platform.Application.Identity.GetCurrentUser;
 using GymOS.Platform.Application.Identity.RefreshSession;
@@ -102,7 +103,65 @@ public static class AuthEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
+        // ── Activation (ADR-53) ────────────────────────────────────────────────────────────────
+        // Anonymous of necessity: the person following an invitation link has no way to sign in,
+        // which is the situation these exist to resolve. The one-time token is the credential.
+
+        group.MapGet("/set-password", CheckActivationTokenAsync)
+            .AllowAnonymous()
+            .RequireRateLimiting(RateLimitingExtensions.SignInPolicy)
+            .WithName("CheckActivationLink")
+            .WithSummary("Is this activation link still usable?")
+            .WithDescription(
+                "Lets the console show \"this link has expired, ask for another\" instead of a form " +
+                "that fails on submit. Answers **validity and nothing else** — no email, no name, no " +
+                "roles — so holding a token reveals nothing about the account behind it. Every " +
+                "failure (unknown, expired, already used, account gone or suspended) returns the " +
+                "same `410` with the same body, deliberately: a distinct \"expired\" would confirm " +
+                "the token had once been real.")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapPost("/set-password", SetPasswordAsync)
+            .AllowAnonymous()
+            .RequireRateLimiting(RateLimitingExtensions.SignInPolicy)
+            .WithName("SetPassword")
+            .WithSummary("Set a password from an invitation or reset link")
+            .WithDescription(
+                "Consumes the link — it works once, and is spent even when the password is rejected " +
+                "by policy, so a refused attempt cannot leave a replayable link behind. Activates a " +
+                "PendingActivation account, rotates the security stamp, and revokes every existing " +
+                "refresh token: a reset ends any session that was already open, which is the point " +
+                "when the reason for resetting is that somebody else is in.")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> CheckActivationTokenAsync(
+        string? token,
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        Result result = await dispatcher.QueryAsync(
+            new CheckActivationTokenQuery(token ?? string.Empty), cancellationToken);
+
+        return WriteResults.NoContent(result);
+    }
+
+    private static async Task<IResult> SetPasswordAsync(
+        SetPasswordRequest request,
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        Result result = await dispatcher.SendAsync(
+            new SetPasswordCommand(request.Token, request.NewPassword), cancellationToken);
+
+        return WriteResults.NoContent(result);
     }
 
     private static async Task<IResult> SignInAsync(

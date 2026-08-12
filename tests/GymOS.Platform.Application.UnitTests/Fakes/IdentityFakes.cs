@@ -304,3 +304,76 @@ internal sealed class FakeAuditTrail : IAuditTrail
         string? subjectEmail = null) =>
         Entries.Add((action, entityType, entityId, details, subjectEmail));
 }
+
+/// <summary>In-memory activation tokens, with the one-live-link rule the real repository enforces.</summary>
+internal sealed class FakeActivationTokenRepository : IUserActivationTokenRepository
+{
+    public List<UserActivationToken> Tokens { get; } = [];
+
+    public Task<UserActivationToken?> FindByHashAsync(string tokenHash, CancellationToken cancellationToken) =>
+        Task.FromResult(Tokens.SingleOrDefault(token => token.TokenHash == tokenHash));
+
+    public void Add(UserActivationToken token) => Tokens.Add(token);
+
+    public Task InvalidateOutstandingAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        foreach (UserActivationToken token in Tokens.Where(token => token.UserId == userId && !token.IsConsumed))
+        {
+            token.Consume(now);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<int> PurgeExpiredAsync(DateTimeOffset olderThanUtc, CancellationToken cancellationToken)
+    {
+        int removed = Tokens.RemoveAll(token => token.ExpiresAtUtc < olderThanUtc);
+
+        return Task.FromResult(removed);
+    }
+}
+
+/// <summary>
+/// Predictable tokens, so a test can assert on the value that was mailed.
+///
+/// <para>Deliberately not random: the production generator's job is unpredictability, which is
+/// exactly what makes it useless to assert against. What these tests check is the *flow* — that the
+/// token which reached the email is the one whose hash was stored.</para>
+/// </summary>
+internal sealed class FakeActivationTokenGenerator : IActivationTokenGenerator
+{
+    private int _issued;
+
+    public string Generate() => $"raw-token-{++_issued}";
+
+    public string ComputeHash(string rawToken) => $"hash-of-{rawToken}";
+}
+
+/// <summary>Records what would have been emailed, and can be made to fail on demand.</summary>
+internal sealed class FakeActivationLinks : IActivationLinks
+{
+    public List<(ActivationPurpose Purpose, ActivationRecipient Recipient, string RawToken)> Sent { get; } = [];
+
+    /// <summary>Set to simulate an unreachable mail server — the case that must not undo the account work.</summary>
+    public bool FailSends { get; set; }
+
+    public TimeSpan InvitationLifetime { get; set; } = TimeSpan.FromHours(72);
+
+    public TimeSpan PasswordResetLifetime { get; set; } = TimeSpan.FromHours(1);
+
+    public TimeSpan LifetimeFor(ActivationPurpose purpose) =>
+        purpose == ActivationPurpose.Invitation ? InvitationLifetime : PasswordResetLifetime;
+
+    public Task<EmailSendResult> SendAsync(
+        ActivationPurpose purpose,
+        ActivationRecipient recipient,
+        string rawToken,
+        CancellationToken cancellationToken)
+    {
+        Sent.Add((purpose, recipient, rawToken));
+
+        return Task.FromResult(FailSends
+            ? EmailSendResult.Failed("fake transport is configured to fail")
+            : EmailSendResult.Success);
+    }
+}

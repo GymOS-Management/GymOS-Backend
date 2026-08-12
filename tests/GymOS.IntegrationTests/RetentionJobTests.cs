@@ -71,7 +71,9 @@ public sealed class RetentionJobTests : IAsyncLifetime
             new IdempotencyRecordMaintainer(
                 context, Clock, NullLogger<IdempotencyRecordMaintainer>.Instance),
             new RefreshTokenMaintainer(
-                context, Clock, NullLogger<RefreshTokenMaintainer>.Instance));
+                context, Clock, NullLogger<RefreshTokenMaintainer>.Instance),
+            new ActivationTokenMaintainer(
+                context, Clock, NullLogger<ActivationTokenMaintainer>.Instance));
 
         await job.ExecuteAsync(Clock.UtcNow, CancellationToken.None);
 

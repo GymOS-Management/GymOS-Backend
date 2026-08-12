@@ -3,7 +3,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GymOS.IntegrationTests;
 
@@ -49,9 +51,15 @@ internal sealed class AuthenticationHost : IAsyncDisposable
         return new AppDbContext(options);
     }
 
+    /// <param name="configureServices">
+    /// Replaces a registration for one test host — the seam ADR-53's <c>IEmailSender</c> needs, since
+    /// the raw activation token exists only in the message that was sent and nowhere in the database.
+    /// Used sparingly: every other setting arrives through configuration, deliberately.
+    /// </param>
     public static AuthenticationHost Create(
         string connectionString,
-        Action<Dictionary<string, string>>? overrideSettings = null)
+        Action<Dictionary<string, string>>? overrideSettings = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var settings = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -75,6 +83,11 @@ internal sealed class AuthenticationHost : IAsyncDisposable
             foreach ((string key, string value) in settings)
             {
                 builder.UseSetting(key, value);
+            }
+
+            if (configureServices is not null)
+            {
+                builder.ConfigureTestServices(configureServices);
             }
         });
 
