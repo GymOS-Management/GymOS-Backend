@@ -1,6 +1,6 @@
-﻿using GymOS.BuildingBlocks.Application.Models;
-using GymOS.BuildingBlocks.Infrastructure.Persistence;
+using GymOS.BuildingBlocks.Application.Models;
 using GymOS.BuildingBlocks.Infrastructure.Auditing;
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Auditing;
 using Microsoft.EntityFrameworkCore;
 

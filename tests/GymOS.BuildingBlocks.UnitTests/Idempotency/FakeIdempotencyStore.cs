@@ -85,7 +85,9 @@ internal sealed class FakeIdempotencyStore : IIdempotencyStore
 
         _rows[(op, key)] = row with
         {
-            Status = status, ResponseStatus = responseStatus, ResponseBody = responseBody,
+            Status = status,
+            ResponseStatus = responseStatus,
+            ResponseBody = responseBody,
         };
         return Task.FromResult(true);
     }

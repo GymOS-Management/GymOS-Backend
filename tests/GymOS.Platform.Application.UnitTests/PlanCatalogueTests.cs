@@ -1,4 +1,4 @@
-﻿using GymOS.BuildingBlocks.Application.Abstractions;
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Models;

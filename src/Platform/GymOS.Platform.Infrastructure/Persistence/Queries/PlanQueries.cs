@@ -1,4 +1,4 @@
-﻿using GymOS.BuildingBlocks.Application.Models;
+using GymOS.BuildingBlocks.Application.Models;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Features;
