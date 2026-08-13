@@ -20,6 +20,10 @@ public sealed class ForbiddenPackagesTests
         "Microsoft.NET.Test.Sdk",
         "Microsoft.OpenApi", // transitive security pin — see Directory.Packages.props comment
         "NetArchTest.Rules",
+        // Transitive security pin, same treatment as Microsoft.OpenApi above: Testcontainers
+        // resolves a vulnerable SSH.NET (GHSA-q939-rpr3-3284) and has no patched release yet.
+        // Not a dependency anyone chose — remove this entry when the pin goes.
+        "SSH.NET",
         "xunit",
         "xunit.runner.visualstudio",
 

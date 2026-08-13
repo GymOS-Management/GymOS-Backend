@@ -2,9 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # All three long-lived branches. The model is feature/* -> development -> staging -> main, so
+    # development is where work lands and main is the last place a break should surface.
+    branches: [main, staging, development]
   pull_request:
-    branches: [main]
+    # Filtering this on `main` alone was the sharper half of the same gap: `development` is the
+    # repository's default branch, so a pull request opens against it by default — and none of those
+    # were being built at all.
+    branches: [main, staging, development]
   workflow_dispatch: # manual "Run workflow" button — for re-runs after infra failures
 
 concurrency:
