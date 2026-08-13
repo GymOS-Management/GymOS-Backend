@@ -1595,6 +1595,35 @@ above, not repeated here.
 
 ## Known open items / honest notes
 
+- **Two GymOS-Platform defects found and fixed while landing the E2E seed, 2026-08-13.** Both were
+  pre-existing and neither was caused by the seed — each was proved so before being touched.
+
+  **The mobile operator journey could not navigate** (`ce4fa4b`). `operator-journey.spec.ts`'s landing
+  test clicked the "Gyms" nav link unconditionally, and on a phone that link is `display:none`: the
+  persistent sidebar is `hidden lg:flex`, so below `lg` the anchor is in the DOM but outside the
+  accessibility tree, and the drawer holding the other copy renders nothing until opened. `getByRole`
+  therefore matched **nothing** and waited out the full 30s. Because the block is `describe.serial`,
+  that one failure **skipped the nine tests after it** — a whole viewport of the F1 journey reported
+  as "did not run" rather than as a failure, which is how it went unnoticed. Measured, not inferred:
+  at 390px `getByRole` counts 0 while a raw anchor selector counts 1, and opening the drawer takes it
+  to 1. The fix opens the drawer first on mobile, the branch the sibling nav test already used;
+  `page.goto('/gyms')` would also have gone green and was rejected, because this file's premise is
+  that the mobile pass is the responsiveness gate. **The click came from F3 (`340c1f3c`)**, which
+  moved the landing route to `/dashboard` and added a nav hop without the viewport branch — F3's owed
+  review is the gate that would have caught it. Suite went 32 passed/1 failed/9 not run → **42 passed,
+  0 failed, 0 skipped**.
+
+  **`pnpm format:check` was unpassable on Windows** (`f8050dc`). It failed on 82 files, which looked
+  like catastrophic drift and was almost entirely an artefact: Git for Windows defaults to
+  `core.autocrlf=true` so a checkout writes CRLF, while Prettier's `endOfLine` defaults to `lf` and
+  checks the working tree. A `.gitattributes` with `* text=auto eol=lf` fixes the checkout instead of
+  asking every developer to change a global Git setting, and it changed **no committed content** —
+  verified, not assumed: no file in the index contained CRLF, so renormalising and re-materialising
+  the whole working tree produced a diff of exactly zero content lines. `endOfLine: "auto"` was
+  rejected as silencing the gate rather than fixing it. With the artefact gone exactly **one** file
+  was genuinely misformatted (an F3 plan doc, cosmetic). Note for the backend's own gate: this is the
+  *Platform* repo's equivalent of `81b9ebd` below, and unrelated to it.
+
 - **~~`dotnet format --verify-no-changes` fails~~ — FIXED 2026-08-12 (`81b9ebd`), in the standalone
   pass this note asked for.** Worth keeping for one correction: the entry recorded *seven findings
   across six files* and there were **eight across seven**. `FakeIdempotencyStore.cs` also carried two
