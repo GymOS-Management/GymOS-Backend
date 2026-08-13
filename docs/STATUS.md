@@ -89,7 +89,7 @@ before resuming work on any machine.
 | **Enforced-header declarations** (`Idempotency-Key`, `If-Match`, `X-Confirm-Action` declared as real OpenAPI parameters, with the requiredness the pipeline actually applies) | ✅ **merged to `main`** (`5ee9aef`) — **1123 tests green**, snapshot regenerated and read semantically (25 header parameters added, nothing else changed) |
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **F2 — billing console** (GymOS-Platform: plans, subscriptions, invoices incl. `Idempotency-Key` minting) | ✅ complete — the frontend of M3; whole-branch reviewed, recorded in `GymOS-Platform/docs/F2-AS-BUILT.md` |
-| **F3 — dashboard & analytics console** (GymOS-Platform: `/dashboard` + revenue/growth/churn screens over M5's six operations) | ✅ **merged** (`a504abb`) — **117 unit tests**, owned SVG charts with **no new runtime dependency**, chart palette validated against the repo's own surfaces in both themes · design: `GymOS-Platform/docs/F3-DESIGN.md` · ⬅ **review owed**, and `F3-AS-BUILT.md` is deliberately unwritten until it can record what the review changed |
+| **F3 — dashboard & analytics console** (GymOS-Platform: `/dashboard` + revenue/growth/churn screens over M5's six operations) | ✅ **merged** (`a504abb`) — **117 unit tests**, owned SVG charts with **no new runtime dependency**, chart palette validated against the repo's own surfaces in both themes · design: `GymOS-Platform/docs/F3-DESIGN.md` · **E2E seed landed 2026-08-13** — `daily_platform_stats` seeded with a deliberate one-day gap by a Playwright `globalSetup`, so D3 is proved end to end; **8/8 analytics specs, both viewports, zero skips** · ⬅ **review owed**, and `F3-AS-BUILT.md` is deliberately unwritten until it can record what the review changed |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
 | **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
 | **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1267 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · single-pass reviewed, 2 findings fixed · **multi-agent whole-increment review run 2026-08-12** (1 Critical, 6 Important, 8 Minor) — fixed in **M4.1**, next row |
@@ -1551,11 +1551,32 @@ no longer where the slack is. Then, in priority order:
    it consumes is stable whatever the outstanding review concludes about the *implementation*.
 2. **Three reviews are outstanding** — M4.1's multi-agent gate, M5's whole-branch review, and now
    F3's. Pick the order that suits the reviewer; none blocks another, and none blocks F4.
-3. **Two things F3 deliberately left owed**, both small and both worth doing before F3's review rather
-   than after: an **E2E seed of `daily_platform_stats` rows including a deliberate one-day gap** —
-   without it the three analytics E2E specs skip rather than assert, so the gap rule (F3's most
-   important behaviour) is currently proved in the unit suite only — and **`F3-AS-BUILT.md`**, left
-   unwritten so it can record what the review changes instead of being rewritten after it.
+3. **~~Two things F3 deliberately left owed~~ — the seed is DONE (2026-08-13); `F3-AS-BUILT.md`
+   remains owed and stays owed on purpose.** The **E2E seed of `daily_platform_stats` including a
+   deliberate one-day gap** now exists as `GymOS-Platform/tests/e2e/seed-analytics.sql`, applied by a
+   Playwright `globalSetup` (`tests/e2e/global-setup.ts`) before the browsers start, so the gap rule
+   (D3, F3's most important behaviour) is proved **end to end** and no longer in the unit suite only.
+   **8/8 analytics specs pass across both viewports with zero skips.** Correcting this entry's own
+   count: **two** specs skipped, not three — revenue and churn. The growth spec drives the range
+   control and the dashboard spec reads live tables, so neither ever needed seeded rows.
+   `F3-AS-BUILT.md` is still deliberately unwritten so it can record what the review changes rather
+   than be rewritten after it — this entry previously said it was worth doing *before* the review,
+   which contradicted its own reason in the same sentence.
+
+   What the seed is, since its shape is load-bearing rather than arbitrary: 14 candidate days ending
+   yesterday with **one left out** (`CURRENT_DATE - 7`) → 13 rows, one interior gap, one missing day,
+   which is the sentence the specs assert. Every date is relative to `CURRENT_DATE` because hard-coded
+   dates would drift out of the console's default 30-day range and quietly return the specs to
+   asserting nothing. Two currencies, because against a single-currency screen a summed `Total` column
+   and a per-currency column are the same column and **D2** would be untestable. The population three
+   sum to `total_gyms` because Growth stacks them to that height (**D4**). `global-setup.ts` verifies
+   the shape it wrote and **throws** if it is not 13-rows-one-gap, so SQL drift surfaces as one clear
+   message before the browser starts. It reaches Postgres via `docker exec`, so **no new dependency** —
+   the same constraint F3's charts were built under.
+
+   Both directions were proved, per the standing rule: the specs were watched failing on the empty
+   series first, and the gap assertion was then watched failing against a **deliberately continuous**
+   seed (14 rows, no gap) — so it is known to be load-bearing on the gap and not merely green.
 4. **The API reference increment awaits review** (Konstantinos's) — unchanged by this work, and the
    only thing left over from before the audit's scope.
 5. **Audit finding 7** wants its own increment: concurrent failed sign-ins collide on the user row's
