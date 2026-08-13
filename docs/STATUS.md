@@ -1,6 +1,31 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-12 (late) · **Administrator activation is MERGED and works end to end**
+**Last updated:** 2026-08-13 · **Administrator activation has now had its review, and its five findings
+are fixed and merged** (`a74967f`). That was the gate this file called the next thing to run, on the
+grounds that it is a security surface that had never had an adversarial pass. What it found, in
+severity order: the link's **single-use guarantee did not survive concurrency**; every emailed link
+**dropped the console's sub-path**; email being switched off **reported as a successful send**; the
+check endpoint **documented a 410 and returned a 404**; and the read-only check **tracked its entity**.
+Details in "Known open items" below and in the commit. **1355 tests green** (the concurrency
+regression test is the extra one), 0 warnings, format gate 0, CI green on both jobs.
+
+The concurrency one is worth reading even if nothing else here is. `UserActivationToken` was
+*explicitly* exempted from optimistic concurrency — in the EF configuration and again in
+`ConcurrencyModelTests` — on the reasoning that "two concurrent redemptions inside one transaction
+each see the row's real state". Inside one transaction, true; and that is not the case that matters.
+Two concurrent *transactions* both read an unconsumed token, both pass `IsUsable`, and both wrote,
+because the UPDATE carried no version predicate. `User`'s own xmin did not cover it either: the
+password-policy-rejection path commits the consumption **alone**, touching no user row. It was
+demonstrated before it was fixed — with the row version reverted the new test reports "no exception
+was thrown", the second write committing against an already-consumed token. This is the same class of
+defect M4's review turned up: a comment asserting a property the code did not have.
+
+**Read the migration `20260812232206_AddActivationTokenRowVersion` before touching it.** It is
+deliberately **empty**: `xmin` is a PostgreSQL system column that already exists on every table, and
+the scaffolded `AddColumn` the tooling generated is rejected by the server outright. It exists only
+because EF refuses to run with pending model changes.
+
+**Previously (2026-08-12, late):** **Administrator activation is MERGED and works end to end**
 (`c487012` here, `d27e32a` in GymOS-Platform) — the newest increment and the one to read first.
 `POST /users` had been shipping accounts nobody could use since M1.3: the invite creates a
 `PendingActivation` administrator with no password (correctly — §3.6), and the emailed link that was
@@ -11,8 +36,8 @@ for exactly two messages rather than building §4.1's Notification Center first,
 preference and honour no digest. **1354 tests green**, 0 warnings. Verified live through Mailpit and
 then in a browser: invite → the first send failed with no SMTP server and the account was still
 created (`X-Invitation-Email: failed`) → re-send recovered it → link followed → password set →
-**signed in as the invited administrator** → the same link then offers no form. Its review is owed,
-and it is a security surface. Two smaller things merged alongside: the audit action filter is now
+**signed in as the invited administrator** → the same link then offers no form. ~~Its review is owed,
+and it is a security surface.~~ — that review has since happened; see the entry above. Two smaller things merged alongside: the audit action filter is now
 case-insensitive and escapes wildcards (`40b2bb3`), and `F5` starts a stack where the whole flow works
 (`0d56184`). See the milestone rows for both.
 **M4.1 (the M4 review-fixes increment) is MERGED to `main`**
@@ -1469,14 +1494,32 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
 
 ## Next step (resume here)
 
-**The activation increment's review is the one to run first, because it is a security surface and has
-had no adversarial pass.** The sharpest questions a reviewer should put to it: whether spending the
-token before the password is validated trades one problem for a worse one (a legitimate typo now costs
-a new link); whether the four-way identical `404` leaks anything through timing rather than through its
-body; whether an inline send after the commit is acceptable at all, or whether the outbox processor
-should land first; whether `Email:ConsoleBaseUrl` being a startup-validated string is enough protection
-for a value that, wrong once, is already delivered; and whether `X-Invitation-Email` reporting `sent`
-when email is disabled is a wart to fix now rather than record (see "Known open items").
+**~~The activation increment's review~~ is DONE (2026-08-13), and its fixes are merged (`a74967f`).**
+All five questions this section listed were answered, and three of them turned into findings:
+
+- *Spending the token before the password is validated* — **sound, and keep it.** Consuming only on
+  success leaves a link replayable for its full lifetime by anyone willing to submit a password the
+  policy rejects, at no cost to them. The typo tax is the smaller harm. But note the interaction the
+  review found: that path is precisely what made the concurrency defect reachable, because it commits
+  the consumption with no user row in the transaction.
+- *Timing on the four-way `404`* — **marginal, not worth changing.** Unknown, expired and consumed all
+  return after one query; valid-but-suspended costs a second. Only somebody already holding a token
+  can measure the difference, and the token is 256 bits from the OS CSPRNG.
+- *Inline send after the commit* — **acceptable as built.** The send is post-commit, every failure is
+  caught, and the account survives a dead mail server with the header telling the truth. The outbox
+  would add durability, not correctness, and building it first is the milestone-in-front-of-a-defect
+  ADR-53 exists to avoid.
+- *`Email:ConsoleBaseUrl` startup validation* — **not enough, and it was already wrong.** It checks
+  that the URL is absolute, not that it is right; a console under a sub-path had that path silently
+  discarded from every link. Fixed.
+- *`X-Invitation-Email: sent` when email is disabled* — **a defect, not a wart.** Combined with
+  `LoggingEmailSender` deliberately logging no body, it produced an account nobody could activate,
+  reported as an invitation delivered. There are three outcomes now: `sent`, `failed`, `disabled`.
+
+**The console side of the same increment (`d27e32a` in GymOS-Platform) has still not been reviewed.**
+This pass covered the backend only. The activation form is where the raw token is handled in a
+browser, so it wants its own look: whether the token reaches the page from the query string without
+leaking into history, logs, or a referrer, and what the page does with a `404` from either endpoint.
 
 **M4's whole-increment review has now happened, and M4.1 is its fix-up** — built, verified, and
 proved live on branch `m4-review-fixes`. That review is the gate M3.3 and M3.4 went through and M4
@@ -1547,6 +1590,30 @@ above, not repeated here.
   allowlist (`Microsoft.Extensions.Diagnostics.Testing` is the obvious candidate), so it needs
   `docs/Engineering/DEPENDENCY_POLICY.md`'s change process rather than a quiet addition. Until then,
   every `LoggerMessage` level in this repository is unverified by anything but review.
+
+- **The activation review's five findings, all FIXED 2026-08-13 (`a74967f`)**, recorded here because
+  three of them are the kind that reappear:
+  - **Single-use did not survive concurrency.** The token now carries `xmin`, and the handler turns a
+    lost race into the ordinary `link_not_usable` refusal rather than a 409 — the link really is
+    spent, so a retry could only fail again. The stale exemption is gone from
+    `ConcurrencyModelTests` rather than reworded. Guarded by
+    `TwoRequestsThatBothReadOneLiveLink_OnlyOneCanSpendIt`, which uses two `DbContext`s deterministically
+    rather than real threads: the window is narrow, and a test that only sometimes hits it is not a gate.
+  - **Emailed links dropped the console's sub-path.** The route is relative now, and the base is forced
+    to end in a slash — without that, .NET treats the final segment as a file name and drops it anyway,
+    so the obvious half-fix is wrong. The integration suite deploys its console under `/admin`
+    specifically so the existing link assertion covers this.
+  - **`Email:Enabled=false` reported as a successful send.** `EmailSendResult` carries a three-state
+    `EmailDispatch`; the header reports `sent`/`failed`/`disabled`; the suppressed send logs at
+    **Warning**, because on these two messages "not sent" means a person is waiting for a link that
+    will never arrive. `EmailOptions` no longer claims the link can be read out of the log — it never
+    could, and that claim is what made the gap invisible.
+  - **The check endpoint documented a `410` and returned a `404`.** Description text ships to consumers
+    through the contract snapshot, so this was a real contract defect, not a typo.
+  - **The read-only check tracked its entity.** `FindByHashForReadingAsync` reads through
+    `AsNoTracking`. Kept as a separate method rather than a flag because the command path **must**
+    track — `Consume` on a detached entity mutates nothing and leaves the link replayable, which is a
+    far worse bug than the one being fixed.
 
 - **F5 on `docker-compose.dcproj` cannot work, and the dcproj's own comment sends you after the
   wrong cause.** Found 2026-08-12. Visual Studio reports *"Cannot find the container for the service
