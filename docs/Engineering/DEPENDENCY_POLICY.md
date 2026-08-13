@@ -41,6 +41,7 @@ no vendor types outside adapters) · ADR-CHANGELOG.md (change process)
 | `Microsoft.Extensions.DependencyInjection.Abstractions` | MIT | Application / Infrastructure | DI registration for the CQRS dispatcher and seam implementations |
 | `Microsoft.Extensions.DependencyInjection` | MIT | tests / Host | Concrete container for dispatcher tests and host composition |
 | `Microsoft.OpenApi` | MIT | transitive pin (central only) | Security pin: `Microsoft.AspNetCore.OpenApi` resolves a vulnerable 2.0.0 (GHSA-v5pm-xwqc-g5wc); pinned to patched 2.x |
+| `SSH.NET` | MIT | transitive pin (central only) | Security pin: `Testcontainers.PostgreSql` 4.13.0 resolves SSH.NET 2025.1.0, which carries GHSA-q939-rpr3-3284 (high); pinned to 2026.0.0. **Not a new dependency** — already in the graph, and test-only in practice. 4.13.0 is the latest Testcontainers, so there is no upstream release to move to; **drop this pin once Testcontainers resolves a patched SSH.NET itself.** Broke CI on 2026-08-13 the day the advisory published, with restore failing before any code compiled |
 | `Microsoft.NET.Test.Sdk` | MIT | tests | Test host |
 | `xunit`, `xunit.runner.visualstudio` | Apache-2.0 | tests | Approved test framework (ARCHITECTURE.md §6) |
 | `NetArchTest.Rules` | MIT | tests | Architecture rule enforcement (AD-49) |

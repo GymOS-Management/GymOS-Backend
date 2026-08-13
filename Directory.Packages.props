@@ -35,6 +35,13 @@
     <!-- Transitive pin: Microsoft.AspNetCore.OpenApi 10.0.x resolves Microsoft.OpenApi 2.0.0,
          which carries GHSA-v5pm-xwqc-g5wc (high). Pinned to the patched 2.x line. -->
     <PackageVersion Include="Microsoft.OpenApi" Version="2.11.0" />
+    <!-- Transitive pin: Testcontainers.PostgreSql 4.13.0 resolves SSH.NET 2025.1.0, which carries
+         GHSA-q939-rpr3-3284 (high). 4.13.0 is the latest Testcontainers, so there is no upstream
+         version to move to yet — pinned here to the patched line instead. Test-only in practice
+         (Testcontainers is a test dependency), but NuGet audit fails the whole restore on it, and
+         `TreatWarningsAsErrors` is what turns NU1903 into a build break. Drop this pin once
+         Testcontainers ships a release that resolves a patched SSH.NET itself. -->
+    <PackageVersion Include="SSH.NET" Version="2026.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
