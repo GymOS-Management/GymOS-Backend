@@ -1,13 +1,36 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-13 · **F4 (feature flags console) is built, and its review is owed.** Three
-surfaces: the feature catalogue at `/features`, a Features tab on gym detail, and a Features card on
-plan detail. Design: `GymOS-Platform/docs/F4-DESIGN.md`. Plan:
-`GymOS-Platform/docs/superpowers/plans/2026-08-13-f4-feature-flags-console.md`. **188 unit tests**
-across 30 files passing (was 140 across 22 before F4), **66 E2E tests** passing, 0 failed, 0 skipped,
+**Last updated:** 2026-08-14 · **F4 (feature flags console) is built, ~~and its review is owed~~ —
+its review has now happened, its three substantive findings are fixed (`2ae0445`), and
+`F4-AS-BUILT.md` is written.** Three surfaces: the feature catalogue at `/features`, a Features tab on
+gym detail, and a Features card on plan detail. Design: `GymOS-Platform/docs/F4-DESIGN.md` · as built:
+`GymOS-Platform/docs/F4-AS-BUILT.md` · plan:
+`GymOS-Platform/docs/superpowers/plans/2026-08-13-f4-feature-flags-console.md`. **198 unit tests**
+across 31 files passing (was 140 across 22 before F4), **66 E2E tests** passing, 0 failed, 0 skipped,
 across both the desktop and mobile viewports (was 42 before F4); typecheck, lint and format:check all
-clean. `F4-AS-BUILT.md` is deliberately unwritten until after F4's review, following the convention F3
-set, so it records what the review changed rather than being rewritten after it.
+clean.
+
+**What F4's review found, in severity order.** **An override's reason could never be corrected** — the
+save path filtered submissions on the *value* differing, so an operator who found an override reading
+"temp", typed a proper justification and clicked Save got nothing at all: no request, no toast, no
+error. The backend supports that write directly (it upserts an existing override with the new reason
+while the value still differs from the plan's). This was a **design omission, not an implementation
+slip**: D6 says "a reason is required on every value change" and never considered a reason-only edit,
+and the reason box was seeded blank, so the stored justification showed in the row above and was
+absent from the field that edits it. **The form stayed live during a save** — only the Save button was
+gated, so anything typed mid-flight was wiped when the response re-seeded the draft, the same failure
+class the whole-branch review had already fixed on the plan card. And **the plan card's stated
+permission was wrong**: it is gated on `billing.read` but issues `GET /features`, which the backend
+gates on `features.read`, so a principal with one and not the other would take a 403 and see the card
+collapse into an error. Latent — no seeded role is in that position, which is why it went unnoticed —
+and D9's table has been corrected rather than the code bent to match a wrong document. Four low
+findings are recorded in the as-built and deliberately unfixed.
+
+**The whole-branch review before it caught a Critical bug** the nine per-task reviews structurally
+could not see: `PlanFeaturesCard` discarded the operator's draft on every save, because `rows` was
+rebuilt fresh each render and `isPending` re-rendered the container, tripping the child's render-time
+reset back to pre-save state. Fixed with `useMemo`, pinned by a test holding an unresolved promise in
+flight.
 
 **`toastApiError` finally landed.** F2's whole-branch review judged the extraction earned at 26
 occurrences across 17 files; F3 planned it as its Task 2 and did not do it, so it had grown to 41
@@ -124,7 +147,7 @@ before resuming work on any machine.
 | **F1 — Super Admin console** (GymOS-Platform repo, `v0.1.0`) | ✅ complete — frontend of M0–M2; 22 unit + 20 E2E green |
 | **F2 — billing console** (GymOS-Platform: plans, subscriptions, invoices incl. `Idempotency-Key` minting) | ✅ complete — the frontend of M3; whole-branch reviewed, recorded in `GymOS-Platform/docs/F2-AS-BUILT.md` |
 | **F3 — dashboard & analytics console** (GymOS-Platform: `/dashboard` + revenue/growth/churn screens over M5's six operations) | ✅ **merged** (`a504abb`) — **117 unit tests**, owned SVG charts with **no new runtime dependency**, chart palette validated against the repo's own surfaces in both themes · design: `GymOS-Platform/docs/F3-DESIGN.md` · **E2E seed landed 2026-08-13** — `daily_platform_stats` seeded with a deliberate one-day gap by a Playwright `globalSetup`, so D3 is proved end to end; **8/8 analytics specs, both viewports, zero skips** · ⬅ **review owed**, and `F3-AS-BUILT.md` is deliberately unwritten until it can record what the review changed |
-| **F4 — feature flags console** (GymOS-Platform: catalogue at `/features`, a Features tab on gym detail, a Features card on plan detail, over M4/M4.1's feature-flags contract) | ✅ **built** — **188 unit tests** across 30 files (was 140 across 22 before F4), **66 E2E tests**, 0 failed, 0 skipped, across both desktop and mobile viewports (was 42 before F4) · typecheck/lint/format:check all clean · `toastApiError` finally migrated at all 41 call sites (F2 judged it earned, F3 planned but skipped it) · design: `GymOS-Platform/docs/F4-DESIGN.md` · plan: `GymOS-Platform/docs/superpowers/plans/2026-08-13-f4-feature-flags-console.md` · ⬅ **review owed**, and `F4-AS-BUILT.md` is deliberately unwritten until it can record what the review changed |
+| **F4 — feature flags console** (GymOS-Platform: catalogue at `/features`, a Features tab on gym detail, a Features card on plan detail, over M4/M4.1's feature-flags contract) | ✅ **built and reviewed** — **198 unit tests** across 31 files (was 140 across 22 before F4), **66 E2E tests**, 0 failed, 0 skipped, across both desktop and mobile viewports (was 42 before F4) · typecheck/lint/format:check all clean · `toastApiError` finally migrated at all 41 call sites (F2 judged it earned, F3 planned but skipped it) · design: `GymOS-Platform/docs/F4-DESIGN.md` · **as built: `GymOS-Platform/docs/F4-AS-BUILT.md`** · plan: `GymOS-Platform/docs/superpowers/plans/2026-08-13-f4-feature-flags-console.md` · **review done 2026-08-14, 3 of 7 findings fixed (`2ae0445`)** — an override's reason was uncorrectable (a D6 omission, not an implementation slip), the form stayed live mid-save, and the plan card's documented permission contradicted the code. Four low findings recorded in the as-built, deliberately unfixed. **The one review still owed on this increment is nobody's: F4 is closed.** |
 | **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
 | **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
 | **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1267 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · single-pass reviewed, 2 findings fixed · **multi-agent whole-increment review run 2026-08-12** (1 Critical, 6 Important, 8 Minor) — fixed in **M4.1**, next row |
@@ -1528,6 +1551,22 @@ was renamed `gymos-pgdata` → `gymos-postgres-data` in M0.X, so a pre-M0.X loca
 still on disk but no longer mounted — see DOCKER.md troubleshooting.
 
 ## Next step (resume here)
+
+**F4 is closed as of 2026-08-14** — built, reviewed, its three substantive findings fixed
+(`2ae0445`), and `F4-AS-BUILT.md` written. It does not appear in the owed-review list below.
+
+**The owed-review list is now five, and it has only grown this week**: M4.1's multi-agent gate, M5's
+whole-branch review, F3's, the console side of the activation increment (`d27e32a` in GymOS-Platform
+— the browser half, where the raw token is handled), and the API reference increment. None blocks
+another and none blocks new work, which is exactly why the list keeps growing. Worth deciding whether
+the next slot goes to one of these rather than to another increment.
+
+**Two things F4 left behind on purpose**, both recorded in its as-built: a shared `FeatureRow` shell
+is the earned extraction (the row markup is copied across all three surfaces, and the E2E journey
+selects rows by their Tailwind classes, so a purely visual change to that markup silently breaks
+roughly eight tests), and two design choices nobody with an eye for design has seen — `SourceBadge`'s
+tone mapping, and the four "X unavailable" screens that turned red with `role="alert"` as a side
+effect of the `toastApiError` migration.
 
 **~~The activation increment's review~~ is DONE (2026-08-13), and its fixes are merged (`a74967f`).**
 All five questions this section listed were answered, and three of them turned into findings:
