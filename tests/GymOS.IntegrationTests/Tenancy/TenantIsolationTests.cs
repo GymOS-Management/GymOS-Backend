@@ -4,6 +4,8 @@ using GymOS.Platform.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Xunit;
 
@@ -12,8 +14,9 @@ namespace GymOS.IntegrationTests.Tenancy;
 /// <summary>
 /// R14's mechanism, proven rather than installed: a tenant sees only its own rows, a write cannot be
 /// forged for another tenant, the table owner does not bypass the policy, platform scope reads
-/// nothing rather than everything, an unprotected table fails the boot, and the session setting does
-/// not survive into the next use of a pooled connection.
+/// nothing rather than everything, an unprotected table fails the boot, platform scope still reads
+/// nothing when it borrows the same physical connection a tenant just used, and the two conditions
+/// under which the validator checks nothing at all are logged rather than passed over in silence.
 /// </summary>
 /// <remarks>
 /// <para><b>The suite's own database, and its own database role.</b> Every assertion here counts rows,
@@ -28,7 +31,8 @@ namespace GymOS.IntegrationTests.Tenancy;
 /// five-connection cap is load-bearing for the rest of the suite. One connection is what makes
 /// <see cref="TheTenantDoesNotLeakIntoTheNextUseOfAPooledConnection"/> deterministic: the two scopes it
 /// opens are guaranteed the same physical connection, so a leaked setting would be observed rather
-/// than gambled on.</para>
+/// than gambled on. Read that test's own comment before trusting it as a control — Npgsql's pooled
+/// connection reset, not the interceptor, is what it currently pins.</para>
 /// </remarks>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class TenantIsolationTests : IAsyncLifetime
@@ -234,7 +238,10 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
             () => ValidatorAsSuperuserAsync().ValidateAsync(CancellationToken.None));
 
-        Assert.Contains("row-level security", error.Message, StringComparison.OrdinalIgnoreCase);
+        // "row-level security" would NOT distinguish this from a table failure: InspectAsync's own
+        // messages contain that same phrase, so the assertion would pass on a validator that never
+        // looked at the role at all. BYPASSRLS appears only in the role message.
+        Assert.Contains("BYPASSRLS", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -250,11 +257,63 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HavingNothingToCheckIsLoggedAsAWarning_NotSkippedSilently()
+    {
+        // The early return above switches off the per-table checks AND the connected-role check
+        // together, so "nothing implements ITenantScoped" and "somebody forgot the marker on Member"
+        // are the same code path seen from in here. It must therefore leave a trace: a boot where this
+        // control did nothing has to be distinguishable, afterwards, from a boot where it passed.
+        await DropProbeAsync();
+
+        var logger = new CapturingLogger<TenantIsolationValidator>();
+        await new TenantIsolationValidator(CreateSuperuserContext(withTenantProbe: false), logger)
+            .ValidateAsync(CancellationToken.None);
+
+        (LogLevel Level, string Message) entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Contains("ITenantScoped", entry.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PendingMigrationsAreLoggedAsAWarning_NotSkippedSilently()
+    {
+        // The other early return, and the more dangerous one: a deployment with
+        // Database:MigrateOnStartup=false and a migration left pending disables R14 entirely on that
+        // boot. Against an unmigrated database — which is what a fresh isolated database is — the
+        // validator must say so rather than return a silent pass.
+        string unmigrated = await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation_pending");
+
+        await using var context = new AppDbContext(
+            new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(unmigrated, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+                .UseSnakeCaseNamingConvention()
+                .Options);
+
+        var logger = new CapturingLogger<TenantIsolationValidator>();
+        await new TenantIsolationValidator(context, logger).ValidateAsync(CancellationToken.None);
+
+        (LogLevel Level, string Message) entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Contains("pending migrations", entry.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task TheTenantDoesNotLeakIntoTheNextUseOfAPooledConnection()
     {
-        // Maximum Pool Size=1 makes this deterministic: both scopes below are guaranteed the same
-        // physical connection, so if the setting survived the first scope the second would read A's
-        // rows. It writes on every open precisely so it cannot (D6).
+        // What this actually proves, stated honestly: with Maximum Pool Size=1 both scopes below are
+        // guaranteed the same PHYSICAL connection, and the second one — platform scope — still reads
+        // nothing. That is the fail-closed property (D4) holding end to end across connection reuse.
+        //
+        // It is NOT a negative control for D6's unconditional write, though it was written believing it
+        // was. Changing TenantSessionInterceptor to skip the write when there is no tenant — precisely
+        // the shape D6 rejects — leaves this test green, because Npgsql resets a pooled connection on
+        // close (DISCARD ALL/RESET ALL) and clears the GUC before this scope ever borrows it. That was
+        // run, not reasoned about: all eight tests here passed with the write skipped.
+        //
+        // So nothing this suite can do makes the unconditional write load-bearing; only setting
+        // `No Reset On Close=true` or enabling multiplexing on the connection string would, and both are
+        // out of this suite's reach. The write stays as defence in depth against exactly that change,
+        // and this test stays for the property in the first paragraph.
         await SeedAsync(TenantA, "a-note");
 
         IReadOnlyList<string> asA = await NotesAsAsync(TenantA);
@@ -363,7 +422,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// a tenant-scoped table for it to have an opinion about.
     /// </summary>
     private TenantIsolationValidator ValidatorAsSuperuserAsync() =>
-        new(CreateSuperuserContext(withTenantProbe: true));
+        new(CreateSuperuserContext(withTenantProbe: true), NullLogger<TenantIsolationValidator>.Instance);
 
     /// <summary>
     /// A validator over the same superuser connection, but the unmodified <see cref="AppDbContext"/>
@@ -371,7 +430,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// <see cref="ITenantScoped"/> and the validator has no subject to check the role against.
     /// </summary>
     private TenantIsolationValidator ValidatorWithNoTenantScopedEntitiesAsSuperuserAsync() =>
-        new(CreateSuperuserContext(withTenantProbe: false));
+        new(CreateSuperuserContext(withTenantProbe: false), NullLogger<TenantIsolationValidator>.Instance);
 
     /// <summary>
     /// A raw <see cref="AppDbContext"/> connected through <see cref="_bootstrapConnectionString"/>
@@ -427,6 +486,30 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         await using NpgsqlCommand command = connection.CreateCommand();
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync();
+    }
+}
+
+/// <summary>
+/// Records what was logged, so a test can assert that a control which turned itself off said so.
+/// </summary>
+internal sealed class CapturingLogger<T> : ILogger<T>
+{
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state)
+        where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter)
+    {
+        ArgumentNullException.ThrowIfNull(formatter);
+        Entries.Add((logLevel, formatter(state, exception)));
     }
 }
 

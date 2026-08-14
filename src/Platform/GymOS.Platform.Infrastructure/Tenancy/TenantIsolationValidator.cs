@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace GymOS.Platform.Infrastructure.Tenancy;
 
@@ -26,28 +27,59 @@ namespace GymOS.Platform.Infrastructure.Tenancy;
 /// developer's boot today for a risk that does not exist until the first tenant-scoped table lands.
 /// The day it does, this fires and names the role, instead of quietly serving every tenant's rows to
 /// every caller.</para>
+/// <para><b>Both of its skip paths say so out loud.</b> Either early return switches this control off
+/// entirely — including the connected-role check — and a security control that turns itself off must
+/// not do it silently. A deployment with <c>MigrateOnStartup=false</c> and a migration left pending
+/// would otherwise disable R14 with nothing in the log to find afterwards. The warnings name which
+/// condition did it, so "was this control running?" is answerable from the boot log.</para>
 /// <para><b>Public, not internal.</b> It is invoked from <c>Program.cs</c> in the
 /// <c>GymOS.WebApi</c> host, which has no <c>InternalsVisibleTo</c> grant onto this assembly — the
 /// same reason <c>FeatureExceptionMaintainer</c> is public rather than internal.</para>
 /// </remarks>
-public sealed class TenantIsolationValidator
+public sealed partial class TenantIsolationValidator
 {
     private readonly AppDbContext _dbContext;
+    private readonly ILogger<TenantIsolationValidator> _logger;
 
-    public TenantIsolationValidator(AppDbContext dbContext) => _dbContext = dbContext;
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Tenant isolation validation (R14) was SKIPPED: the database has pending migrations, " +
+            "so the tables it would check may not exist yet. No tenant-scoped table is verified on " +
+            "this boot. Expected only on a first boot; if migrations are applied out of band " +
+            "(Database:MigrateOnStartup=false), this control is off until they are.")]
+    private static partial void LogSkippedPendingMigrations(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Tenant isolation validation (R14) checked nothing: no entity in the EF model " +
+            "implements ITenantScoped, so neither the per-table checks nor the connected-role " +
+            "BYPASSRLS check ran. Expected while no production table is tenant-scoped; once one is, " +
+            "an entity missing the ITenantScoped marker produces this same message.")]
+    private static partial void LogNoTenantScopedEntities(ILogger logger);
+
+    /// <summary>Creates the validator with its database context and logger.</summary>
+    public TenantIsolationValidator(AppDbContext dbContext, ILogger<TenantIsolationValidator> logger)
+    {
+        _dbContext = dbContext;
+        _logger = logger;
+    }
 
     public async Task ValidateAsync(CancellationToken cancellationToken)
     {
         if ((await _dbContext.Database.GetPendingMigrationsAsync(cancellationToken)).Any())
         {
-            return; // first boot: the tables do not exist yet, and the migration will create them protected
+            // First boot: the tables do not exist yet, and the migration will create them protected.
+            // Logged rather than returned silently — see the remarks.
+            LogSkippedPendingMigrations(_logger);
+            return;
         }
 
         var tenantScopedTables = TenantScopedTables().ToList();
 
         if (tenantScopedTables.Count == 0)
         {
-            return; // nothing to protect yet, so nothing to check — see the role note in the remarks
+            // Nothing to protect yet, so nothing to check — see the role note in the remarks. Logged
+            // because this is also what a forgotten ITenantScoped marker looks like from in here.
+            LogNoTenantScopedEntities(_logger);
+            return;
         }
 
         var problems = new List<string>(await InspectConnectedRoleAsync(cancellationToken));

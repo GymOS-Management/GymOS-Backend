@@ -40,6 +40,18 @@ internal sealed class AuthenticationHost : IAsyncDisposable
     /// <para>Deliberately narrow: a test that <em>acts</em> through the database rather than the API
     /// stops testing the API. Use it to set up preconditions and to verify storage, not to perform
     /// the behaviour under test.</para>
+    ///
+    /// <para><b>Warning — this context is built outside DI, so it has NO
+    /// <c>TenantSessionInterceptor</c>.</b> Every read and write through it runs with
+    /// <c>app.tenant_id</c> unset, i.e. in platform scope. That is harmless today because no production
+    /// table is tenant-scoped (R14), but the moment one is — <c>members</c> is the first — this context
+    /// changes behaviour twice, and neither reading is what an arrange/assert helper wants. While the
+    /// suite connects as the container's bootstrap superuser, row-level security does not apply at all
+    /// and this context sees <em>every</em> tenant's rows. Once the deployment (and so these tests)
+    /// connects as a non-superuser role subject to the forced policy, an unset <c>app.tenant_id</c>
+    /// matches no rows, so the very same helper sees <em>none</em> of them and a seeded insert is
+    /// refused — fail-closed, by design. Arrange and assert tenant-scoped state through a DI scope with
+    /// <c>ITenantContextSetter</c> instead; <c>TenantIsolationTests.InScopeAsync</c> is the pattern.</para>
     /// </summary>
     public AppDbContext CreateDbContext()
     {
