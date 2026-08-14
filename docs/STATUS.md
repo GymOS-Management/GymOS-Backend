@@ -20,11 +20,21 @@ gym churning twice reads as two churned gyms), **both now fixed and both leaving
 history**, because `daily_platform_stats` is write-once. See "Next step" for what that means and what
 nobody has decided about it.
 
-**The pattern worth carrying forward** is not any single bug: **four separate increments shipped a fix
+**The pattern worth carrying forward** is not any single bug: **five separate increments shipped a fix
 or a guard that could not work, each with a test that looked like coverage.** An unreachable catch
 (`4ce45d0`), a security assertion that `[{}]` satisfies, a rounding test whose fixture divides evenly,
-and a reconciliation test I wrote today whose numbers already reconciled. All passed CI. A test whose
-fixture cannot exhibit the failure is indistinguishable from one that can — until somebody checks.
+a reconciliation test whose numbers already reconciled — and now R14's pooled-connection leak test,
+which passes because Npgsql issues `DISCARD ALL` when a connection returns to the pool, not because
+of the interceptor it was written to prove. All passed CI. A test whose fixture cannot exhibit the
+failure is indistinguishable from one that can — until somebody checks.
+
+**The fifth one is the instructive one, because it was caught differently.** The first four were found
+by reading the test. This one survived its own task review and only fell to the question *"name the
+production change that would make this fail"* asked of the finished branch — and even then it was
+settled by running the experiment (break the interceptor, watch the test still pass) rather than by
+argument, because the reviewer's reasoning about Npgsql could itself have been wrong. Two habits came
+out of it and are worth keeping: **ask that question of every guard**, and **when the answer is
+reasoned rather than observed, go and observe it.**
 
 · **F4 (feature flags console) is built, ~~and its review is owed~~ — its review has happened, its
 three substantive findings are fixed (`2ae0445`), and `F4-AS-BUILT.md` is written.** Three surfaces: the feature catalogue at `/features`, a Features tab on
