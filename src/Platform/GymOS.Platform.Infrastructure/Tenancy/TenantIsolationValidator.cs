@@ -18,6 +18,14 @@ namespace GymOS.Platform.Infrastructure.Tenancy;
 /// state, and the guard <c>SuperAdminSeeder</c> already has. Anything else is fatal, because a
 /// security control that swallows "the table isn't there" passes on an empty database and on every
 /// misconfiguration that resembles one.</para>
+/// <para><b>The connected role is checked only when there is something to protect.</b> A role with
+/// <c>rolsuper</c> or <c>rolbypassrls</c> bypasses row-level security entirely, above whatever the
+/// table flags say — <c>FORCE</c> does not constrain it. But nothing in production implements
+/// <see cref="ITenantScoped"/> yet, and this application's own deployment connects as a superuser
+/// (<c>docker-compose.yml</c>'s <c>POSTGRES_USER</c>), so an unconditional check would fail every
+/// developer's boot today for a risk that does not exist until the first tenant-scoped table lands.
+/// The day it does, this fires and names the role, instead of quietly serving every tenant's rows to
+/// every caller.</para>
 /// <para><b>Public, not internal.</b> It is invoked from <c>Program.cs</c> in the
 /// <c>GymOS.WebApi</c> host, which has no <c>InternalsVisibleTo</c> grant onto this assembly — the
 /// same reason <c>FeatureExceptionMaintainer</c> is public rather than internal.</para>
@@ -35,9 +43,16 @@ public sealed class TenantIsolationValidator
             return; // first boot: the tables do not exist yet, and the migration will create them protected
         }
 
-        var problems = new List<string>();
+        var tenantScopedTables = TenantScopedTables().ToList();
 
-        foreach (var (schema, table) in TenantScopedTables())
+        if (tenantScopedTables.Count == 0)
+        {
+            return; // nothing to protect yet, so nothing to check — see the role note in the remarks
+        }
+
+        var problems = new List<string>(await InspectConnectedRoleAsync(cancellationToken));
+
+        foreach (var (schema, table) in tenantScopedTables)
         {
             problems.AddRange(await InspectAsync(schema, table, cancellationToken));
         }
@@ -58,6 +73,41 @@ public sealed class TenantIsolationValidator
                 Schema: entity.GetSchema() ?? "public",
                 Table: entity.GetTableName() ?? entity.ClrType.Name))
             .Distinct();
+
+    /// <summary>
+    /// Whether the connected role bypasses row-level security outright. PostgreSQL exempts a
+    /// superuser or a <c>BYPASSRLS</c> role from every policy unconditionally — <c>FORCE</c> included
+    /// — so this is checked before any table flag, because no table flag can compensate for it.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> InspectConnectedRoleAsync(CancellationToken cancellationToken)
+    {
+        var problems = new List<string>();
+
+        await using var command = _dbContext.Database.GetDbConnection().CreateCommand();
+        command.CommandText =
+            "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user";
+
+        await _dbContext.Database.OpenConnectionAsync(cancellationToken);
+
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+            if (await reader.ReadAsync(cancellationToken) && (reader.GetBoolean(1) || reader.GetBoolean(2)))
+            {
+                problems.Add(
+                    $"  the connected role \"{reader.GetString(0)}\" has BYPASSRLS (or is a " +
+                    "superuser), so row-level security does not apply to it and every policy below " +
+                    "is void.");
+            }
+        }
+        finally
+        {
+            await _dbContext.Database.CloseConnectionAsync();
+        }
+
+        return problems;
+    }
 
     private async Task<IReadOnlyList<string>> InspectAsync(
         string schema,

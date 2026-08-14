@@ -72,18 +72,28 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
     private readonly PostgresFixture _postgres;
     private readonly List<IServiceScope> _scopes = [];
+    private readonly List<AppDbContext> _superuserContexts = [];
     private string _connectionString = null!;
+
+    /// <summary>
+    /// The container's bootstrap role, before ownership moves to <see cref="ApplicationRole"/> — a
+    /// superuser, and the role Task 5's suite deliberately avoids connecting the application host as.
+    /// Kept so <see cref="CreateSuperuserContext"/> can still reach the database through it after
+    /// <see cref="InitializeAsync"/> hands the database and schema away.
+    /// </summary>
+    private string _bootstrapConnectionString = null!;
+
     private AuthenticationHost _host = null!;
 
     public TenantIsolationTests(PostgresFixture postgres) => _postgres = postgres;
 
     public async Task InitializeAsync()
     {
-        string bootstrapConnectionString = await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation");
+        _bootstrapConnectionString = await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation");
 
-        await ExecuteAsync(bootstrapConnectionString, GrantDatabaseToApplicationRoleSql);
+        await ExecuteAsync(_bootstrapConnectionString, GrantDatabaseToApplicationRoleSql);
 
-        _connectionString = new NpgsqlConnectionStringBuilder(bootstrapConnectionString)
+        _connectionString = new NpgsqlConnectionStringBuilder(_bootstrapConnectionString)
         {
             Username = ApplicationRole,
             Password = ApplicationRolePassword,
@@ -130,6 +140,11 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        foreach (AppDbContext context in _superuserContexts)
+        {
+            await context.DisposeAsync();
+        }
+
         foreach (IServiceScope scope in _scopes)
         {
             scope.Dispose();
@@ -206,6 +221,32 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
         Assert.Contains("tenant_probe", error.Message, StringComparison.Ordinal);
         Assert.Contains("policy", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ARoleThatBypassesRowLevelSecurityFailsTheBoot()
+    {
+        // FORCE does not constrain a superuser, so a correctly protected table plus a superuser
+        // connection is a platform that boots green and serves every tenant's rows to every caller.
+        // The table flags D5 reasons about are necessary and not sufficient.
+        await CreateProbeAsync(TenantProbeSchema.CreateSql);
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ValidatorAsSuperuserAsync().ValidateAsync(CancellationToken.None));
+
+        Assert.Contains("row-level security", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ASuperuserIsAcceptedWhileNothingIsTenantScoped()
+    {
+        // The check is conditional on there being something to protect, deliberately. Nothing in
+        // production implements ITenantScoped yet, so an unconditional check would fail every
+        // developer's `docker compose up` today for a risk that does not exist until `members` lands.
+        // When it does land, the boot fails loudly instead of quietly serving cross-tenant reads.
+        await DropProbeAsync();
+
+        await ValidatorWithNoTenantScopedEntitiesAsSuperuserAsync().ValidateAsync(CancellationToken.None);
     }
 
     [Fact]
@@ -313,6 +354,45 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         _scopes.Add(scope);
 
         return scope.ServiceProvider.GetRequiredService<TenantIsolationValidator>();
+    }
+
+    /// <summary>
+    /// A validator over a DbContext connected as the container's bootstrap role — the superuser Task 5
+    /// deliberately avoids, because PostgreSQL exempts a superuser (and a BYPASSRLS role) from row-level
+    /// security entirely, above whatever the table flags say — with the probe in the model, so there is
+    /// a tenant-scoped table for it to have an opinion about.
+    /// </summary>
+    private TenantIsolationValidator ValidatorAsSuperuserAsync() =>
+        new(CreateSuperuserContext(withTenantProbe: true));
+
+    /// <summary>
+    /// A validator over the same superuser connection, but the unmodified <see cref="AppDbContext"/>
+    /// model — no <see cref="IModelCustomizer"/> replacement, so nothing implements
+    /// <see cref="ITenantScoped"/> and the validator has no subject to check the role against.
+    /// </summary>
+    private TenantIsolationValidator ValidatorWithNoTenantScopedEntitiesAsSuperuserAsync() =>
+        new(CreateSuperuserContext(withTenantProbe: false));
+
+    /// <summary>
+    /// A raw <see cref="AppDbContext"/> connected through <see cref="_bootstrapConnectionString"/>
+    /// rather than through <c>_host</c>'s DI, so the connected role is the container's bootstrap
+    /// superuser instead of <see cref="ApplicationRole"/>. Tracked in <see cref="_superuserContexts"/>
+    /// for disposal, the same way <see cref="ValidatorAsync"/> tracks its scope.
+    /// </summary>
+    private AppDbContext CreateSuperuserContext(bool withTenantProbe)
+    {
+        DbContextOptionsBuilder<AppDbContext> builder = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(_bootstrapConnectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSnakeCaseNamingConvention();
+
+        if (withTenantProbe)
+        {
+            builder.ReplaceService<IModelCustomizer, TenantProbeModelCustomizer>();
+        }
+
+        var context = new AppDbContext(builder.Options);
+        _superuserContexts.Add(context);
+        return context;
     }
 
     private Task CreateProbeAsync(string createSql) => ExecuteAsync(_connectionString, createSql);
