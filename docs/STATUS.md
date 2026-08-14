@@ -1670,6 +1670,56 @@ above, not repeated here.
 
 ## Known open items / honest notes
 
+- **F3's review has now happened (2026-08-14) — four findings, none yet fixed.** All in
+  GymOS-Platform. **(1) Medium: the root redirect bypasses the permission-aware landing resolver.**
+  F3 moved `LANDING_ROUTE` to `/dashboard` and added `resolveLandingRoute` / `FALLBACK_LANDING_ROUTE`
+  precisely so a caller holding neither `analytics.read` nor `audit.read` is not dropped on an empty
+  screen — but only `login/page.tsx` was updated. `src/app/page.tsx` still redirects unconditionally,
+  and `(admin)/layout.tsx` guards authentication only, so its docstring claiming it "guards the
+  landing route itself" is false. An operator with only `gyms.read` who opens the app at `/` — a
+  bookmark, or typing the domain — lands on a permission error where they used to land on `/gyms`.
+  The dashboard's own comment says that state is "reachable only if the landing-route fallback is
+  bypassed by typing the URL"; the app root reaches it too. **(2) Medium: a single-day contiguous run
+  renders as nothing** in `stacked-area-chart.tsx`. `toContiguousRuns` deliberately yields runs of
+  length 1 and `line-chart.tsx` handles that with a fallback marker; the stacked area has no such
+  fallback and emits a zero-area path stroked in `var(--card)` — invisible. A range where the stats
+  job ran only on isolated nights, which is the exact case D3 exists for, draws bare axes while the
+  table lists the rows. **(3) Low: fractional y-axis ticks for integer counts** — a max of 5 labels
+  the axis 0, 1.25, 2.5, 3.75, 5. Small counts are the normal case on a young platform. **(4) Low:
+  the range error duplicates itself** — "A range covers at most 366 days; this one covers 517. A
+  range covers at most 366 days."
+
+- **The activation increment's console side has now been reviewed (2026-08-14) — five findings, none
+  yet fixed.** All in `GymOS-Platform`, and the first two are the same defect twice. **(1) The link
+  check treats every `ApiError` as "link unusable"**, but the client wraps network failures as
+  `ApiError(0, …)` and the endpoint sits behind a 10-per-minute per-IP limiter shared with sign-in.
+  A shared office IP or one dropped request permanently tells a valid invitee their link is dead. The
+  comment above the code states the opposite intent, and `providers.tsx` already uses the correct
+  `status === 0` discriminator. **(2) Submit failure appends "This link has now been used" to every
+  `ApiError`**, including status 0 and 429 where the backend never consumed the token — producing
+  "The server could not be reached… This link has now been used." **(3) Client validation mirrors
+  only the length half of `PasswordPolicy`**; the server also rejects leading/trailing whitespace and
+  consumes the token *before* judging the password, so a pasted trailing space burns a one-shot link.
+  **(4) The "has been sent to <email>" toasts fire on any 204**, discarding the `X-Invitation-Email`
+  header that reports `sent`/`failed`/`disabled` — with SMTP down the operator is told it worked while
+  the previous link has genuinely been invalidated. The invite dialog deliberately avoids that claim.
+  **(5) Low: `api.get` was widened for one anonymous call with no test**, in a repo whose
+  `endpoints.test.ts` exists to pin exactly that.
+
+- **The owed-review ledger was wrong, corrected 2026-08-14.** M4.1 and M5 were both listed as
+  "review owed" when both had already had a whole-branch review — `f0d8b94` ("M4.1 whole-branch
+  review fixes") and `b4d95b4` ("Apply M5 whole-branch review fixes"). What they actually owe is the
+  heavier **multi-agent whole-increment gate**, the one M4 received. Two tiers exist and this file
+  used one phrase for both, which read as five never-reviewed increments when three is the true
+  number.
+
+- **GymOS-Platform's `e2e` CI job has never passed — 8 runs, 8 failures, since F1.** It checks out
+  `GymOS-Backend`, a **private** repo, with the default `GITHUB_TOKEN`, which is scoped to the
+  current repository; GitHub answers `Not Found` rather than a permission error. Fixing it needs a
+  PAT or GitHub App token with read access to both repositories, stored as a secret — a credential
+  decision, not a code one. The `checks` job passes, so typecheck/lint/format/test/build are gated;
+  **the browser suite is not gated by CI at all** and only ever runs locally.
+
 - **Two GymOS-Platform defects found and fixed while landing the E2E seed, 2026-08-13.** Both were
   pre-existing and neither was caused by the seed — each was proved so before being touched.
 
