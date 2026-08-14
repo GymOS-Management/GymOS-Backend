@@ -1670,6 +1670,54 @@ above, not repeated here.
 
 ## Known open items / honest notes
 
+- **M4.1's multi-agent gate has now run (2026-08-14) — 15 findings, none fixed, and it is the most
+  serious review this project has had.** Two were verified by hand before being written down here;
+  the rest are recorded as reported and want confirming before anyone acts on them.
+
+  **Verified.** *(a)* `FeatureOverrideSweepJob` contains **no `BeginTransactionAsync` at all**, while
+  its own comment promises "one scope and one transaction per gym". The live-plan read, the
+  maintainer's reads and the DELETE run in separate implicit transactions under READ COMMITTED, so a
+  subscription upgrade committing mid-sweep lets a verdict computed against the old plan hard-delete
+  an exception that is not redundant under the new one — silently, because the override rows' `xmin`
+  never saw the subscription change. *(b)* The `4ce45d0` fix is dead code; see the reopened entry
+  further down.
+
+  **Reported, not yet verified, worst first.** Staging the override DELETEs inside the billing
+  transaction couples renewal to an unlocked write surface: a concurrent override edit rolls the
+  whole renewal back **after** `IssueForPeriodAsync` has drawn an invoice number from a sequence that
+  never gives numbers back, so every racing retry burns another. Redundancy is a stateless value
+  comparison, so a **deny**-exception ("suspended pending fraud investigation") that merely coincides
+  with its plan for a while is hard-deleted — and when the plan flips back the capability the
+  operator switched off switches on again, with no record that anyone ever intended otherwise; the
+  docs argue the design only in the grant direction. `FeatureExceptionMaintainer` reads the plan with
+  the **unlocked** `FindByIdAsync` and deletes from that read, though this same increment added
+  `FindByIdForUpdateAsync` precisely because that read races `PUT /plans/{id}/features` — and three
+  of its four synchronous callers open no transaction, so the lock could not apply there anyway.
+  `PUT /gyms/{id}/features` takes an exclusive `FOR UPDATE` on the shared **plan** row and holds it
+  through the catalogue read-back, serialising every gym on that plan. The new retry catches
+  `UniquenessConflictException` but the reachable race throws `ConcurrencyConflictException`, so the
+  documented "the later decision wins" is still false and the retry only ever helps subscription-less
+  gyms. `SeedingLocks` documents a whole-startup guarantee that `pg_advisory_xact_lock` cannot give,
+  and `SuperAdminSeeder` — a check-then-act insert under a unique index — got neither the lock nor
+  the `IUnitOfWork` save. Plus: the two `features` request contracts now disagree (the plan route
+  refuses a missing field, the gym route coerces it to empty while its own OpenAPI marks it
+  required); four integration suites that assert on override rows leave `Jobs:Enabled` true with a
+  new 03:50 sweep registered; a unit fake returns a `features: null` production can never produce,
+  leaving the new `features.read` gate unexercised on all six write routes; and `DiscardTrackedChanges`
+  maps to a scope-wide `ChangeTracker.Clear()` on a shared context that `AuditTrail` stages rows into.
+
+- **The API reference increment's review has run (2026-08-14) — 5 findings, 2 already fixed.** Its
+  Critical was that `new OpenApiSecuritySchemeReference(BearerSchemeName)` was built with no host
+  document, so all 43 "secured" operations serialised as `"security": [ {} ]` — an empty requirement
+  object, which is how OpenAPI spells *authentication is optional*, the exact opposite of the intent.
+  The test that should have caught it asserted `security.GetArrayLength() > 0`, which `[{}]` satisfies.
+  **Both were fixed downstream by `02bca0e`**, which found the same root cause independently. Still
+  standing: `AddGymOSApiReferenceBrowser` reads `DOTNET_RUNNING_IN_CONTAINER` from the process with no
+  seam, so its test fails the first time CI runs in a container (it passes today only because the
+  workflow uses bare `ubuntu-latest`); a method doc claims three guards make the launcher impossible
+  to misfire when `OpenApi:LaunchBrowser=true` bypasses all three and would open a 404 in Production;
+  and `Process.Start` returning null still logs "API reference opened".
+
 - **F3's review has now happened (2026-08-14) — four findings, none yet fixed.** All in
   GymOS-Platform. **(1) Medium: the root redirect bypasses the permission-aware landing resolver.**
   F3 moved `LANDING_ROUTE` to `/dashboard` and added `resolveLandingRoute` / `FALLBACK_LANDING_ROUTE`
@@ -1756,6 +1804,18 @@ above, not repeated here.
   and simply missed when the note was written. The CHARSET findings turned out to be a UTF-8 **BOM the
   `.editorconfig` does not want** — stripped, which is why those files show a one-line diff that
   appears to change nothing. Gate now exits 0.
+
+- **⚠️ THE FIX BELOW DOES NOT WORK — reopened 2026-08-14 by M4.1's review, and verified by hand.**
+  `FeatureOverrideSweepJob` catches `DbUpdateConcurrencyException`, but `UnitOfWork.SaveChangesAsync`
+  catches that EF type and rethrows `ConcurrencyConflictException` — its own doc says
+  "`DbUpdateConcurrencyException` — an EF type — never reaches the Application layer". So the catch
+  `4ce45d0` added is **unreachable dead code**, `LogGymChangedUnderneath` can never fire, and the
+  expected operator-vs-sweep race is still reported on the `Error` channel through the generic
+  handler. Confirmed at HEAD: the sweep has a `catch (DbUpdateConcurrencyException)` at line 115 and
+  `UnitOfWork` throws `ConcurrencyConflictException` at line 33. **The entry below is wrong and is
+  kept only so the correction has something to point at.** Note what made this possible: the entry
+  itself records that no test asserts the level, so the fix was committed, documented as done, and
+  never executed even once on the path it claims to handle.
 
 - **~~`FeatureOverrideSweepJob` logs an expected concurrency race at `Error`~~ — FIXED 2026-08-12
   (`4ce45d0`).** `DbUpdateConcurrencyException` is now caught ahead of the general handler and logged
