@@ -1686,6 +1686,26 @@ above, not repeated here.
 
 ## Known open items / honest notes
 
+- **⚠️ THE CHURN COUNT IS FIXED IN CODE (2026-08-14) — SAME STORED-HISTORY CAVEAT AS MRR BELOW.**
+  `canceled_gyms` and `expired_gyms` counted `GymSubscription` **rows**, not gyms, so a gym that
+  churned twice in a day was two churned gyms. Reproduced first as a failing integration test
+  (`AGymThatChurnsTwiceInADayIsOneChurnedGym`: assign → cancel immediately → assign → cancel again,
+  expected 1, got 2) and now fixed with a `Distinct` on `GymId`. The premise the reviewer identified
+  is real and is asserted by the test itself: the one-live-per-gym unique index is **partial**
+  (`status IN (1, 2, 3)`), so a cancelled row leaves the constraint behind and the next assignment
+  inserts a fresh one — terminal rows accumulate per gym without limit.
+  **Deliberately not deduplicated across the two counts**: a gym that cancels one subscription and has
+  another expire on the same day churned for two different reasons, and keeping those causes apart is
+  the entire point of M5 refusing the frozen spec's single `churned_gyms` column (D5).
+  **Stored rows are not corrected**, for the same write-once reason as MRR: any day already compiled
+  keeps its inflated churn figure, so `/analytics/churn` steps at the first nightly run after this fix.
+  On a small platform the old figure could exceed 100%.
+  **Still open on this same code path, and not fixed here:** M5's third finding, that the Expired count
+  keys on `CurrentPeriodEndUtc` — a business date `Expire()` never updates — so an expiry applied after
+  its own day was compiled lands on no day at all. That needs an `ExpiredAtUtc` mirroring
+  `CanceledAtUtc`, which is a schema change and a separate increment. It is dormant today only because
+  `DisableAutoRenew` has no caller outside tests.
+
 - **⚠️ THE MRR BUG IS FIXED IN CODE (2026-08-14) BUT THE STORED HISTORY IS STILL WRONG, PERMANENTLY.**
   `Money.Divide(decimal, RoundingPolicy)` was added — its absence is why the reciprocal was written in
   the first place — and `MonthlyRecurringRevenue.PerMonth` now divides. `/dashboard/summary` is correct

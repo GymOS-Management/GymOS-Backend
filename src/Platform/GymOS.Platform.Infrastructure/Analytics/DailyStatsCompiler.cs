@@ -65,17 +65,32 @@ internal sealed class DailyStatsCompiler
 
             New: await _dbContext.Set<Gym>().AsNoTracking().CountAsync(
                 gym => gym.CreatedAtUtc >= dayStart && gym.CreatedAtUtc < dayEnd, cancellationToken),
-            Canceled: await _dbContext.Set<GymSubscription>().AsNoTracking().CountAsync(
-                subscription => subscription.Status == SubscriptionStatus.Canceled
-                    && subscription.CanceledAtUtc >= dayStart && subscription.CanceledAtUtc < dayEnd,
-                cancellationToken),
+            // Both churn counts are counts of GYMS, not of subscription rows, and the `Distinct` is
+            // what makes them so. A gym can hold any number of terminal rows: the one-live-per-gym
+            // unique index is partial (`status IN (1, 2, 3)`), so a cancelled row leaves the
+            // constraint behind and the next assignment inserts a fresh one. Counting rows reported a
+            // gym that churned twice in a day as two churned gyms — which on a small platform is a
+            // churn rate over 100%, written permanently into a write-once table.
+            //
+            // Not deduplicated *across* the two counts, deliberately: a gym that cancels one
+            // subscription and has another expire on the same day churned for two different reasons,
+            // and keeping those causes apart is the whole point of splitting the column (D5).
+            Canceled: await _dbContext.Set<GymSubscription>().AsNoTracking()
+                .Where(subscription => subscription.Status == SubscriptionStatus.Canceled
+                    && subscription.CanceledAtUtc >= dayStart && subscription.CanceledAtUtc < dayEnd)
+                .Select(subscription => subscription.GymId)
+                .Distinct()
+                .CountAsync(cancellationToken),
 
             // Expiry has no timestamp of its own: the renewal sweep expires a subscription *at* its
             // period end, which is therefore the business date of the event.
-            Expired: await _dbContext.Set<GymSubscription>().AsNoTracking().CountAsync(
-                subscription => subscription.Status == SubscriptionStatus.Expired
-                    && subscription.CurrentPeriodEndUtc >= dayStart && subscription.CurrentPeriodEndUtc < dayEnd,
-                cancellationToken));
+            Expired: await _dbContext.Set<GymSubscription>().AsNoTracking()
+                .Where(subscription => subscription.Status == SubscriptionStatus.Expired
+                    && subscription.CurrentPeriodEndUtc >= dayStart
+                    && subscription.CurrentPeriodEndUtc < dayEnd)
+                .Select(subscription => subscription.GymId)
+                .Distinct()
+                .CountAsync(cancellationToken));
 
         var contributions = await _dbContext.Set<GymSubscription>()
             .AsNoTracking()

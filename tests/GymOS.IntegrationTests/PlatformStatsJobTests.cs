@@ -228,4 +228,68 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
             .Include(stats => stats.Mrr)
             .SingleAsync(stats => stats.StatDate == statDate);
     }
+
+    [Fact]
+    public async Task AGymThatChurnsTwiceInADayIsOneChurnedGym()
+    {
+        // `canceled_gyms` is named, stored and published as a count of GYMS — Analytics.md groups it
+        // with `new_gyms` under "what happened on this day" — but it was computed as a count of
+        // GymSubscription ROWS. Nothing stops a gym holding several terminal rows: the one-live-per-gym
+        // unique index is partial (`status IN (1, 2, 3)`), so a cancelled row leaves the constraint
+        // behind and the next assignment inserts a fresh one.
+        //
+        // So: assign, cancel immediately, assign again, cancel again. That is one gym that churned,
+        // and two Canceled rows. Counting rows reported 2 — and on a single-tenant platform that is a
+        // churn rate of 200%, written permanently into a write-once table.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "twice-gym");
+        PlatformApiHelpers.PlanCreated first = await PlatformApiHelpers.CreatePlanAsync(
+            _client, "TWICE1", amount: 20m);
+        PlatformApiHelpers.PlanCreated second = await PlatformApiHelpers.CreatePlanAsync(
+            _client, "TWICE2", amount: 25m);
+
+        await PlatformApiHelpers.AssignAsync(_client, gym, first.Id, currency: "EUR");
+        await CancelImmediatelyAsync(gym);
+        await PlatformApiHelpers.AssignAsync(_client, gym, second.Id, currency: "EUR");
+        await CancelImmediatelyAsync(gym);
+
+        // Both cancellations are stamped by the host's real clock, so the day is read back from what
+        // was actually stored — the same race-free approach the deleted-gym test above uses.
+        DateOnly today;
+        await using (AppDbContext context = _host.CreateDbContext())
+        {
+            List<DateTimeOffset> canceledAt = await context.Set<GymSubscription>()
+                .Where(subscription => subscription.GymId == gym
+                    && subscription.Status == SubscriptionStatus.Canceled)
+                .Select(subscription => subscription.CanceledAtUtc!.Value)
+                .ToListAsync();
+
+            // The premise of the test: two terminal rows really do exist for this one gym.
+            Assert.Equal(2, canceledAt.Count);
+            Assert.Equal(
+                DateOnly.FromDateTime(canceledAt[0].UtcDateTime),
+                DateOnly.FromDateTime(canceledAt[1].UtcDateTime));
+            today = DateOnly.FromDateTime(canceledAt[0].UtcDateTime);
+        }
+
+        Assert.True(await CompileAsync(today));
+
+        await using AppDbContext assertions = _host.CreateDbContext();
+        DailyPlatformStats stats = await assertions.Set<DailyPlatformStats>()
+            .SingleAsync(row => row.StatDate == today);
+
+        Assert.Equal(1, stats.CanceledGyms);
+    }
+
+    private async Task CancelImmediatelyAsync(Guid gymId)
+    {
+        using HttpResponseMessage response = await _client.PostAsJsonAsync(
+            new Uri($"/api/v1/gyms/{gymId}/subscription/cancel", UriKind.Relative),
+            new { reason = (string?)null, immediately = true });
+
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK,
+            $"Expected 200 cancelling immediately, got {(int)response.StatusCode}: " +
+            await response.Content.ReadAsStringAsync());
+    }
+
 }
