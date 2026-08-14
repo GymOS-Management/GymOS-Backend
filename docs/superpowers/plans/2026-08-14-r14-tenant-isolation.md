@@ -1025,6 +1025,5 @@ git push origin development
 
 ## Notes for the executor
 
-- **The tenant middleware is NOT in this plan.** Task 1's context and Task 2's interceptor are the seam; resolving `{gymId}` from a route and checking grants arrives with the first tenant-scoped endpoint, in the Members increment, because there is no tenant-scoped route to attach it to yet. The spec's D2 records the decision so that increment implements it rather than reinventing it.
 - **If a task reveals the spec is wrong**, stop and say so rather than implementing around it.
 - **`Maximum Pool Size=1` is confined to this suite's own host.** Do not put it on the shared fixture.

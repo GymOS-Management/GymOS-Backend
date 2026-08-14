@@ -1,6 +1,17 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-14 · **Every owed review has now run, and 23 of their 44 findings are
+**Last updated:** 2026-08-15 · **R14 (tenant isolation) has a subject and a passing validation for the
+first time.** `ITenantContext`, the connection-level session interceptor, the startup
+`TenantIsolationValidator`, and route-based `TenantResolutionMiddleware` are built and tested —
+**301 integration / 1397 total tests green**, 0 build warnings, `dotnet format` clean. **No production
+table is tenant-scoped by it; `members` is next and will be the first.** Two things this increment
+found rather than fixed: the platform connects to PostgreSQL as a superuser, which makes
+`FORCE ROW LEVEL SECURITY` toothless against it, and there is still no way to issue a gym-scoped grant
+through the API at all. Both are open decisions, recorded in `docs/BusinessRules/TenantIsolation.md`
+and under "Known open items" below. See "R14 as built" for the rest. Committed locally on
+`development`, not yet pushed.
+
+**Previously (2026-08-14):** **Every owed review has now run, and 23 of their 44 findings are
 fixed.** The five that were outstanding — M4.1's multi-agent gate, M5's, F3's, the activation
 increment's console side, and the API reference — plus four fix increments and F4's own review. The
 day's arc, if you read nothing else: **the reviews found two live defects in numbers the platform
@@ -170,6 +181,7 @@ before resuming work on any machine.
 | **Administrator activation & password-reset email** (`ADR-53`) — the `IEmailSender` seam + SMTP transport, `user_activation_tokens`, invite/re-send/reset endpoints, anonymous `GET`+`POST /auth/set-password`, console `/set-password` | ✅ **merged to `main`** (`c487012`) and to GymOS-Platform (`d27e32a`) — **1354 tests green**, verified live end to end through Mailpit *and* in a browser through to signing in as the invited administrator · design: `docs/superpowers/specs/2026-08-12-admin-activation-email-design.md` · ⬅ **review owed — this is a security surface and has had no adversarial pass** |
 | **Audit action filter — case and wildcards** | ✅ **merged** (`40b2bb3`) — `Gym.` used to match nothing and a typed `%` acted as a wildcard; now `ILIKE` with `SearchPatterns.StartsWith`. Proved in both directions (`user.` → 3 entries, `User.` → 0 on the old code) |
 | **Solution view + F5** | ✅ **merged** (`053f4d6`, `0d56184`) — Solution Explorer regrouped by role (Host/Platform/Shared/Tests, docker-compose at the root); F5 now starts postgres + api + **mailpit** with email wired, so the invitation flow works with nothing started by hand. No project renamed, moved, or re-referenced |
+| **R14 — tenant isolation mechanism** (`ITenantContext`/`ITenantContextSetter`, `TenantSessionInterceptor`, `TenantIsolationValidator`, route-based `TenantResolutionMiddleware`) | ✅ **mechanism built and tested, committed locally on `development`** (not yet pushed to `origin` — pushing is the maintainer's call) — **301 integration / 1397 total tests green**, 0 build warnings, `dotnet format` clean · rules: **`docs/BusinessRules/TenantIsolation.md`** · design: `docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md` · **R14 has a subject and a passing validation for the first time, and no production table is tenant-scoped yet** — Members is next and will be the first · two open items, both below under "Known open items": the deployment connects to PostgreSQL as a superuser (voids `FORCE`), and no gym-scoped grant can be issued through the API yet |
 | M6+ — per approved roadmap (monitoring, settings) | next |
 
 ## M1.2 as built
@@ -605,8 +617,16 @@ no migration command, ending in a working sign-in as `admin@gymos.local` / `gymo
 
 ### Still owed, in this order
 
-- **Write the RLS startup validation (R14) with the first tenant-scoped entity.** R14 has never run;
-  a missed policy is a cross-tenant leak.
+- **~~Write the RLS startup validation (R14) with the first tenant-scoped entity.~~ Built and tested —
+  see "R14 as built" below and `docs/BusinessRules/TenantIsolation.md`.** The startup validation that
+  never existed now does, proven against a test-only table (301 integration tests green, all six
+  isolation/resolution tests among them). **No production table is tenant-scoped yet.** Two things are
+  still open before Members can actually rely on it: the deployment connects to PostgreSQL as a
+  superuser, which voids `FORCE ROW LEVEL SECURITY` entirely (the validator's role check will refuse to
+  boot the day a real tenant-scoped table lands, but changing which role the API connects as is the
+  maintainer's call, not something this increment did); and no gym-scoped grant can be issued through
+  the API yet, so `TenantResolutionMiddleware`'s grant check has never had a real grant to check
+  against.
 - **The Members domain is frozen** (`docs/Domain/MEMBERS-DOMAIN-DESIGN.md`). Implementation follows it
   exactly; a change needs a decision recorded in its §20 register first. Note the guardrails in its
   §19 — seventeen things an implementation must not quietly undo, chief among them: Membership Type and
@@ -1499,6 +1519,76 @@ Infrastructure 67 · Integration 251 = **1302**.
 - The raw token never reaches a log, a response body, or an audit row; the trail records
   `user.invitation_sent` / `user.password_reset_requested` / `user.password_set` instead.
 
+## R14 as built
+
+**Committed locally on `development`, not yet pushed — pushing is the maintainer's call.** Design
+(approved 2026-08-14): `docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md`. Plan:
+`docs/superpowers/plans/2026-08-14-r14-tenant-isolation.md`. Business rules:
+**`docs/BusinessRules/TenantIsolation.md`**. **R14 has a subject and a passing validation for the first
+time.** No production table is tenant-scoped by this increment — the mechanism is proven against
+`platform.tenant_probe`, a table that exists only for the tests. Members is next and will be the first
+real subject.
+
+1. **`ITenantContext` / `ITenantContextSetter` / `ITenantScoped`** (BuildingBlocks) — the acting tenant
+   for a scope, read and write kept as separate interfaces so a handler cannot re-point its own scope
+   even by accident. Deliberately not part of `ICurrentUser` (who the caller is and which tenant they
+   act for are different facts). `TenantContext` is a one-shot setter: re-pointing to a different
+   tenant throws, setting the same tenant twice is harmless.
+2. **`TenantSessionInterceptor`** (Platform.Infrastructure) — writes `app.tenant_id` on **every**
+   connection open, including an empty string for platform scope, because Npgsql pools physical
+   connections and a "set it when there is a tenant" shape has an execution path where neither branch
+   runs, leaking the previous tenant into the next borrower.
+3. **`TenantIsolationValidator`** — the startup persistence validation R14 has always named and never
+   had. Per `ITenantScoped` entity it asserts a `tenant_id` column, RLS enabled, RLS **forced**
+   (`relforcerowsecurity`, not merely `relrowsecurity`), and at least one policy; it now also rejects a
+   connected role reporting `rolsuper` or `rolbypassrls` — the guard the deployment's superuser
+   connection needs (see "Known open items"). Fails the boot; does not swallow. Skips only while
+   migrations are genuinely pending, the same first-boot guard `SuperAdminSeeder` already has.
+4. **`TenantResolutionMiddleware`** (WebApi) — resolves `{gymId}` from the route after
+   `UseAuthorization()`, checks the caller's grants (`UserRole.TenantId`: `null` = platform-wide, a
+   value = that one gym), and sets the tenant. A caller with no grant for that gym, or a malformed
+   `{gymId}`, gets **404, never 403** — the status code must not be an oracle for enumerating tenants.
+5. **Tests** — a test-only `platform.tenant_probe` table and 12 integration tests (8 isolation + 4
+   resolution). The owner-bypass test was proved by negative control: with
+   `FORCE ROW LEVEL SECURITY` removed it reported `Assert.Single() Failure: The collection contained 2
+   items`, then passed with the line restored — the exact silent failure the whole design exists to
+   prevent, shown actually failing rather than assumed to.
+
+**Gate numbers, re-measured at close-out, run individually to completion:** `dotnet build
+GymOS.Backend.slnx` — **0 warnings, 0 errors**. `dotnet format --verify-no-changes
+GymOS.Backend.slnx` — **exit 0**. `dotnet test tests/GymOS.IntegrationTests --no-build` — **301
+passed**. Whole solution (`SharedKernel` 131 · `Platform.Domain.UnitTests` 434 ·
+`Platform.Application.UnitTests` 247 · `BuildingBlocks.UnitTests` 66 · `ArchitectureTests` 151 ·
+`Platform.Infrastructure.UnitTests` 67 · `IntegrationTests` 301) — **1397 passed**.
+
+### Two open items this increment produced rather than closed
+
+Both are in "Known open items" below and in `docs/BusinessRules/TenantIsolation.md`; neither is fixed
+here.
+
+- **The deployment connects to PostgreSQL as a superuser**, which voids `FORCE ROW LEVEL SECURITY`
+  entirely — a superuser bypasses row-level security unconditionally, `FORCE` or not. The validator's
+  new role check is the guard, and it has never fired because no entity implements `ITenantScoped` yet;
+  it will fire, loudly, the day `members` does. Changing which role the API connects as is an open
+  decision for the maintainer.
+- **A gym-scoped grant cannot currently be assigned through the API at all.**
+  `SetUserRolesCommandHandler` rejects any non-platform-scoped role and only ever writes
+  `UserRole.TenantId = null`. Every grant any role holds today is platform-wide, which is the real
+  reason `TenantResolutionMiddleware` is inert against the existing suite. The Members increment needs
+  a way to create a gym-scoped grant; it does not exist yet.
+
+### `ARCHITECTURE-ADDENDUM.md`'s R14 row
+
+Checked, not changed. `GymOs-Specification/ARCHITECTURE-ADDENDUM.md` §8.1's engineering-rules table
+(R1–R17) uniformly pairs each rule with the mechanism that is *meant* to enforce it — "R14 | Every
+tenant-scoped table: `tenant_id` + RLS policy | startup persistence validation" — and that row already
+names the mechanism this increment built. The table carries no column, marker, or convention anywhere
+in it distinguishing a rule whose enforcer is built from one whose enforcer is only specified — R1
+through R17 are all worded identically regardless of build status, because the document is a frozen
+architecture specification, not a build-status tracker. Marking only R14 "enforced" would invent a
+field the other sixteen rows do not have. Left as written; the fact that the mechanism now exists lives
+in this file and in `docs/BusinessRules/TenantIsolation.md` instead.
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -1720,7 +1810,41 @@ own deferrals (override expiry, the four-subquery plan projection, tracked catal
 log-count conflation) are recorded in `docs/BusinessRules/Features.md`'s deferred-list section and
 above, not repeated here.
 
+**R14's mechanism is now built and tested, closing that particular debt** — see "R14 as built" above
+and `docs/BusinessRules/TenantIsolation.md`. **No production table is tenant-scoped by it; `members`
+is the first, and it is next.** Nothing structural blocks starting Members, but two things want the
+owner's attention rather than surprising whoever builds it: the platform connects to PostgreSQL as a
+superuser, which makes `FORCE ROW LEVEL SECURITY` toothless against it (a decision only the maintainer
+can make — it touches three compose files, `appsettings`, CI, and every developer's existing database
+volume); and there is still no way to issue a **gym-scoped** grant through the API at all, which sits
+squarely inside Members' own scope and is the real reason the tenant-resolution middleware has never
+been exercised against a real grant.
+
 ## Known open items / honest notes
+
+- **The platform's PostgreSQL connection is a superuser, which voids `FORCE ROW LEVEL SECURITY`
+  entirely (R14 close-out).** `docker-compose.yml`'s `POSTGRES_USER: gymos`, both compose overlays, and
+  `appsettings.Development.json` all connect as `gymos`, and `docker/postgres/initdb/README.md`
+  documents that role's scripts as running "as the superuser (`POSTGRES_USER`)". `FORCE` stops a
+  table's **owner** from bypassing its own row-level security policies; it does nothing against a
+  superuser, and PostgreSQL gives no way to make it — row security is never applied to a superuser or a
+  `BYPASSRLS` role, `FORCE` or not. `TenantIsolationValidator` now refuses to boot against a connected
+  role reporting `rolsuper`/`rolbypassrls`, but that check has never fired: it only runs once at least
+  one entity implements `ITenantScoped`, and none does yet, so no stack breaks today. It will fire,
+  loudly, the day `members` lands as the first one. **Fixing it is an open decision for the
+  maintainer, not done here** — it means changing which role the API connects as, which touches three
+  compose files, `appsettings`, CI, and needs either `REASSIGN OWNED` or a volume destroy against every
+  developer's existing database, since the initdb scripts that create the role do not re-run against a
+  volume that already exists. Reasoning in `docs/BusinessRules/TenantIsolation.md`.
+
+- **A gym-scoped grant cannot be issued through the API at all (R14 close-out).**
+  `SetUserRolesCommandHandler` rejects any attempt at a non-platform-scoped role and only ever writes
+  `UserRole.TenantId = null`, so every grant any role holds today is platform-wide. That is the real
+  reason `TenantResolutionMiddleware`'s grant check — built and integration-tested in this increment —
+  has never had a gym-scoped grant to check against; the existing suite is entirely platform-scope
+  callers, which is also why the middleware is provably inert against it. The Members increment needs a
+  way to create a gym-scoped grant; it does not exist yet. Reasoning in
+  `docs/BusinessRules/TenantIsolation.md`.
 
 - **⚠️ THE CHURN COUNT IS FIXED IN CODE (2026-08-14) — SAME STORED-HISTORY CAVEAT AS MRR BELOW.**
   `canceled_gyms` and `expired_gyms` counted `GymSubscription` **rows**, not gyms, so a gym that
