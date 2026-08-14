@@ -283,4 +283,55 @@ public sealed class MoneyTests
         Assert.Equal(Euros(10m), Euros(10.00m));
         Assert.Equal(Euros(10m).GetHashCode(), Euros(10.00m).GetHashCode());
     }
+
+    // ── Division ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void DivideRoundsUnderTheStatedPolicy()
+    {
+        // The reason this method exists at all. Normalising an annual price to a month by
+        // multiplying by `1m / 12` is not the same calculation: the reciprocal is not representable,
+        // so a product that should land exactly on a half-cent lands just below it, and half-even
+        // then rounds *down*. 599.94 / 12 is exactly 49.995, which must round to 50.00.
+        Assert.Equal(Euros(50.00m), Euros(599.94m).Divide(12m, RoundingPolicy.HalfEven));
+        Assert.Equal(Euros(1.02m), Euros(12.18m).Divide(12m, RoundingPolicy.HalfEven));
+        Assert.Equal(Euros(100.00m), Euros(1199.94m).Divide(12m, RoundingPolicy.HalfEven));
+    }
+
+    [Fact]
+    public void DivideIsNotMultiplicationByAReciprocal()
+    {
+        // Stated as a test rather than a comment, because this is the defect that motivated the
+        // method: the two expressions disagree by a cent on 1 two-decimal annual price in 24, and
+        // the reciprocal is always the low one.
+        Money divided = Euros(599.94m).Divide(12m, RoundingPolicy.HalfEven);
+        Money viaReciprocal = Euros(599.94m).Multiply(1m / 12m, RoundingPolicy.HalfEven);
+
+        Assert.Equal(50.00m, divided.Amount);
+        Assert.Equal(49.99m, viaReciprocal.Amount);
+        Assert.True(divided > viaReciprocal);
+    }
+
+    [Fact]
+    public void DivideRespectsAZeroDecimalCurrency()
+    {
+        // JPY has no minor units, so the midpoint sits on a whole yen. 59,994 / 12 is exactly
+        // 4,999.5; half-even takes it to the even 5,000. The reciprocal form yields 4,999.
+        Assert.Equal(Money.Of(5_000m, Jpy), Money.Of(59_994m, Jpy).Divide(12m, RoundingPolicy.HalfEven));
+    }
+
+    [Fact]
+    public void DividingByZeroIsRefused()
+    {
+        Assert.Throws<DivideByZeroException>(() => Euros(10m).Divide(0m, RoundingPolicy.HalfEven));
+    }
+
+    [Fact]
+    public void DividingAnUninitializedMoneyIsRefused()
+    {
+        Money uninitialized = default;
+
+        Assert.Throws<InvalidOperationException>(() => uninitialized.Divide(2m, RoundingPolicy.HalfEven));
+    }
+
 }

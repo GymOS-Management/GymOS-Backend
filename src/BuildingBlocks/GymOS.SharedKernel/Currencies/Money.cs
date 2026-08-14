@@ -117,6 +117,35 @@ public readonly record struct Money : IComparable<Money>
         return new Money(Math.Round(Amount * factor, Currency.MinorUnits, policy.Midpoint), Currency);
     }
 
+    /// <summary>
+    /// Divides the amount and rounds the result under <paramref name="policy"/> — used for
+    /// normalising a price across a period, such as an annual price to a month.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is not <c>Multiply(1m / divisor, policy)</c>, and the difference is not academic.
+    /// <c>1m / 12</c> is not representable, so the truncated reciprocal drags every product that
+    /// should land exactly on a half-cent to just below it, and a half-even policy then rounds it
+    /// *down*. Across two-decimal annual prices, 1 in 24 comes out a cent low that way — and always
+    /// low, never high, so the error accumulates in one direction rather than cancelling.
+    /// <c>MonthlyRecurringRevenue</c> shipped with exactly that bug because this method did not
+    /// exist; if you are reaching for a reciprocal, reach for this instead.</para>
+    /// <para>The policy has no default, for the same reason <see cref="Multiply"/>'s does not: a
+    /// division that does not come out exactly leaves a fraction of a cent, and who absorbs it is a
+    /// commercial decision the call site is in a position to make and this method is not.</para>
+    /// </remarks>
+    /// <exception cref="DivideByZeroException">The divisor is zero.</exception>
+    public Money Divide(decimal divisor, RoundingPolicy policy)
+    {
+        Currency.EnsureSpecified();
+
+        if (divisor == 0m)
+        {
+            throw new DivideByZeroException("Money cannot be divided by zero.");
+        }
+
+        return new Money(Math.Round(Amount / divisor, Currency.MinorUnits, policy.Midpoint), Currency);
+    }
+
     public Money Negate()
     {
         Currency.EnsureSpecified();

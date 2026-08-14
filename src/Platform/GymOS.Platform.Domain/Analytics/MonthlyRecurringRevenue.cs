@@ -62,8 +62,13 @@ public static class MonthlyRecurringRevenue
 
         var months = contribution.Cycle.Months();
 
+        // Divide, never multiply by `1m / months`. The reciprocal is not representable, so it drags
+        // every quotient that should land exactly on a half-cent to just below it and half-even then
+        // rounds *down* — a cent low on 1 two-decimal annual price in 24, always low and never high,
+        // so the error accumulated in one direction instead of cancelling. This shipped that way in
+        // M5 and is what `Money.Divide` was added for.
         return months == 1
             ? contribution.Price
-            : contribution.Price.Multiply(1m / months, RoundingPolicy.HalfEven);
+            : contribution.Price.Divide(months, RoundingPolicy.HalfEven);
     }
 }

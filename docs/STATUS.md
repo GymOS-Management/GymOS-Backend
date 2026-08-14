@@ -1686,6 +1686,21 @@ above, not repeated here.
 
 ## Known open items / honest notes
 
+- **⚠️ THE MRR BUG IS FIXED IN CODE (2026-08-14) BUT THE STORED HISTORY IS STILL WRONG, PERMANENTLY.**
+  `Money.Divide(decimal, RoundingPolicy)` was added — its absence is why the reciprocal was written in
+  the first place — and `MonthlyRecurringRevenue.PerMonth` now divides. `/dashboard/summary` is correct
+  from now on, because it computes live on every request.
+  **`daily_platform_stats` is not.** Every row already written for a day whose platform included a
+  yearly subscription at an affected price carries the cent-low figure, and the table is **write-once
+  by design** — `PlatformStatsJob` refuses a day that already has a row, and there is no update path.
+  So `/analytics/revenue` will serve a discontinuity: correct from the first nightly run after this
+  fix, understated before it, with no marker on the boundary. Correcting it means either a deliberate
+  recompute-and-overwrite path (which the write-once rule exists to forbid — see the backfill finding
+  below) or accepting the step. **That is a product decision, not a code one, and nobody has taken
+  it.** The one mercy is scale: only Yearly and Quarterly cycles divide at all, and only about 1 price
+  in 24 is affected, so the error is small, one-directional, and bounded by how many annual plans were
+  live on each day.
+
 - **M5's multi-agent gate has now run (2026-08-14) — 15 findings, and the first one is a money bug in
   the platform's headline number. VERIFIED BY HAND, not taken on the reviewer's word.**
 

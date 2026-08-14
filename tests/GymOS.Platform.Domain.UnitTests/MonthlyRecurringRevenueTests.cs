@@ -133,4 +133,51 @@ public sealed class MonthlyRecurringRevenueTests
         Assert.False(SubscriptionStatusTransitions.IsBilling(SubscriptionStatus.Trialing));
     }
 
+
+    [Fact]
+    public void AnAnnualPriceNormalisesByDivision_NotByAReciprocal()
+    {
+        // The bug this test exists for: PerMonth used `Multiply(1m / months, HalfEven)`. `1m / 12`
+        // is not representable, so 599.94 * (1m/12) = 49.994999... and half-even rounded it DOWN to
+        // 49.99, where 599.94 / 12 is exactly 49.995 and must round to 50.00. An exhaustive scan of
+        // two-decimal annual prices found 1 in 24 affected — and every one of them low, never high,
+        // so the platform under-reported its own revenue in one direction only.
+        IReadOnlyList<Money> mrr = MonthlyRecurringRevenue.Calculate(
+            [new MrrContribution(SubscriptionStatus.Active, BillingCycle.Yearly,
+                Money.Of(599.94m, Currency.Euro))]);
+
+        Assert.Equal(50.00m, Assert.Single(mrr).Amount);
+    }
+
+    [Theory]
+    [InlineData(599.94, 50.00)]
+    [InlineData(12.18, 1.02)]
+    [InlineData(299.94, 25.00)]
+    [InlineData(1199.94, 100.00)]
+    [InlineData(1200.18, 100.02)]
+    [InlineData(1212.18, 101.02)]
+    public void EveryKnownReciprocalCasualtyNormalisesCorrectly(decimal annual, decimal expected)
+    {
+        // Each of these came out a cent low under the reciprocal. They are pinned as a set because
+        // the failure was systematic, not a single unlucky price.
+        IReadOnlyList<Money> mrr = MonthlyRecurringRevenue.Calculate(
+            [new MrrContribution(SubscriptionStatus.Active, BillingCycle.Yearly,
+                Money.Of(annual, Currency.Euro))]);
+
+        Assert.Equal(expected, Assert.Single(mrr).Amount);
+    }
+
+    [Fact]
+    public void AZeroDecimalCurrencyOnAMidpointRoundsToTheEvenWholeUnit()
+    {
+        // The existing zero-decimal test uses JPY 12,000 — an exact multiple of twelve, which cannot
+        // exhibit the reciprocal bug at all. 59,994 / 12 is exactly 4,999.5, so it can: the
+        // reciprocal form gave 4,999 and half-even on the true quotient gives the even 5,000.
+        IReadOnlyList<Money> mrr = MonthlyRecurringRevenue.Calculate(
+            [new MrrContribution(SubscriptionStatus.Active, BillingCycle.Yearly,
+                Money.Of(59_994m, Currency.Of("JPY")))]);
+
+        Assert.Equal(5_000m, Assert.Single(mrr).Amount);
+    }
+
 }
