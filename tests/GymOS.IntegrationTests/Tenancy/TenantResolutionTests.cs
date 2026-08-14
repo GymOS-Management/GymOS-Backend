@@ -8,10 +8,23 @@ namespace GymOS.IntegrationTests.Tenancy;
 
 /// <summary>
 /// D2 (R14): the tenant comes from the route, checked against the caller's grants. Every route
-/// exercised here already exists — this suite proves the resolution is inert for platform-scope and
-/// SuperAdmin-held routes (the whole platform, today) and correct for the one case nothing else has
-/// exercised: a caller whose grant is for a *different* gym than the one in the route.
+/// exercised here already exists — this suite proves the resolution is inert for the whole platform
+/// as it stands today, and correct for the one case nothing else has exercised: a caller whose grant
+/// is for a *different* gym than the one in the route.
 /// </summary>
+/// <remarks>
+/// <para><b>Why the existing suite is inert, stated precisely.</b> It is tempting to say "because
+/// those tests call as a SuperAdmin", and that is not the reason — several of them call as
+/// <c>SupportAgent</c> or <c>BillingAdmin</c> against gym-routed endpoints. The actual invariant is
+/// that <b>every grant any role can hold today is platform-wide</b>: <c>SetUserRolesCommandHandler</c>
+/// rejects a non-platform-scoped role and only ever writes <c>UserRole.TenantId = null</c>, so there
+/// is currently no route through the API by which a gym-scoped grant can be created at all. The test
+/// below that needs one writes the <c>UserRole</c> row through the DbContext for exactly that reason.
+/// </para>
+/// <para>That invariant is the first thing the Members increment invalidates, and when it does, this
+/// suite's inertness stops being free — the gym-grant branch of the middleware becomes reachable
+/// through the API for the first time.</para>
+/// </remarks>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class TenantResolutionTests : IAsyncLifetime
 {
