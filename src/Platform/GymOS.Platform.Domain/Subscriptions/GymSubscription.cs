@@ -78,6 +78,18 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
     public DateTimeOffset? CanceledAtUtc { get; private set; }
 
     /// <summary>
+    /// When the subscription expired, or null while it has not.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to <see cref="CanceledAtUtc"/>, and it exists for the same reason: an event
+    /// needs the moment it happened, not a business date that merely correlates with it. The analytics
+    /// compiler used to count expiries by <see cref="CurrentPeriodEndUtc"/> — which
+    /// <see cref="Expire"/> does not change — so an expiry applied after its own day had already been
+    /// compiled was counted on no day at all, permanently, because stat rows are write-once.
+    /// </remarks>
+    public DateTimeOffset? ExpiredAtUtc { get; private set; }
+
+    /// <summary>
     /// A cancellation is scheduled for the end of the paid period.
     ///
     /// Separate from <see cref="CanceledAtUtc"/> because the gym has paid to the end of the period and
@@ -338,9 +350,15 @@ public sealed class GymSubscription : AggregateRoot, IAuditable
     /// The period ended and nothing renewed it. Terminal, and deliberately not a cancellation — see
     /// <see cref="SubscriptionStatusTransitions"/>.
     /// </summary>
-    public void Expire()
+    /// <param name="now">
+    /// When the expiry is being applied — stamped into <see cref="ExpiredAtUtc"/>. Passed in rather
+    /// than read from a clock here, because the sweep that calls this decides with the database's
+    /// clock (M3.4: durable and terminal verdicts do not trust one host's).
+    /// </param>
+    public void Expire(DateTimeOffset now)
     {
         TransitionTo(SubscriptionStatus.Expired);
+        ExpiredAtUtc = now;
         Raise(new SubscriptionExpired(Id, GymId));
     }
 

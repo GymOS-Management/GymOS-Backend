@@ -330,4 +330,48 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
         Assert.True(await compiler.CompileAsync(today.AddDays(-1), now, CancellationToken.None));
     }
 
+
+    [Fact]
+    public async Task AnExpiryIsCountedOnTheDayItWasApplied_NotTheDayThePeriodEnded()
+    {
+        // The old predicate keyed on CurrentPeriodEndUtc, which Expire() never touches. So an expiry
+        // the sweep applied later than the period it followed was counted on NO day: the period-end
+        // day's row had already been sealed while the subscription was still live, and the day the
+        // expiry actually happened looked for a period end it would never find. Write-once rows meant
+        // the event simply vanished from the churn series.
+        //
+        // Written through the domain rather than the API because nothing exposes DisableAutoRenew yet
+        // (AD-45's lever) — which is exactly why fixing this was cheap now: there is no history of
+        // real expiries to reconcile.
+        Guid gym = await SeedGymOnMonthlyPlanAsync("late-expiry-gym", 40m, "EUR");
+
+        var periodEnded = new DateOnly(2026, 4, 30);
+        var appliedOn = new DateOnly(2026, 5, 3); // the sweep lagged three days
+        var appliedAt = new DateTimeOffset(appliedOn, new TimeOnly(3, 15), TimeSpan.Zero);
+
+        await using (AppDbContext context = _host.CreateDbContext())
+        {
+            GymSubscription subscription = await context.Set<GymSubscription>()
+                .SingleAsync(candidate => candidate.GymId == gym);
+
+            subscription.Expire(appliedAt);
+            await context.SaveChangesAsync();
+        }
+
+        Assert.True(await CompileAsync(periodEnded));
+        Assert.True(await CompileAsync(appliedOn));
+
+        await using AppDbContext assertions = _host.CreateDbContext();
+
+        // Nothing on the day the period ended: the subscription was still live then.
+        DailyPlatformStats onPeriodEnd = await assertions.Set<DailyPlatformStats>()
+            .SingleAsync(row => row.StatDate == periodEnded);
+        Assert.Equal(0, onPeriodEnd.ExpiredGyms);
+
+        // Counted on the day it was applied.
+        DailyPlatformStats onApplied = await assertions.Set<DailyPlatformStats>()
+            .SingleAsync(row => row.StatDate == appliedOn);
+        Assert.Equal(1, onApplied.ExpiredGyms);
+    }
+
 }

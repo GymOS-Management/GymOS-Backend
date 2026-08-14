@@ -122,7 +122,7 @@ public sealed class SubscriptionRenewalService
             //    the churn figure counts decisions, and nobody decided this.
             else if (!subscription.AutoRenew)
             {
-                subscription.Expire();
+                subscription.Expire(now);
                 action = RenewalAction.Expired;
             }
             else

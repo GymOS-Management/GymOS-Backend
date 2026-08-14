@@ -120,12 +120,18 @@ internal sealed class DailyStatsCompiler
                 .Distinct()
                 .CountAsync(cancellationToken),
 
-            // Expiry has no timestamp of its own: the renewal sweep expires a subscription *at* its
-            // period end, which is therefore the business date of the event.
+            // Counted by when the expiry was APPLIED (`ExpiredAtUtc`), not by the period end it
+            // followed. `Expire` stamps that moment now, exactly as `CancelNow` always has.
+            //
+            // Keying on `CurrentPeriodEndUtc` was wrong in a way no re-run could repair: `Expire`
+            // never touches that column, so an expiry the sweep applied after its own day had been
+            // compiled fell into no day at all — the period-end day's row was sealed while the
+            // subscription was still live, and the day it actually expired looks for a period end it
+            // will never find. Write-once rows meant the event was simply gone from the churn series.
             Expired: await _dbContext.Set<GymSubscription>().AsNoTracking()
                 .Where(subscription => subscription.Status == SubscriptionStatus.Expired
-                    && subscription.CurrentPeriodEndUtc >= dayStart
-                    && subscription.CurrentPeriodEndUtc < dayEnd)
+                    && subscription.ExpiredAtUtc >= dayStart
+                    && subscription.ExpiredAtUtc < dayEnd)
                 .Select(subscription => subscription.GymId)
                 .Distinct()
                 .CountAsync(cancellationToken));

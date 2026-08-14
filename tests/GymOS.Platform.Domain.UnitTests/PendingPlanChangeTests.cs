@@ -175,7 +175,7 @@ public sealed class PendingPlanChangeTests
         }
         else
         {
-            subscription.Expire();
+            subscription.Expire(new DateTimeOffset(2026, 3, 9, 4, 15, 0, TimeSpan.Zero));
         }
 
         Assert.Throws<DomainException>(() => subscription.SchedulePlanChange(

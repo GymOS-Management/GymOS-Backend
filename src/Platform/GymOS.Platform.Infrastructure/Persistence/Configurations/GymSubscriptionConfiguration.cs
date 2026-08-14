@@ -79,6 +79,22 @@ public sealed class GymSubscriptionConfiguration : IEntityTypeConfiguration<GymS
         builder.HasIndex(subscription => new { subscription.GymId, subscription.CreatedAtUtc });
         builder.HasIndex(subscription => subscription.PlanId);
 
+        // The nightly churn counts filter on these two dates, and neither was indexed:
+        // `canceled_at_utc` appeared in no index at all. Both buckets are terminal and their rows are
+        // never deleted, so they grow faster than any other slice of this table while the numbers they
+        // answer stay near zero — the job ends up reading every cancellation in the platform's history
+        // to count one day's. Partial, because only the matching status is ever asked about.
+        //
+        // Literal status values, like the one-live-per-gym filter above, because SQL cannot see the
+        // enum: Canceled = 4, Expired = 5.
+        builder.HasIndex(subscription => subscription.CanceledAtUtc)
+            .HasFilter("status = 4")
+            .HasDatabaseName("ix_gym_subscriptions_canceled_at_utc");
+
+        builder.HasIndex(subscription => subscription.ExpiredAtUtc)
+            .HasFilter("status = 5")
+            .HasDatabaseName("ix_gym_subscriptions_expired_at_utc");
+
         builder.Property<uint>("xmin").IsRowVersion();
     }
 }

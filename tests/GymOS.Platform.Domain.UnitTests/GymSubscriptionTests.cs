@@ -278,7 +278,7 @@ public sealed class GymSubscriptionTests
         Assert.ThrowsAny<DomainException>(() => subscription.CancelNow(null, Now));
         Assert.ThrowsAny<DomainException>(() => subscription.ScheduleCancellation(null));
         Assert.ThrowsAny<DomainException>(() => subscription.Renew());
-        Assert.ThrowsAny<DomainException>(() => subscription.Expire());
+        Assert.ThrowsAny<DomainException>(() => subscription.Expire(new DateTimeOffset(2026, 3, 9, 4, 15, 0, TimeSpan.Zero)));
     }
 
     [Fact]
@@ -286,7 +286,7 @@ public sealed class GymSubscriptionTests
     {
         GymSubscription subscription = Assign();
 
-        subscription.Expire();
+        subscription.Expire(new DateTimeOffset(2026, 3, 9, 4, 15, 0, TimeSpan.Zero));
 
         // Two terminal states on purpose: cancellation is a decision (churn), expiry is time running
         // out (usually a failure to collect). Collapsing them would make churn unanswerable.
@@ -331,4 +331,25 @@ public sealed class GymSubscriptionTests
         Assert.False(subscription.PeriodHasEnded(Now));
         Assert.True(subscription.PeriodHasEnded(Now.AddMonths(1)));
     }
+
+    [Fact]
+    public void Expire_StampsWhenItHappened_LikeCancellationDoes()
+    {
+        // Expiry had no timestamp of its own, and the analytics compiler therefore counted it by
+        // CurrentPeriodEndUtc — a business date Expire() never touches. Any expiry applied after its
+        // own day had already been compiled landed on NO day at all: the period-end day's row was
+        // sealed while the subscription was still live, and the day the expiry actually happened
+        // looks for a period end it will not find. Because stats rows are write-once, no re-run
+        // recovers it.
+        //
+        // CancelNow has always stamped CanceledAtUtc at the transition. This is the same fact about
+        // the other terminal state.
+        GymSubscription subscription = Assign();
+        var expiredAt = new DateTimeOffset(2026, 3, 9, 4, 15, 0, TimeSpan.Zero);
+
+        subscription.Expire(expiredAt);
+
+        Assert.Equal(expiredAt, subscription.ExpiredAtUtc);
+    }
+
 }

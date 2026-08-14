@@ -1262,6 +1262,10 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("current_period_start_utc");
 
+                    b.Property<DateTimeOffset?>("ExpiredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expired_at_utc");
+
                     b.Property<Guid>("GymId")
                         .HasColumnType("uuid")
                         .HasColumnName("gym_id");
@@ -1313,6 +1317,14 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_gym_subscriptions");
+
+                    b.HasIndex("CanceledAtUtc")
+                        .HasDatabaseName("ix_gym_subscriptions_canceled_at_utc")
+                        .HasFilter("status = 4");
+
+                    b.HasIndex("ExpiredAtUtc")
+                        .HasDatabaseName("ix_gym_subscriptions_expired_at_utc")
+                        .HasFilter("status = 5");
 
                     b.HasIndex("GymId")
                         .IsUnique()
