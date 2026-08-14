@@ -27,6 +27,12 @@ services:
       # Development-only. Named for what it is so it cannot be mistaken for a real secret if it
       # ever appears in a log or a screenshot.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gymos_dev_password}
+      # Read by docker/postgres/initdb/10-roles.sql at first boot, when it creates gymos_migrator
+      # and gymos_app. Must match the defaults api and migrator authenticate with below — the base
+      # file's empty default here is what left both roles with an empty password the first time
+      # this was booted, so the migrator's own default password no longer matched anything.
+      GYMOS_MIGRATOR_PASSWORD: ${GYMOS_MIGRATOR_PASSWORD:-gymos_dev_migrator_password}
+      GYMOS_APP_PASSWORD: ${GYMOS_APP_PASSWORD:-gymos_dev_app_password}
 
     ports:
       # Published so psql, pgAdmin, EF Core migrations, and the Testcontainers-free local runs can
@@ -52,15 +58,17 @@ services:
 
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gymos_dev_password}
       # Set GYMOS_DB_CONNECTION in .env to point the API at an external shared database (e.g. a
-      # team dev instance) instead of the local sidecar. Unset, it falls back to the container.
+      # team dev instance) instead of the local sidecar. Unset, it falls back to the container,
+      # connecting as gymos_app — which owns nothing and cannot alter a table's row-level security,
+      # unlike the gymos_admin bootstrap superuser this used to connect as.
       ConnectionStrings__Database: >-
-        ${GYMOS_DB_CONNECTION:-Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=${POSTGRES_USER:-gymos};Password=${POSTGRES_PASSWORD:-gymos_dev_password};Include
+        ${GYMOS_DB_CONNECTION:-Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=gymos_app;Password=${GYMOS_APP_PASSWORD:-gymos_dev_app_password};Include
         Error Detail=true}
 
-      # On in development: a fresh clone has an empty database, and requiring a manual migration
-      # step would make "one command" untrue. Production applies migrations from the deployment
-      # pipeline instead — see DOCKER.md, "Production workflow".
-      Database__MigrateOnStartup: 'true'
+      # Off, here too: migrations are the migrator service's job now (see its definition below),
+      # so "one command" (`docker compose up -d`) still brings up a fresh clone fully migrated —
+      # it just does it in its own container instead of as a side effect of the API starting.
+      Database__MigrateOnStartup: 'false'
 
       # A working sign-in without a setup step. Public by design, like everything else here; the
       # seeder creates this account once and never resets it, so changing the password inside the
@@ -109,6 +117,15 @@ services:
     # read_only stays on in development too. A setting that only applies in production is a
     # setting whose failure mode is discovered in production — if the application starts needing
     # to write somewhere, it should fail here first, on a laptop, with someone watching.
+
+  migrator:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      # Public development password, matching how api's gymos_app default above works. gymos_admin
+      # (POSTGRES_USER) never appears here — the migrator owns the schema as gymos_migrator, created
+      # by docker/postgres/initdb/10-roles.sql on first boot.
+      ConnectionStrings__Database: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-gymos_dev_migrator_password}
 
   # ══════════════════════════════════════════════════════════════════════════════════════════════
   # Development-only tooling

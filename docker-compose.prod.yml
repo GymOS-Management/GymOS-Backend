@@ -25,6 +25,11 @@ services:
   postgres:
     environment:
       POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for production}'
+      # Read by docker/postgres/initdb/10-roles.sql at first boot, to create the two roles the
+      # application actually connects as. Guarded the same way: a missing secret is a five-second
+      # failure at deploy time, not a role created with no password.
+      GYMOS_MIGRATOR_PASSWORD: '${GYMOS_MIGRATOR_PASSWORD:?GYMOS_MIGRATOR_PASSWORD must be set for production}'
+      GYMOS_APP_PASSWORD: '${GYMOS_APP_PASSWORD:?GYMOS_APP_PASSWORD must be set for production}'
 
     # Deliberately empty: it overrides the override file's published port, so the database is
     # reachable only from the compose network. Nothing on the host, and nothing else on the host's
@@ -59,9 +64,12 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
 
-      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for production}'
+      # gymos_app, not the postgres superuser: it owns nothing and holds no DDL rights, so it
+      # cannot switch a table's row-level security off even given an SQL injection. See
+      # docker/postgres/initdb/10-roles.sql.
+      GYMOS_APP_PASSWORD: '${GYMOS_APP_PASSWORD:?GYMOS_APP_PASSWORD must be set for production}'
       ConnectionStrings__Database: >-
-        Host=${POSTGRES_HOST:-postgres};Port=${POSTGRES_PORT_INTERNAL:-5432};Database=${POSTGRES_DB:-gymos};Username=${POSTGRES_USER:-gymos};Password=${POSTGRES_PASSWORD};Include
+        Host=${POSTGRES_HOST:-postgres};Port=${POSTGRES_PORT_INTERNAL:-5432};Database=${POSTGRES_DB:-gymos};Username=gymos_app;Password=${GYMOS_APP_PASSWORD};Include
         Error Detail=false;SSL Mode=${POSTGRES_SSL_MODE:-Prefer}
 
       # Startup validates this is at least 32 bytes and refuses to boot otherwise, so a weak value
@@ -99,6 +107,29 @@ services:
 
     # No development tooling reaches production: pgadmin and mailpit exist only in
     # docker-compose.override.yml, which is not applied here. That is why they live there.
+
+  migrator:
+    # Same treatment as api, and for the same reason: pinned rather than built, so what runs the
+    # migration is the artefact CI tested, not a local build. It also must resolve to the same
+    # image as api — build: !reset null on both is what makes that true, since the base file's
+    # migrator service otherwise carries its own `build:` and would be built locally while api is
+    # pulled, running a different image with no error to show for it.
+    image: '${API_IMAGE:?API_IMAGE must be set for production, e.g. ghcr.io/gymos-management/gymos-api:0.7.0}'
+    build: !reset null
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+
+      # gymos_migrator owns the database and everything migrations create — see
+      # docker/postgres/initdb/10-roles.sql. Guarded the same way as every other production secret.
+      GYMOS_MIGRATOR_PASSWORD: '${GYMOS_MIGRATOR_PASSWORD:?GYMOS_MIGRATOR_PASSWORD must be set for production}'
+      ConnectionStrings__Database: >-
+        Host=${POSTGRES_HOST:-postgres};Port=${POSTGRES_PORT_INTERNAL:-5432};Database=${POSTGRES_DB:-gymos};Username=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD};Include
+        Error Detail=false;SSL Mode=${POSTGRES_SSL_MODE:-Prefer}
+
+      # Machine-readable, matching api: these lines are read by a collector, not a person.
+      Serilog__ConsoleFormat: json
+      Serilog__MinimumLevel__Default: ${GYMOS_LOG_LEVEL:-Information}
 
 networks:
   gymos-data:

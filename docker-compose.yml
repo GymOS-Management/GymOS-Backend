@@ -57,14 +57,22 @@ services:
 
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-gymos}
-      POSTGRES_USER: ${POSTGRES_USER:-gymos}
+      # gymos_admin, not gymos: this is POSTGRES_USER, the bootstrap superuser the image creates and
+      # runs docker/postgres/initdb/*.sql as. The application never connects as it — PostgreSQL
+      # exempts a superuser from row-level security entirely, FORCE included, so R14's policies
+      # would filter nothing for a connection using this role. See 10-roles.sql for the two roles
+      # the application actually uses.
+      POSTGRES_USER: ${POSTGRES_USER:-gymos_admin}
       # Empty default, and the requirement lives in the overlays rather than here. Compose
       # interpolates each file *independently* before merging them, so a `${VAR:?}` marker in this
       # file cannot be satisfied by an override supplying the value — it aborts the whole command
       # even when the merged result would be correct. So: dev supplies a known-public value,
       # docker-compose.prod.yml uses `${POSTGRES_PASSWORD:?}` and refuses to start without a real
-      # one, and this file stays merge-safe.
+      # one, and this file stays merge-safe. GYMOS_MIGRATOR_PASSWORD and GYMOS_APP_PASSWORD, read by
+      # 10-roles.sql when the roles are created, follow the identical pattern.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      GYMOS_MIGRATOR_PASSWORD: ${GYMOS_MIGRATOR_PASSWORD:-}
+      GYMOS_APP_PASSWORD: ${GYMOS_APP_PASSWORD:-}
 
       # UTF-8 and a deterministic collation, fixed at initdb time because they cannot be changed
       # afterwards without dumping and restoring the cluster. locale=C keeps sort order identical
@@ -87,7 +95,7 @@ services:
       # -U/-d are explicit: bare pg_isready checks the server socket, which answers "healthy"
       # during the brief window when the entrypoint has started a temporary server for the init
       # scripts and the real database does not yet exist.
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-gymos} -d ${POSTGRES_DB:-gymos} -q']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-gymos_admin} -d ${POSTGRES_DB:-gymos} -q']
       interval: 5s
       timeout: 3s
       retries: 12
@@ -202,12 +210,53 @@ services:
         # service_healthy, not service_started: the API migrates and seeds during start-up, so a
         # database that is merely *running* is not enough — pg_isready has to pass first.
         condition: service_healthy
+      migrator:
+        # Refuses to start the API against an unmigrated database. If the migrator ever exits 0
+        # after a failed migration this stops protecting anything, which is why its exit code is
+        # load-bearing — see the comment in Program.cs above the Database:MigrateOnly branch.
+        condition: service_completed_successfully
 
     <<: *default-hardening
 
     networks:
       # The API is the only service on both: it is reached from outside and it reaches the
       # database. See the networks section for why that separation matters.
+      - gymos-edge
+      - gymos-data
+
+  # Applies migrations, then exits. `api` waits for it to succeed.
+  #
+  # Same image as the API, running with Database__MigrateOnly — rather than putting `dotnet ef` or a
+  # migration bundle in the runtime image. It connects as gymos_migrator, which owns the schema; the
+  # API connects as gymos_app, which owns nothing and therefore cannot alter a table's isolation.
+  migrator:
+    build:
+      # Repository root, because the build needs Directory.Build.props and global.json.
+      context: .
+      dockerfile: src/Host/GymOS.WebApi/Dockerfile
+    image: ${API_IMAGE:-gymos-api:local}
+    container_name: gymos-migrator
+    # Not `unless-stopped`: this container is meant to exit, and restarting it would loop forever.
+    restart: 'no'
+    logging: *default-logging
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      Database__MigrateOnly: 'true'
+      ConnectionStrings__Database: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    <<: *default-hardening
+
+    networks:
+      # Copied verbatim from api, which is the only other service whose networks: block this file
+      # defines. gymos-edge is unused here — nothing calls the migrator and it calls out to
+      # nothing on that network — but api is the pattern to match rather than a second one to
+      # invent, and being on it costs the one-shot container nothing.
       - gymos-edge
       - gymos-data
 
