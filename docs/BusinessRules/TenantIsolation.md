@@ -43,14 +43,35 @@ and reading the tenant is a separate capability (`ITenantContext`) from setting 
 (`ITenantContextSetter`), so a handler cannot re-point its own scope even by accident.
 
 A job that needs tenant data receives no tenant from any request; it loops gyms and sets the context
-once per iteration, through the same seam a request uses (`TenantScope`), one gym at a time.
+once per iteration, one gym at a time, through the same seam a request uses. Concretely, and as of
+today, that means **a fresh DI scope per gym** — `_scopeFactory.CreateAsyncScope()` inside the loop,
+then `ITenantContextSetter.SetTenant(gymId)` on that scope — which is the shape `FeatureOverrideSweepJob`
+already has for unrelated reasons (one scope and one transaction per gym, so one gym's failure does not
+abandon the sweep). `ITenantContext` is scoped and refuses to be re-pointed, so the fresh scope is what
+makes the next iteration's tenant settable at all.
+
+> **`TenantScope` does not exist.** The design lists a `using`-shaped helper (`TenantScope`) that wraps
+> the scope-per-gym dance, and earlier revisions of this document referred to it as though it were
+> built. It is **owed, not present** — nothing in `src/` or `tests/` defines it. It was not built with
+> the R14 mechanism because there is no consumer yet: no production table is tenant-scoped, so no job
+> loops tenants for tenant data, and an API guessed ahead of its first caller would be guessed wrong.
+> Until it lands, write the scope-per-gym loop out longhand as above. Tracked in `docs/STATUS.md`.
 
 The setting then has to survive the trip to PostgreSQL. `TenantSessionInterceptor` writes
-`app.tenant_id` on **every** connection open — never merely reset — because Npgsql pools physical
-connections, and a plain `SET` would outlive the logical connection that wrote it, handing the next
-request that happens to borrow the same physical connection the previous one's tenant. Writing
-unconditionally, including an empty value for platform scope, is what makes that impossible: nothing is
-ever read that this connection's current user did not just write.
+`app.tenant_id` on **every** connection open — never merely reset — including an empty value for
+platform scope, so nothing is ever read that this connection's current user did not just write.
+
+**Why unconditionally, stated accurately.** Npgsql pools physical connections, and a plain session
+`SET` outlives the logical connection that wrote it — but Npgsql also resets a pooled connection when
+it is returned (`DISCARD ALL`/`RESET ALL`), which clears the setting before the next borrower sees it.
+That reset is disabled by `No Reset On Close=true`, and is skipped entirely when multiplexing is
+enabled; neither is set anywhere in this solution today. So the unconditional write is **defence in
+depth over Npgsql's connection reset, not the sole thing preventing leakage**. This is measured rather
+than argued: the interceptor was temporarily changed to skip the write when there is no tenant — the
+shape this design rejects — and all eight isolation tests still passed, the pool's reset having covered
+the gap. The unconditional write is kept because it is what stays correct the day someone turns that
+reset off, or enables multiplexing, for reasons that have nothing to do with tenancy — and because a
+control that depends on a connection-string default nobody is watching is not a control.
 
 ## Why a caller without a grant gets 404, not 403
 
@@ -125,7 +146,8 @@ string under platform scope and casts to `NULL` for the comparison — and `tena
 rows, never every row.
 
 This is the single most important property in the whole mechanism. A code path that forgets to set the
-tenant — a handler wired to the wrong route, a job that skips `TenantScope`, a future maintainer who
+tenant — a handler wired to the wrong route, a job that reuses one scope across every gym instead of
+taking a fresh one per gym (the seam `TenantScope` is owed for), a future maintainer who
 "simplifies" the middleware ordering — does not therefore read every tenant's data. It reads **none of
 it**. That failure is loud and immediate: an empty screen, a support ticket within minutes, a test that
 fails the moment anyone looks. The alternative failure mode — reading everyone's data because nobody set
@@ -133,11 +155,30 @@ a filter — is silent, and the kind of thing that only surfaces in an incident 
 all. The mechanism is built so that the mistake someone will eventually make produces the failure that
 gets noticed, rather than the one that doesn't.
 
+## The middleware does not check the gym exists — deliberately
+
+`TenantResolutionMiddleware` reads `{gymId}` from the route, checks the caller's grants, and sets the
+tenant. It never asks whether a gym with that id exists. A platform-wide caller — every caller today —
+therefore gets a tenant set for **any** Guid they care to type.
+
+This is intended, and it has a visible consequence once tenant-scoped tables land: `GET
+/api/v1/gyms/{nonexistent}/members` will answer **`200 []`**, not `404`. An empty list for a gym that
+was never real is precisely the "empty screen that reads as a bug" §8 of the design warns about, and it
+will be reported as one.
+
+It stays this way because the alternative is worse. An existence check here would have to answer
+differently for "gym exists" and "gym does not exist" *before* the endpoint runs — which is exactly the
+404-vs-empty oracle the 404-not-403 choice above exists to eliminate. Whether a given id is a real gym
+would become readable from any gym-routed URL by any authenticated caller. Deciding that a request for a
+nonexistent resource is a 404 is the **endpoint's** job, where it can be answered with the caller's
+grants and the resource's own semantics in view; the middleware's job is only "may this caller act for
+this tenant, and if so, which tenant". Do not add an existence check here to fix the empty-list report.
+
 ## Known open items
 
-Neither of the following is fixed by this increment. Both are recorded here, and in
+None of the following is fixed by this increment. All are recorded here, and in
 `docs/STATUS.md`, because "the mechanism is built" is not the same claim as "the platform is isolated" —
-that second claim waits on both.
+that second claim waits on them.
 
 - **The deployment connects as a PostgreSQL superuser**, which voids `FORCE` entirely against it — see
   "Why `FORCE` is mandatory", above. Nothing is exposed today because no production table is
@@ -150,3 +191,8 @@ that second claim waits on both.
   check has never had a gym-scoped grant to check against — the existing test suite is entirely
   platform-scope callers. The Members increment needs a way to create a gym-scoped grant; it does not
   exist yet.
+- **`TenantScope` is owed.** The design names a `using`-shaped helper that sets the tenant for one gym
+  and clears it on dispose, so a job looping gyms cannot forget the second half. It was not built —
+  there is no consumer for it yet, and an API guessed ahead of its first caller is guessed wrong — and
+  until it exists, jobs must take a fresh DI scope per gym by hand (see "Where the tenant comes from",
+  above). The Members increment, or the first job that reads tenant data, is where it earns its shape.

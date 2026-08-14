@@ -1561,10 +1561,11 @@ passed**. Whole solution (`SharedKernel` 131 · `Platform.Domain.UnitTests` 434 
 `Platform.Application.UnitTests` 247 · `BuildingBlocks.UnitTests` 66 · `ArchitectureTests` 151 ·
 `Platform.Infrastructure.UnitTests` 67 · `IntegrationTests` 301) — **1397 passed**.
 
-### Two open items this increment produced rather than closed
+### Three open items this increment produced rather than closed
 
-Both are in "Known open items" below and in `docs/BusinessRules/TenantIsolation.md`; neither is fixed
-here.
+All three are in "Known open items" below and in `docs/BusinessRules/TenantIsolation.md`; none is fixed
+here. (The third was added by the increment's final review on 2026-08-15, which found it undocumented
+rather than newly created.)
 
 - **The deployment connects to PostgreSQL as a superuser**, which voids `FORCE ROW LEVEL SECURITY`
   entirely — a superuser bypasses row-level security unconditionally, `FORCE` or not. The validator's
@@ -1576,6 +1577,9 @@ here.
   `UserRole.TenantId = null`. Every grant any role holds today is platform-wide, which is the real
   reason `TenantResolutionMiddleware` is inert against the existing suite. The Members increment needs
   a way to create a gym-scoped grant; it does not exist yet.
+- **`TenantScope` was specified and not built.** The design's §4 lists it as a component and the
+  business-rules doc named it as an existing seam; nothing defines it. Deliberate — no consumer yet —
+  but unrecorded until the final review. Jobs take a fresh DI scope per gym by hand until it lands.
 
 ### `ARCHITECTURE-ADDENDUM.md`'s R14 row
 
@@ -1845,6 +1849,20 @@ been exercised against a real grant.
   callers, which is also why the middleware is provably inert against it. The Members increment needs a
   way to create a gym-scoped grant; it does not exist yet. Reasoning in
   `docs/BusinessRules/TenantIsolation.md`.
+
+- **`TenantScope` is owed, not built (R14 close-out).** The R14 design's §4 component table lists
+  `TenantScope` (BuildingBlocks.Application) — a `using`-shaped helper that sets the tenant for one gym
+  and clears it on dispose, so a job looping gyms cannot forget the second half — and
+  `docs/BusinessRules/TenantIsolation.md` referred to it as an existing seam. It does not exist:
+  `grep -rn "TenantScope" src tests` finds only `ITenantScoped` and a private
+  `TenantIsolationValidator.TenantScopedTables()`. **Deliberately not built in this increment**, and
+  the omission was simply never recorded (found in the increment's final review, 2026-08-15): there is
+  no consumer for it — no production table is tenant-scoped, so no job loops tenants for tenant data —
+  and an API guessed ahead of its first caller is guessed wrong. Until it lands, a job takes a fresh DI
+  scope per gym by hand and calls `ITenantContextSetter.SetTenant` on it, which is the shape
+  `FeatureOverrideSweepJob` already has. The business-rules doc now says "owed" rather than "present";
+  the design spec is left as the historical record. The Members increment, or the first job that reads
+  tenant data, is where its shape gets decided.
 
 - **⚠️ THE CHURN COUNT IS FIXED IN CODE (2026-08-14) — SAME STORED-HISTORY CAVEAT AS MRR BELOW.**
   `canceled_gyms` and `expired_gyms` counted `GymSubscription` **rows**, not gyms, so a gym that

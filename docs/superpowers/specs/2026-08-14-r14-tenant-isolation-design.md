@@ -117,6 +117,18 @@ write.
 This is deliberately not "set it when there is a tenant, reset it when there is not": that shape has an
 execution path where neither branch runs, and the bug it produces is the one above.
 
+> **Corrected after the increment's final review, 2026-08-15.** The argument above overstates the case.
+> Npgsql resets a pooled connection on close (`DISCARD ALL`/`RESET ALL`) unless `No Reset On Close=true`
+> is set, and does not reset at all only when multiplexing is enabled; neither is set anywhere in this
+> solution. So under today's settings a session GUC set by `set_config(…, false)` cannot survive back
+> into the pool regardless of what the interceptor does. This was measured, not reasoned: the
+> interceptor was temporarily changed to return early when there is no tenant — exactly the shape this
+> decision rejects — and all eight isolation tests, including test 6, still passed. The unconditional
+> write is therefore **defence in depth over Npgsql's connection reset**, not the sole thing preventing
+> leakage: it is what stays correct the day someone sets `No Reset On Close` or enables multiplexing for
+> unrelated reasons. It is kept for that reason. Test 6 is kept too, relabelled to say what it actually
+> pins — see the note under §6.
+
 `SET LOCAL` would also be immune, being transaction-scoped — rejected because EF issues plain reads
 outside a transaction, so it would either silently not apply or force a transaction around every query.
 
@@ -199,6 +211,15 @@ could not exhibit the failure they guarded; this is the control where that would
 open onto one physical connection and makes leakage deterministic. Without it the test passes on a pool
 that happened not to reuse, and proves nothing.
 
+> **Corrected after the increment's final review, 2026-08-15.** Even with `Maximum Pool Size=1`, test 6
+> cannot fail by removing the interceptor's unconditional write, because Npgsql's own connection reset
+> clears the GUC first — verified by experiment (see the note under D6). Test 6 is kept and relabelled:
+> it pins the end-to-end fail-closed property under guaranteed physical-connection reuse — that
+> back-to-back tenant and platform scopes on one physical connection read A's rows and then nothing —
+> without claiming to be the negative control for D6's unconditional write. There is no in-process
+> negative control for that write short of changing the connection string, which is out of the suite's
+> reach.
+
 The suite calls the **real** `TenantIsolationValidator`, not a reimplementation, so relaxing the boot
 check fails test 5 with it.
 
@@ -207,6 +228,13 @@ check fails test 5 with it.
 - All six tests green against real PostgreSQL, with test 3's negative control recorded
 - `pnpm`-side unaffected; backend `dotnet build` 0 warnings, `dotnet format` clean, full suite green
 - An architecture test asserting every `ITenantScoped` entity's table is validated
+  > **Not delivered by the increment; delivered by its final review, 2026-08-15.** This line was missed
+  > and its absence was not recorded anywhere. `tests/GymOS.ArchitectureTests/TenantScopedEntityTests.cs`
+  > now asserts that every `ITenantScoped` type is a mapped EF entity with a resolvable table name, an
+  > explicit schema, and `TenantId` on the `tenant_id` column — the things that make the marker
+  > *reachable* by `TenantIsolationValidator`. It cannot assert that a tenant-scoped table exists,
+  > because none does: nothing implements the marker yet, so the test is a tripwire armed for the
+  > Members increment, not coverage of anything today. Its own comment says so.
 - `docs/BusinessRules/` gains the tenant-isolation rules, and `ARCHITECTURE-ADDENDUM.md`'s R14 row can
   finally be marked as having a subject
 - No production table is tenant-scoped by this increment
