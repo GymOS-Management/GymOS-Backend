@@ -229,6 +229,12 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
 
+    // After authorization, because it reads the caller's grants; before anything opens a connection,
+    // because TenantSessionInterceptor writes whatever this leaves on the context. Getting the order
+    // wrong fails closed — no tenant, no rows — which is the safe direction and looks like an empty
+    // screen rather than an error.
+    app.UseMiddleware<TenantResolutionMiddleware>();
+
     app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/ready");
 
