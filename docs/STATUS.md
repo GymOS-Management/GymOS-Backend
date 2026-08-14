@@ -1555,11 +1555,27 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
 **F4 is closed as of 2026-08-14** — built, reviewed, its three substantive findings fixed
 (`2ae0445`), and `F4-AS-BUILT.md` written. It does not appear in the owed-review list below.
 
-**The owed-review list is now five, and it has only grown this week**: M4.1's multi-agent gate, M5's
-whole-branch review, F3's, the console side of the activation increment (`d27e32a` in GymOS-Platform
-— the browser half, where the raw token is handled), and the API reference increment. None blocks
-another and none blocks new work, which is exactly why the list keeps growing. Worth deciding whether
-the next slot goes to one of these rather than to another increment.
+**~~The owed-review list is now five~~ — all five have now run (2026-08-14). The list is empty and
+the backlog has moved from "unreviewed" to "unfixed".** M4.1's multi-agent gate, M5's, F3's, the
+activation increment's console side, and the API reference increment: **44 findings, 2 already fixed
+downstream, 42 open.** Each is recorded under "Known open items" below, worst first, with the ones
+verified by hand marked as such — the rest are as reported and want confirming before anyone acts.
+
+**The next increment is not a feature.** Two findings are live defects in numbers the platform
+publishes: M5's MRR normalises by multiplying by a truncated reciprocal, which is one cent low on 1
+price in 24 and never high, served live *and* written permanently into the write-once stats table;
+and churn counts subscription rows rather than gyms, so a gym that churns twice in a day is two
+churned gyms and a single-tenant platform can report over 100% churn. Neither can be corrected after
+the fact, because stats rows are never recomputed. On the M4 → M4.1 precedent these want their own
+fix increments (an M5.2 and an M4.2) rather than being folded into whatever comes next.
+
+**One pattern is worth more than any single finding.** Three separate increments shipped a fix or a
+guard that could not work, each with a test that looked like coverage: `4ce45d0`'s catch is
+unreachable because `UnitOfWork` translates the exception it catches; the API reference's security
+assertion checked `GetArrayLength() > 0`, which `[{}]` satisfies; and M5's zero-decimal rounding test
+uses JPY 12,000, a price that divides evenly and therefore cannot see the bug it guards. All three
+passed CI. The lesson is not "write more tests" — it is that a test whose fixture cannot exhibit the
+failure is indistinguishable from one that can, until someone checks.
 
 **Two things F4 left behind on purpose**, both recorded in its as-built: a shared `FeatureRow` shell
 is the earned extraction (the row markup is copied across all three surfaces, and the E2E journey
@@ -1669,6 +1685,48 @@ log-count conflation) are recorded in `docs/BusinessRules/Features.md`'s deferre
 above, not repeated here.
 
 ## Known open items / honest notes
+
+- **M5's multi-agent gate has now run (2026-08-14) — 15 findings, and the first one is a money bug in
+  the platform's headline number. VERIFIED BY HAND, not taken on the reviewer's word.**
+
+  `MonthlyRecurringRevenue.PerMonth` normalises an annual price with
+  `Price.Multiply(1m / months, RoundingPolicy.HalfEven)` — it **multiplies by the truncated
+  reciprocal instead of dividing.** `1m/12` cannot be represented exactly, so every product that
+  should land exactly on a half-cent lands just below it, and half-even then rounds *down*. An
+  exhaustive scan of two-decimal yearly prices from 0.01 to 2000.00 was run against `System.Decimal`
+  to check this: **8,327 of 200,000 prices differ, and all 8,327 are low. None are high.** A
+  systematic one-directional shortfall, not rounding noise. EUR 599.94/yr reports 49.99 where
+  599.94/12 = 49.995 → 50.00. Zero-decimal currencies are worse: JPY 59,994/yr reports 4,999 instead
+  of 5,000.
+
+  The wrong figure is served live by `/dashboard/summary` **and written permanently into
+  `daily_platform_stats` by the write-once nightly job**, where nothing can recompute it. `Money` has
+  no `Divide` — only `Allocate` — which is how the reciprocal got written in the first place.
+  `AZeroDecimalCurrencyRoundsToWholeUnits` exists and passes because its fixture is JPY 12,000, an
+  exact multiple of 12; a price that divides evenly cannot see this bug.
+
+  **The rest, worst first, reported and not yet verified.** `canceled_gyms`/`expired_gyms` are named,
+  stored and published as *gym* counts but computed as `GymSubscription` **row** counts with no
+  `Distinct` — one gym that churns twice in a day is two churned gyms, and with a single tenant
+  `/analytics/churn` can return a churn rate above 100%, permanently. The Expired count keys on
+  `CurrentPeriodEndUtc`, a business date `Expire()` never updates, so an expiry applied after its own
+  day was compiled is counted on **no** day at all (dormant only because `DisableAutoRenew` has no
+  caller yet — which is exactly why an `ExpiredAtUtc` mirroring `CanceledAtUtc` is cheap now). The
+  eight reads that build one stats row run in **no transaction**, so a gym created mid-compile
+  produces a stored row where `total_gyms ≠ active + suspended + provisioning` — the identity
+  `Analytics.md` explicitly promises — and write-once means it is served that way forever.
+  `CompileAsync` validates `statDate` not at all while its class doc *invites* hand-triggered
+  backfill that four other documents forbid; population counts are unwindowed, so backfilling a gap
+  writes today's counts under an old date and the write-once guard then blocks any correction.
+  `/dashboard/health` is gated on a permission check that itself reads the database, and the database
+  is the only registered check — so with Postgres down the panel returns a bare 500 instead of the
+  "Unhealthy" it exists to report. Plus: `mrr` is projected with no `OrderBy` so `/analytics/revenue`
+  and `/dashboard/summary` can disagree on currency order; the `livingGyms` predicate and the whole
+  billing-contributions query are duplicated verbatim between the live query and the nightly
+  compiler (only the calculator was extracted); `GetSummaryAsync` costs six sequential round trips
+  and materialises every paying subscription per poll; `canceled_at_utc` is in no index at all; and
+  three tests assert less than their names claim — deleting the three `AnalyticsRead` grants this
+  increment adds leaves every M5 test green.
 
 - **M4.1's multi-agent gate has now run (2026-08-14) — 15 findings, none fixed, and it is the most
   serious review this project has had.** Two were verified by hand before being written down here;
