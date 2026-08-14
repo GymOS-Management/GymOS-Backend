@@ -152,8 +152,14 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     [Fact]
     public async Task AWriteCannotBeForgedForAnotherTenant()
     {
-        // WITH CHECK on the policy: acting as A, inserting a row stamped B is refused outright rather
-        // than silently landing where the caller cannot see it.
+        // Acting as A, inserting a row stamped B is refused outright rather than silently landing
+        // where the caller cannot see it.
+        //
+        // The policy's check arm is what refuses it — but note that deleting `WITH CHECK` alone would
+        // NOT make this test fail: PostgreSQL falls back to the `USING` expression as the check for
+        // INSERT and UPDATE when `WITH CHECK` is absent, and here the two expressions are identical.
+        // So this test pins the write path being policed at all; it does not pin which clause polices
+        // it. Dropping the policy, or dropping FORCE, is what turns it red.
         await Assert.ThrowsAnyAsync<DbUpdateException>(() => SeedAsAsync(actingAs: TenantA, stampedWith: TenantB));
     }
 
