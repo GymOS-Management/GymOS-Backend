@@ -93,7 +93,20 @@ public sealed class TenantIsolationValidator
         {
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
-            if (await reader.ReadAsync(cancellationToken) && (reader.GetBoolean(1) || reader.GetBoolean(2)))
+            // A missing row is a problem, not a pass. `current_user` should always match a `pg_roles`
+            // row, so there is no benign reading of its absence — and the alternative is a security
+            // check with a branch that fails open, which is the one shape it must never have.
+            // `InspectAsync` treats a missing row the same way, for the same reason.
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                problems.Add(
+                    "  the connected role could not be found in pg_roles, so whether it bypasses " +
+                    "row-level security could not be established.");
+
+                return problems;
+            }
+
+            if (reader.GetBoolean(1) || reader.GetBoolean(2))
             {
                 problems.Add(
                     $"  the connected role \"{reader.GetString(0)}\" has BYPASSRLS (or is a " +
