@@ -35,7 +35,13 @@ public sealed class FeatureAdoptionParityTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         string connectionString = await _postgres.CreateIsolatedDatabaseAsync("feature_adoption_parity");
-        _host = AuthenticationHost.Create(connectionString);
+        // Jobs off. This suite asserts on stored gym_feature_overrides rows, and
+        // FeatureOverrideSweepJob runs daily at 03:50 UTC — a CI run alive across that
+        // minute would have the sweep withdraw the very exceptions these assertions
+        // depend on, as an unreproducible failure that looks like a real defect.
+        // FeatureOverrideSweepTests does the same, for the same reason.
+        _host = AuthenticationHost.Create(
+            connectionString, settings => settings["Jobs:Enabled"] = "false");
         _client = _host.CreateClient();
 
         using HttpResponseMessage ready = await _client.GetAsync(new Uri("/health/ready", UriKind.Relative));
