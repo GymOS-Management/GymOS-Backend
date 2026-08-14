@@ -5,12 +5,14 @@ using GymOS.BuildingBlocks.Infrastructure.Auditing;
 using GymOS.BuildingBlocks.Infrastructure.Jobs;
 using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.BuildingBlocks.Infrastructure.Persistence;
+using GymOS.BuildingBlocks.Infrastructure.Tenancy;
 using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Identity;
 using GymOS.Platform.Infrastructure.Jobs;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
+using GymOS.Platform.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -41,7 +43,12 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         services.TryAddScoped<OutboxSaveChangesInterceptor>();
         services.TryAddScoped<AuditableTimestampsInterceptor>();
         services.TryAddScoped<AuditSaveChangesInterceptor>();
+        services.TryAddScoped<TenantSessionInterceptor>();
         services.TryAddScoped<PlatformIdentitySeeder>();
+
+        services.TryAddScoped<TenantContext>();
+        services.TryAddScoped<ITenantContext>(provider => provider.GetRequiredService<TenantContext>());
+        services.TryAddScoped<ITenantContextSetter>(provider => provider.GetRequiredService<TenantContext>());
 
         // Insert-only: a feature's defaults and copy belong to the operator once the row exists
         // (§3.5), so this must never "reconcile" them — see FeatureCatalogSeeder.
@@ -99,7 +106,10 @@ public static class PlatformInfrastructureServiceCollectionExtensions
             .AddInterceptors(
                 provider.GetRequiredService<AuditableTimestampsInterceptor>(),
                 provider.GetRequiredService<AuditSaveChangesInterceptor>(),
-                provider.GetRequiredService<OutboxSaveChangesInterceptor>()));
+                provider.GetRequiredService<OutboxSaveChangesInterceptor>(),
+                // Connection-level, not SaveChanges-level: it must run on every open, including the
+                // opens that only read.
+                provider.GetRequiredService<TenantSessionInterceptor>()));
 
         return services;
     }
