@@ -1,7 +1,12 @@
 using System.Net;
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace GymOS.IntegrationTests.Tenancy;
@@ -37,7 +42,11 @@ public sealed class TenantResolutionTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         string connectionString = await _postgres.CreateIsolatedDatabaseAsync("tenant_resolution");
-        _host = AuthenticationHost.Create(connectionString);
+        _host = AuthenticationHost.Create(
+            connectionString,
+            configureServices: services =>
+                services.AddSingleton<IStartupFilter, ResolvedTenantProbeStartupFilter>());
+
         _client = _host.CreateClient();
 
         using HttpResponseMessage ready = await _client.GetAsync(new Uri("/health/ready", UriKind.Relative));
@@ -62,6 +71,9 @@ public sealed class TenantResolutionTests : IAsyncLifetime
         using HttpResponseMessage response = await _client.GetAsync(new Uri("/api/v1/plans", UriKind.Relative));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // And the tenant really was left unset — not merely "the response was 200 anyway".
+        Assert.Equal(ResolvedTenantProbeStartupFilter.NoTenant, ResolvedTenant(response));
     }
 
     [Fact]
@@ -74,6 +86,13 @@ public sealed class TenantResolutionTests : IAsyncLifetime
             new Uri($"/api/v1/gyms/{gym}", UriKind.Relative));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // The assertion this test existed without until the increment's final review. A 200 proves only
+        // that the middleware let the request through; deleting `SetTenant(gymId)` outright left it
+        // green. The property the Members increment leans on hardest — the gym in the URL is the gym
+        // whose rows you get — starts here, with the resolved tenant having actually reached
+        // ITenantContext during the request.
+        Assert.Equal(gym.ToString(), ResolvedTenant(response));
     }
 
     [Fact]
@@ -88,6 +107,10 @@ public sealed class TenantResolutionTests : IAsyncLifetime
             new Uri($"/api/v1/gyms/{gym}", UriKind.Relative));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        // And it stopped before setting anything: a refused caller must not leave a tenant behind for
+        // whatever runs next in the same scope.
+        Assert.Equal(ResolvedTenantProbeStartupFilter.NoTenant, ResolvedTenant(response));
     }
 
     [Fact]
@@ -107,6 +130,20 @@ public sealed class TenantResolutionTests : IAsyncLifetime
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// What <c>ITenantContext.TenantId</c> held at the end of the request that produced
+    /// <paramref name="response"/>, as reported by <see cref="ResolvedTenantProbeStartupFilter"/>.
+    /// </summary>
+    private static string ResolvedTenant(HttpResponseMessage response)
+    {
+        Assert.True(
+            response.Headers.TryGetValues(ResolvedTenantProbeStartupFilter.HeaderName, out var values),
+            $"The {ResolvedTenantProbeStartupFilter.HeaderName} header is missing, so the probe did not " +
+            "run — the assertion below would pass or fail for the wrong reason.");
+
+        return Assert.Single(values!);
+    }
 
     /// <summary>
     /// Creates a user holding a grant for exactly one gym and returns a client signed in as them.
@@ -172,5 +209,61 @@ public sealed class TenantResolutionTests : IAsyncLifetime
         AuthApi.Authorize(client, await AuthApi.ReadAccessTokenAsync(signIn));
 
         return client;
+    }
+}
+
+/// <summary>
+/// Reports what <see cref="ITenantContext.TenantId"/> held during a request, on a response header, so a
+/// test can assert the chain <c>route → TenantResolutionMiddleware → ITenantContext</c> end to end
+/// rather than inferring it from a 200.
+/// </summary>
+/// <remarks>
+/// <para><b>Test-host only.</b> Registered through <c>AuthenticationHost.Create</c>'s
+/// <c>configureServices</c> hook by <see cref="TenantResolutionTests"/> alone; nothing is added to
+/// production routing or to the production pipeline, and no other suite's host sees it.</para>
+/// <para><b>A middleware rather than a test-only endpoint</b>, deliberately. An endpoint that returns
+/// the tenant would prove the chain works on a route invented for the test; this reports it for
+/// whichever <em>real</em> route the test called, so <c>/api/v1/gyms/{gymId}</c> — the actual shape the
+/// Members increment inherits — is what gets asserted on.</para>
+/// <para><b>Read on <c>OnStarting</c>, not before <c>next</c>.</b> The value is captured as the response
+/// begins, which is after <c>TenantResolutionMiddleware</c> and the endpoint have run, and while the
+/// request scope is still alive. Reading it before <c>next</c> would always report null; reading it
+/// after <c>next</c> returns is too late to add a header.</para>
+/// <para>An <see cref="IStartupFilter"/> because <c>WebApplicationFactory</c> offers no seam to insert
+/// middleware into the middle of a minimal-hosting pipeline. Filters registered here run inside the
+/// host's own <c>RequestServicesContainerMiddleware</c> (registered first, and so applied outermost),
+/// which is what makes <c>HttpContext.RequestServices</c> available.</para>
+/// </remarks>
+internal sealed class ResolvedTenantProbeStartupFilter : IStartupFilter
+{
+    public const string HeaderName = "X-Test-Resolved-Tenant";
+
+    /// <summary>
+    /// Platform scope, as a header value. A literal rather than an empty string: assigning empty
+    /// <c>StringValues</c> removes the header, and an absent header would be indistinguishable from a
+    /// probe that never ran.
+    /// </summary>
+    public const string NoTenant = "none";
+
+    public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+    {
+        ArgumentNullException.ThrowIfNull(next);
+
+        return app =>
+        {
+            app.Use(async (context, nextMiddleware) =>
+            {
+                context.Response.OnStarting(() =>
+                {
+                    var tenant = context.RequestServices.GetRequiredService<ITenantContext>();
+                    context.Response.Headers[HeaderName] = tenant.TenantId?.ToString() ?? NoTenant;
+                    return Task.CompletedTask;
+                });
+
+                await nextMiddleware();
+            });
+
+            next(app);
+        };
     }
 }
