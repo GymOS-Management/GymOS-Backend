@@ -12,6 +12,7 @@ using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
+using GymOS.Platform.Infrastructure.Tenancy;
 using GymOS.WebApi.Analytics;
 using GymOS.WebApi.Auth;
 using GymOS.WebApi.Endpoints;
@@ -162,6 +163,13 @@ try
         {
             await startupScope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
         }
+
+        // R14, before anything reads or writes: a tenant-scoped table without a forced policy means
+        // isolation is off, and the only safe response is not to serve traffic. Fatal by design —
+        // see TenantIsolationValidator.
+        await startupScope.ServiceProvider
+            .GetRequiredService<TenantIsolationValidator>()
+            .ValidateAsync(CancellationToken.None);
 
         await startupScope.ServiceProvider.GetRequiredService<PlatformIdentitySeeder>().SeedAsync(CancellationToken.None);
 

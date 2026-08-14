@@ -45,6 +45,7 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         services.TryAddScoped<AuditSaveChangesInterceptor>();
         services.TryAddScoped<TenantSessionInterceptor>();
         services.TryAddScoped<PlatformIdentitySeeder>();
+        services.TryAddScoped<TenantIsolationValidator>();
 
         services.TryAddScoped<TenantContext>();
         services.TryAddScoped<ITenantContext>(provider => provider.GetRequiredService<TenantContext>());
