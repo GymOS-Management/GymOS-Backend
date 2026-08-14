@@ -1,8 +1,22 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-14 · **F4 (feature flags console) is built, ~~and its review is owed~~ —
-its review has now happened, its three substantive findings are fixed (`2ae0445`), and
-`F4-AS-BUILT.md` is written.** Three surfaces: the feature catalogue at `/features`, a Features tab on
+**Last updated:** 2026-08-14 · **Every owed review has now run, and 23 of their 44 findings are
+fixed.** The five that were outstanding — M4.1's multi-agent gate, M5's, F3's, the activation
+increment's console side, and the API reference — plus four fix increments and F4's own review. The
+day's arc, if you read nothing else: **the reviews found two live defects in numbers the platform
+publishes** (MRR a cent low on 1 annual price in 24, always low; churn counting subscription rows so a
+gym churning twice reads as two churned gyms), **both now fixed and both leaving permanently wrong
+history**, because `daily_platform_stats` is write-once. See "Next step" for what that means and what
+nobody has decided about it.
+
+**The pattern worth carrying forward** is not any single bug: **four separate increments shipped a fix
+or a guard that could not work, each with a test that looked like coverage.** An unreachable catch
+(`4ce45d0`), a security assertion that `[{}]` satisfies, a rounding test whose fixture divides evenly,
+and a reconciliation test I wrote today whose numbers already reconciled. All passed CI. A test whose
+fixture cannot exhibit the failure is indistinguishable from one that can — until somebody checks.
+
+· **F4 (feature flags console) is built, ~~and its review is owed~~ — its review has happened, its
+three substantive findings are fixed (`2ae0445`), and `F4-AS-BUILT.md` is written.** Three surfaces: the feature catalogue at `/features`, a Features tab on
 gym detail, and a Features card on plan detail. Design: `GymOS-Platform/docs/F4-DESIGN.md` · as built:
 `GymOS-Platform/docs/F4-AS-BUILT.md` · plan:
 `GymOS-Platform/docs/superpowers/plans/2026-08-13-f4-feature-flags-console.md`. **198 unit tests**
@@ -1558,16 +1572,38 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
 **~~The owed-review list is now five~~ — all five have now run (2026-08-14). The list is empty and
 the backlog has moved from "unreviewed" to "unfixed".** M4.1's multi-agent gate, M5's, F3's, the
 activation increment's console side, and the API reference increment: **44 findings, 2 already fixed
-downstream, 42 open.** Each is recorded under "Known open items" below, worst first, with the ones
-verified by hand marked as such — the rest are as reported and want confirming before anyone acts.
+downstream, and 23 closed by the four fix increments that followed — roughly 19 open.** Each is
+recorded under "Known open items" below, worst first, with the ones verified by hand marked as such —
+the rest are as reported and want confirming before anyone acts on them.
 
-**The next increment is not a feature.** Two findings are live defects in numbers the platform
-publishes: M5's MRR normalises by multiplying by a truncated reciprocal, which is one cent low on 1
-price in 24 and never high, served live *and* written permanently into the write-once stats table;
-and churn counts subscription rows rather than gyms, so a gym that churns twice in a day is two
-churned gyms and a single-tenant platform can report over 100% churn. Neither can be corrected after
-the fact, because stats rows are never recomputed. On the M4 → M4.1 precedent these want their own
-fix increments (an M5.2 and an M4.2) rather than being folded into whatever comes next.
+**~~The next increment is not a feature~~ — four fix increments have now run (2026-08-14), and
+23 of the 44 findings are closed.** In order: `c3411f2` and `49c87dc` for the two live defects in
+published numbers (MRR normalising by a truncated reciprocal; churn counting subscription rows rather
+than gyms), then **M5.2** (`267b6c4`, `7672bb6`) and **M4.2** (`e235807`, `d8edfec`, `445be2a`) on the
+M4 → M4.1 precedent, plus `728157e` for all nine frontend findings and `c50fca1` for the four suites
+the 03:50 sweep could sabotage. Each is described in its own entry under "Known open items".
+
+**What the fixes could not undo.** MRR and churn are correct from now on, and the rows already written
+are not: `daily_platform_stats` is write-once by design, so `/analytics/revenue` and `/analytics/churn`
+step at the first nightly run after those commits, with nothing marking the boundary. Correcting the
+history means either building a recompute-and-overwrite path — which the write-once rule exists to
+forbid, and which M5's own backfill finding independently warns against because the population counts
+are unwindowed — or accepting the step. **That is a product decision and nobody has taken it.**
+
+**Roughly 19 findings remain, none of them severe.** The largest is the maintainer's unlocked plan
+read, which is genuinely blocked rather than merely pending: three of its four callers hold no
+transaction, so a `FOR UPDATE` there would release at end-of-statement and buy nothing until those
+call sites are audited. Then the seeder lock's overstated guarantee, the `features: null` unit fake,
+`/dashboard/health` gated behind a check that itself reads the database, the duplicated `livingGyms`
+predicate, `GetSummaryAsync`'s round trips, and three API-reference items.
+
+**Two decisions are the owner's, not the implementer's.** Whether an override records a **value** or an
+**intent** — today a deny-exception ("suspended pending fraud investigation") is hard-deleted when it
+happens to coincide with its plan, and the capability switches itself back on when the plan flips;
+fixing that is a schema change that interacts with the deferred expiry work. And the console's `e2e`
+CI job, which has never passed in eight runs because it checks out a private sibling repository with a
+token scoped to one repo: it needs a PAT or GitHub App secret, so the browser suite is currently gated
+by nobody.
 
 **One pattern is worth more than any single finding.** Three separate increments shipped a fix or a
 guard that could not work, each with a test that looked like coverage: `4ce45d0`'s catch is
@@ -1721,6 +1757,23 @@ above, not repeated here.
   in 24 is affected, so the error is small, one-directional, and bounded by how many annual plans were
   live on each day.
 
+- **M5.2 (2026-08-14) fixed six of M5's fifteen**, across `c3411f2`, `49c87dc`, `267b6c4` and
+  `7672bb6`. Closed: the MRR reciprocal (see below); churn counting subscription rows rather than gyms;
+  the population read non-atomically, now one `GROUP BY` with `DailyPlatformStats.Record` refusing a
+  population that does not reconcile; `CompileAsync` accepting a day that has not ended, and the class
+  doc that invited the backfill four other documents forbid; the unordered `mrr` projection, sorted in
+  memory because ordering by a `Money` complex-type member does not translate and returns a 500; and
+  the `Expired` count keying on a date `Expire` never stamped — there is an `ExpiredAtUtc` now, with
+  partial indexes on it and on `canceled_at_utc`, which had none at all.
+
+  **Still open from that fifteen:** `/dashboard/health` gated behind a permission check that itself
+  reads the database, so with Postgres down the panel 500s instead of reporting Unhealthy; the
+  `livingGyms` predicate and the billing-contributions query duplicated verbatim between the live
+  query and the nightly compiler; `GetSummaryAsync`'s six sequential round trips materialising every
+  paying subscription per poll; the `Mrr` navigation's order-dependent `FindNavigation(...)!`; and
+  three tests that assert less than their names claim — deleting the three `AnalyticsRead` grants
+  leaves every M5 test green.
+
 - **M5's multi-agent gate has now run (2026-08-14) — 15 findings, and the first one is a money bug in
   the platform's headline number. VERIFIED BY HAND, not taken on the reviewer's word.**
 
@@ -1763,8 +1816,29 @@ above, not repeated here.
   three tests assert less than their names claim — deleting the three `AnalyticsRead` grants this
   increment adds leaves every M5 test green.
 
-- **M4.1's multi-agent gate has now run (2026-08-14) — 15 findings, none fixed, and it is the most
-  serious review this project has had.** Two were verified by hand before being written down here;
+- **M4.2 (2026-08-14) fixed six of M4.1's fifteen**, across `e235807`, `d8edfec` and `445be2a`.
+  Closed: the sweep's missing transaction (it now opens one and reads the deciding row under a lock,
+  via a new `FindLiveByGymForUpdateAsync`); the unreachable catch; the override DELETEs staged inside
+  the billing transaction — they run **after** the commit now, so a support agent editing a feature
+  flag can no longer roll back a renewal and burn the invoice number it had already drawn from a
+  sequence that never gives numbers back; the retry catching the wrong exception type, which made
+  "the later decision wins" false for restate and clear, the operations an operator repeats most; the
+  two `features` request contracts disagreeing, whose guards also moved into the handlers so they stop
+  preempting the 404 and 428 and start covering non-HTTP callers; and the plan-row lock that
+  serialised every gym on a plan, now `FOR SHARE` — which still blocks plan edits but not other gyms.
+  The sweep's summary reports deferrals and failures too, so a pass where gyms failed stops reading
+  healthy.
+
+  **Still open from that fifteen:** the maintainer's unlocked plan read (three of its four callers
+  hold no transaction, so a lock there buys nothing until those call sites are audited — a real
+  change, not a one-liner); the seeder lock's overstated guarantee and `SuperAdminSeeder`'s
+  unprotected check-then-act; the unit fake returning a `features: null` production cannot produce,
+  which leaves the new `features.read` gate unexercised on all six write routes; `DiscardTrackedChanges`
+  mapping to a scope-wide `ChangeTracker.Clear()`; and the deny-exception below, which is a product
+  decision rather than a defect.
+
+- **M4.1's multi-agent gate has now run (2026-08-14) — 15 findings, none fixed at the time of
+  writing, and it is the most serious review this project has had.** Two were verified by hand before being written down here;
   the rest are recorded as reported and want confirming before anyone acts on them.
 
   **Verified.** *(a)* `FeatureOverrideSweepJob` contains **no `BeginTransactionAsync` at all**, while
@@ -1811,7 +1885,22 @@ above, not repeated here.
   to misfire when `OpenApi:LaunchBrowser=true` bypasses all three and would open a 404 in Production;
   and `Process.Start` returning null still logs "API reference opened".
 
-- **F3's review has now happened (2026-08-14) — four findings, none yet fixed.** All in
+- **All nine frontend findings are fixed (2026-08-14, `728157e` in GymOS-Platform).** The activation
+  console's five and F3's four, in one increment. The sharpest three were user-facing: a valid
+  invitation was declared dead by any `ApiError` — including the `ApiError(0, …)` the client wraps a
+  network failure in, and the 429 from a limiter shared with sign-in, so a shared office IP was enough;
+  "This link has now been used" was appended to failures where the backend never touched the token; and
+  the password form mirrored only the length half of `PasswordPolicy`, so a pasted trailing space burned
+  a one-shot link on a mistake the form could catch. Also: the send endpoints' `X-Invitation-Email`
+  header is read now, so an operator is told `sent` / `failed` / `disabled` rather than "sent" on any
+  204 — the client can return a named header from a 204, and an absent one reads as "cannot confirm".
+  F3's root redirect resolves the landing route (a bookmark to `/` dropped a `gyms.read`-only operator
+  on a permission notice); a single recorded day is visible in the stacked area again; whole-number
+  counts get whole-number ticks, and `linearScale` went from no tests to nine; and the range error says
+  one thing once. The two entries below are kept for the reasoning.
+
+- **F3's review has now happened (2026-08-14) — four findings, ~~none yet fixed~~ all fixed, see
+  above.** All in
   GymOS-Platform. **(1) Medium: the root redirect bypasses the permission-aware landing resolver.**
   F3 moved `LANDING_ROUTE` to `/dashboard` and added `resolveLandingRoute` / `FALLBACK_LANDING_ROUTE`
   precisely so a caller holding neither `analytics.read` nor `audit.read` is not dropped on an empty
@@ -1830,8 +1919,8 @@ above, not repeated here.
   the range error duplicates itself** — "A range covers at most 366 days; this one covers 517. A
   range covers at most 366 days."
 
-- **The activation increment's console side has now been reviewed (2026-08-14) — five findings, none
-  yet fixed.** All in `GymOS-Platform`, and the first two are the same defect twice. **(1) The link
+- **The activation increment's console side has now been reviewed (2026-08-14) — five findings,
+  ~~none yet fixed~~ all fixed, see above.** All in `GymOS-Platform`, and the first two are the same defect twice. **(1) The link
   check treats every `ApiError` as "link unusable"**, but the client wraps network failures as
   `ApiError(0, …)` and the endpoint sits behind a 10-per-minute per-IP limiter shared with sign-in.
   A shared office IP or one dropped request permanently tells a valid invitee their link is dead. The
@@ -1897,6 +1986,17 @@ above, not repeated here.
   and simply missed when the note was written. The CHARSET findings turned out to be a UTF-8 **BOM the
   `.editorconfig` does not want** — stripped, which is why those files show a one-line diff that
   appears to change nothing. Gate now exits 0.
+
+- **~~⚠️ THE FIX BELOW DOES NOT WORK~~ — genuinely fixed 2026-08-14 (`e235807`), on the third
+  attempt.** The catch now names `ConcurrencyConflictException`, which is what
+  `UnitOfWork.SaveChangesAsync` actually throws. And the reason this went unnoticed for two days is
+  itself now closed: nothing anywhere asserted which exception crosses that boundary, so
+  `A_stale_override_delete_surfaces_as_ConcurrencyConflictException_not_the_EF_type` pins it — if
+  `UnitOfWork` ever stops translating, that test fails and the catch becomes visibly wrong rather
+  than silently so. The log **level** still has no assertion, because that needs a logging package
+  which is not on the allowlist; what changed is that the level no longer depends on an unreachable
+  branch. The two entries below are kept, struck through, because the sequence — fix, document as
+  done, never execute — is the lesson.
 
 - **⚠️ THE FIX BELOW DOES NOT WORK — reopened 2026-08-14 by M4.1's review, and verified by hand.**
   `FeatureOverrideSweepJob` catches `DbUpdateConcurrencyException`, but `UnitOfWork.SaveChangesAsync`
