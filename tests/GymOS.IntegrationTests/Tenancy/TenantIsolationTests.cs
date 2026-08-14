@@ -87,13 +87,36 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// </summary>
     private string _bootstrapConnectionString = null!;
 
+    /// <summary>
+    /// A database of its own, connected through whatever <see cref="PostgresFixture.CreateIsolatedDatabaseAsync"/>
+    /// hands back — the harness role once Task 1 lands, still the bootstrap superuser until it does.
+    /// Kept separate from <see cref="_bootstrapConnectionString"/>'s database so
+    /// <see cref="TheHarnessRoleIsNotExemptFromRowLevelSecurity"/> proves something about the fixture's
+    /// default connection rather than about a database this suite has already reassigned to
+    /// <see cref="ApplicationRole"/>.
+    /// </summary>
+    private string _harnessRoleConnectionString = null!;
+
     private AuthenticationHost _host = null!;
 
     public TenantIsolationTests(PostgresFixture postgres) => _postgres = postgres;
 
     public async Task InitializeAsync()
     {
-        _bootstrapConnectionString = await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation");
+        _harnessRoleConnectionString = await _postgres.CreateIsolatedDatabaseAsync("harness_role");
+
+        // CreateIsolatedDatabaseAsync now hands back a connection as PostgresFixture's own harness
+        // role (Task 1), which has no CREATEROLE — this suite genuinely needs a superuser to create
+        // ApplicationRole and hand it the database, so it takes PostgresFixture.BootstrapConnectionString
+        // and points it at the database CreateIsolatedDatabaseAsync just created, rather than reusing
+        // the (now non-superuser) connection string that method returns.
+        string isolatedDatabaseName = new NpgsqlConnectionStringBuilder(
+            await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation")).Database!;
+
+        _bootstrapConnectionString = new NpgsqlConnectionStringBuilder(_postgres.BootstrapConnectionString)
+        {
+            Database = isolatedDatabaseName,
+        }.ConnectionString;
 
         await ExecuteAsync(_bootstrapConnectionString, GrantDatabaseToApplicationRoleSql);
 
@@ -323,6 +346,29 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         Assert.Empty(asPlatform);
     }
 
+    [Fact]
+    public async Task TheHarnessRoleIsNotExemptFromRowLevelSecurity()
+    {
+        // The premise every other test in this suite rests on. If the harness silently handed back a
+        // superuser connection, all of them would report "isolation works" while filtering nothing —
+        // which is precisely how this suite began life before it built a role of its own.
+        await using AppDbContext context = CreateHarnessRoleContext();
+
+        await using var command = context.Database.GetDbConnection().CreateCommand();
+        command.CommandText = "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user";
+
+        await context.Database.OpenConnectionAsync();
+
+        try
+        {
+            Assert.False((bool)(await command.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await context.Database.CloseConnectionAsync();
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -452,6 +498,22 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         var context = new AppDbContext(builder.Options);
         _superuserContexts.Add(context);
         return context;
+    }
+
+    /// <summary>
+    /// A plain <see cref="AppDbContext"/> over <see cref="_harnessRoleConnectionString"/> — whatever
+    /// <see cref="PostgresFixture.CreateIsolatedDatabaseAsync"/> hands back, deliberately not this
+    /// suite's own <see cref="ApplicationRole"/> — so <see cref="TheHarnessRoleIsNotExemptFromRowLevelSecurity"/>
+    /// checks the fixture's default connection rather than a role this suite built for itself.
+    /// </summary>
+    private AppDbContext CreateHarnessRoleContext()
+    {
+        DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(_harnessRoleConnectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSnakeCaseNamingConvention()
+            .Options;
+
+        return new AppDbContext(options);
     }
 
     private Task CreateProbeAsync(string createSql) => ExecuteAsync(_connectionString, createSql);
