@@ -1,7 +1,11 @@
 using System.Net;
 using System.Text.Json;
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Domain.Features;
 using GymOS.Platform.Infrastructure.Jobs;
+using GymOS.Platform.Infrastructure.Persistence;
+using GymOS.SharedKernel;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -143,4 +147,51 @@ public sealed class FeatureOverrideSweepTests : IAsyncLifetime
 
         return await job.ExecuteAndCountAsync(CancellationToken.None);
     }
+
+    [Fact]
+    public async Task A_stale_override_delete_surfaces_as_ConcurrencyConflictException_not_the_EF_type()
+    {
+        // This pins the fact the sweep's own error handling depends on, and whose absence let a broken
+        // fix live for two days.
+        //
+        // GymFeatureOverride carries an xmin row version, so an operator restating an override between
+        // the sweep's read and its delete makes the delete match nothing. The sweep catches that as an
+        // expected interleaving rather than a failure — but it was catching DbUpdateConcurrencyException,
+        // an EF type that UnitOfWork translates and therefore never lets past the persistence boundary.
+        // Its own docs say so: "DbUpdateConcurrencyException — an EF type — never reaches the
+        // Application layer". The catch was unreachable, LogGymChangedUnderneath could never fire, and
+        // the expected race kept being reported at Error.
+        //
+        // Nothing anywhere asserted which exception actually crosses that boundary. Now something does:
+        // if UnitOfWork stops translating, this fails and the sweep's catch becomes visibly wrong again.
+        Guid plan = await CreatePlanAsync("STALE");
+        Guid gym = await CreateGymAsync("stale-gym");
+        await AssignAsync(gym, plan);
+        await SetGymFeaturesAsync(gym, ("crm", true, "granted for the race"));
+
+        await using AsyncServiceScope scope = _host.Services.GetRequiredService<IServiceScopeFactory>()
+            .CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        // Load the override, then have somebody else change it underneath — the operator winning the
+        // race the sweep is designed to lose.
+        GymFeatureOverride tracked = await context.Set<GymFeatureOverride>()
+            .SingleAsync(over => over.GymId == gym);
+
+        await using (AppDbContext other = _host.CreateDbContext())
+        {
+            GymFeatureOverride theirs = await other.Set<GymFeatureOverride>()
+                .SingleAsync(over => over.GymId == gym);
+            theirs.Restate("crm", isEnabled: true, reason: "the operator restated it", setByUserId: null, now: new DateTimeOffset(2026, 8, 14, 12, 0, 0, TimeSpan.Zero));
+            await other.SaveChangesAsync();
+        }
+
+        context.Set<GymFeatureOverride>().Remove(tracked);
+
+        // The point of the test: this is the type that crosses the boundary.
+        await Assert.ThrowsAsync<ConcurrencyConflictException>(
+            () => unitOfWork.SaveChangesAsync(CancellationToken.None));
+    }
+
 }

@@ -40,8 +40,10 @@ internal sealed partial class FeatureOverrideSweepJob : IScheduledJob
 
     [LoggerMessage(Level = LogLevel.Information, Message =
         "Feature override sweep checked {GymCount} gym(s) holding an exception: " +
-        "{Withdrawn} exception(s) withdrawn.")]
-    private static partial void LogSwept(ILogger logger, int gymCount, int withdrawn);
+        "{Withdrawn} exception(s) withdrawn, {Deferred} gym(s) deferred to an operator's own edit, " +
+        "{Failed} gym(s) failed.")]
+    private static partial void LogSwept(
+        ILogger logger, int gymCount, int withdrawn, int deferred, int failed);
 
     [LoggerMessage(Level = LogLevel.Error, Message =
         "Feature override sweep step failed for gym {GymId}; its exceptions are unchanged and the " +
@@ -83,6 +85,8 @@ internal sealed partial class FeatureOverrideSweepJob : IScheduledJob
             .ToListAsync(cancellationToken);
 
         var withdrawn = 0;
+        var deferred = 0;
+        var failed = 0;
 
         foreach (Guid gymId in gyms)
         {
@@ -95,9 +99,23 @@ internal sealed partial class FeatureOverrideSweepJob : IScheduledJob
                 var maintainer = scope.ServiceProvider.GetRequiredService<IFeatureExceptionMaintainer>();
                 var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
+                // The transaction the comment above has always promised, and which nothing actually
+                // opened until now. Without it the live-plan read, the maintainer's reads and the
+                // DELETE were separate implicit transactions under READ COMMITTED: a subscription
+                // upgrade committing between them let a verdict computed against the OLD plan delete
+                // an exception that is not redundant under the new one — silently, because the
+                // override rows' xmin never saw the subscription change, so no concurrency error
+                // fired. RenewalService is the model this job's own docs cite, and it does exactly
+                // this: open a transaction, read the row that decides under a lock, then commit.
+                await using IUnitOfWorkTransaction transaction =
+                    await unitOfWork.BeginTransactionAsync(cancellationToken);
+
                 // Committed state, read explicitly, because there is no pending change here to
-                // derive it from instead (see the type's remarks).
-                GymSubscription? live = await subscriptions.FindLiveByGymAsync(gymId, cancellationToken);
+                // derive it from instead (see the type's remarks). Read FOR UPDATE inside the
+                // transaction so a console edit racing this sweep waits its turn rather than winning
+                // at save time — again RenewalService's pattern, and the reason
+                // FindLiveByGymForUpdateAsync exists.
+                GymSubscription? live = await subscriptions.FindLiveByGymForUpdateAsync(gymId, cancellationToken);
                 Guid? livePlanId = live?.PlanId;
 
                 int count = await maintainer.WithdrawRedundantAsync(gymId, livePlanId, cancellationToken);
@@ -107,12 +125,14 @@ internal sealed partial class FeatureOverrideSweepJob : IScheduledJob
                     await unitOfWork.SaveChangesAsync(cancellationToken);
                     withdrawn += count;
                 }
+
+                await transaction.CommitAsync(cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw; // host shutdown mid-sweep: stop cleanly, the next tick resumes
             }
-            catch (DbUpdateConcurrencyException)
+            catch (ConcurrencyConflictException)
             {
                 // An expected interleaving, not a failure. GymFeatureOverride carries an xmin
                 // token, so an operator restating an override between this sweep's read and its
@@ -120,15 +140,29 @@ internal sealed partial class FeatureOverrideSweepJob : IScheduledJob
                 // operator's decision wins and the next sweep re-evaluates against it — and
                 // reporting it at Error would page someone for correct behaviour. Caught before
                 // the general handler below precisely so it never reaches that channel.
+                //
+                // ConcurrencyConflictException, NOT DbUpdateConcurrencyException. This catch named
+                // the EF type for two days and was therefore unreachable: UnitOfWork.SaveChangesAsync
+                // translates the EF exception at the persistence boundary and its own documentation
+                // says the EF type "never reaches the Application layer". The fix that added this
+                // handler could never fire, so the race it exists to demote kept being logged at
+                // Error — and nothing failed, because no test asserted either the level or the type.
+                // A_stale_override_delete_surfaces_as_ConcurrencyConflictException_not_the_EF_type
+                // now pins the type that actually crosses that boundary.
+                deferred++;
                 LogGymChangedUnderneath(_logger, gymId);
             }
             catch (Exception exception)
             {
+                failed++;
                 LogGymFailed(_logger, gymId, exception);
             }
         }
 
-        LogSwept(_logger, gyms.Count, withdrawn);
+        // The summary carries every outcome, not only the happy one. Reporting just "swept N gyms,
+        // withdrew M" read healthy on a pass where gyms failed, which is how a job with a broken
+        // handler looks fine in the log — RenewalJob carries its failure count for the same reason.
+        LogSwept(_logger, gyms.Count, withdrawn, deferred, failed);
 
         return withdrawn;
     }

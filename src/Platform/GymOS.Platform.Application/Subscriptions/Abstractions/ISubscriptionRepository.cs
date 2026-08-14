@@ -13,6 +13,21 @@ public interface ISubscriptionRepository
     /// </summary>
     Task<GymSubscription?> FindLiveByGymAsync(Guid gymId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The gym's live subscription, row-locked for the caller's transaction.
+    /// </summary>
+    /// <remarks>
+    /// For a caller that must decide something from the live plan and then write based on that
+    /// decision. Without the lock a concurrent upgrade can commit between the read and the write,
+    /// making the decision stale rather than merely late — and where the write is a delete of rows the
+    /// upgrade never touched, nothing else detects it: their concurrency tokens are undisturbed, so no
+    /// conflict fires and the wrong outcome commits silently.
+    ///
+    /// <para><b>The caller must hold an <see cref="IUnitOfWork"/> transaction</b>, or the lock is
+    /// released at the end of its own statement and buys nothing.</para>
+    /// </remarks>
+    Task<GymSubscription?> FindLiveByGymForUpdateAsync(Guid gymId, CancellationToken cancellationToken);
+
     Task<GymSubscription?> FindByIdAsync(Guid subscriptionId, CancellationToken cancellationToken);
 
     /// <summary>

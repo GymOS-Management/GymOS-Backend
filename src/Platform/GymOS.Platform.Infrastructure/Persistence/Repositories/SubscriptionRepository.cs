@@ -21,6 +21,33 @@ internal sealed class SubscriptionRepository : ISubscriptionRepository
                 subscription => subscription.GymId == gymId && LiveStatuses.Contains(subscription.Status),
                 cancellationToken);
 
+    public async Task<GymSubscription?> FindLiveByGymForUpdateAsync(
+        Guid gymId,
+        CancellationToken cancellationToken)
+    {
+        // Two statements, for the reason FindByIdForUpdateAsync gives below: EF has no FOR UPDATE
+        // operator and cannot compose over raw SQL for an entity with mapped complex properties, so
+        // the lock is a plain scalar statement and the aggregate then loads through the normal
+        // pipeline on the same connection and transaction.
+        //
+        // Locks the LIVE row for this gym, whichever it is — keyed on the gym rather than on a known
+        // subscription id, because the caller is asking "what does this gym have right now" and does
+        // not know the answer yet. FeatureOverrideSweepJob needs this: it decides whether a gym's
+        // exceptions are redundant against the live plan, and an upgrade committing between that read
+        // and the delete made the verdict stale rather than merely late.
+        //
+        // Caller must hold an IUnitOfWork transaction, or the lock dies with the first statement.
+        await _dbContext.Database.ExecuteSqlAsync(
+            $"""
+            SELECT 1 FROM platform.gym_subscriptions
+            WHERE gym_id = {gymId} AND status IN (1, 2, 3)
+            FOR UPDATE
+            """,
+            cancellationToken);
+
+        return await FindLiveByGymAsync(gymId, cancellationToken);
+    }
+
     public Task<GymSubscription?> FindByIdAsync(Guid subscriptionId, CancellationToken cancellationToken) =>
         _dbContext.Set<GymSubscription>()
             .SingleOrDefaultAsync(subscription => subscription.Id == subscriptionId, cancellationToken);
