@@ -88,6 +88,24 @@ public sealed class DailyPlatformStats : AggregateRoot
             throw new DomainException("A platform stat count cannot be negative.");
         }
 
+        // The population identity, enforced rather than assumed. `GymStatus` has exactly four values
+        // and the living-gym base excludes `Deleted`, so Active/Suspended/Provisioning partition the
+        // total exactly — `Analytics.md` states it as a promise to anyone who checks the arithmetic,
+        // and `provisioningGyms` exists in the response precisely so the parts reconcile.
+        //
+        // A row that breaks it is unpersistable, not merely odd: these rows are write-once, so a day
+        // stored with contradictory counts is served that way forever. The way one arose was four
+        // independent COUNT queries, each taking its own snapshot, with a gym created in between.
+        // Refusing it here means the compiler fails loudly and retries the next night instead of
+        // sealing the contradiction.
+        if (counts.Total != counts.Active + counts.Suspended + counts.Provisioning)
+        {
+            throw new DomainException(
+                $"A platform stat's population must reconcile: total {counts.Total} is not " +
+                $"active {counts.Active} + suspended {counts.Suspended} + " +
+                $"provisioning {counts.Provisioning}.");
+        }
+
         // Two rows for one currency would double-count that day on every chart that reads it, and
         // the only way to produce one is a caller that summed wrongly — a defect, not a bad request.
         if (mrr.Select(amount => amount.Currency.Code).Distinct(StringComparer.Ordinal).Count() != mrr.Count)

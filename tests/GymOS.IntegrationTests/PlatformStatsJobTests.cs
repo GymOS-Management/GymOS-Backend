@@ -217,7 +217,13 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
         using IServiceScope scope = _host.Services.CreateScope();
         DailyStatsCompiler compiler = scope.ServiceProvider.GetRequiredService<DailyStatsCompiler>();
 
-        return await compiler.CompileAsync(statDate, Now, CancellationToken.None);
+        // Production only ever compiles a day that has ended — PlatformStatsJob passes yesterday
+        // relative to the database clock — so the tests pass a `now` that stands in the same relation
+        // to statDate instead of a fixed clock unrelated to it. Without this, a test compiling a date
+        // taken from real stored timestamps would hand the compiler a statDate days in its future.
+        DateTimeOffset now = new(statDate.AddDays(1), new TimeOnly(3, 30), TimeSpan.Zero);
+
+        return await compiler.CompileAsync(statDate, now, CancellationToken.None);
     }
 
     private async Task<DailyPlatformStats> ReadAsync(DateOnly statDate)
@@ -290,6 +296,38 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
             response.StatusCode == HttpStatusCode.OK,
             $"Expected 200 cancelling immediately, got {(int)response.StatusCode}: " +
             await response.Content.ReadAsStringAsync());
+    }
+
+
+    [Fact]
+    public async Task ADayThatHasNotEndedIsRefused()
+    {
+        // CompileAsync validated statDate not at all, while this class's own doc invited hand-triggered
+        // backfill that four other documents forbid — the design spec ("No backfill, and gaps stay
+        // gaps"), Analytics.md, PlatformStatsJob and DailyPlatformStats all say so.
+        //
+        // The reason it matters is that only New/Canceled/Expired are windowed to the day. The
+        // population counts and MRR are read from live state with no time bound, so compiling any day
+        // that is not over writes TODAY's population under that date — and because the row is
+        // write-once, it then blocks the correct row from ever being written. The
+        // production-reachable version is a forward-skewed database clock making `yesterday` a future
+        // date; the doc-invited version is a maintainer filling a gap by hand.
+        using IServiceScope scope = _host.Services.CreateScope();
+        DailyStatsCompiler compiler = scope.ServiceProvider.GetRequiredService<DailyStatsCompiler>();
+
+        DateTimeOffset now = new(2026, 3, 10, 3, 30, 0, TimeSpan.Zero);
+        DateOnly today = DateOnly.FromDateTime(now.UtcDateTime);
+
+        // Today has not finished, so its population is not yet a fact about it.
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => compiler.CompileAsync(today, now, CancellationToken.None));
+
+        // And tomorrow does not exist yet at all.
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => compiler.CompileAsync(today.AddDays(1), now, CancellationToken.None));
+
+        // The day before is exactly what the job compiles, and is accepted.
+        Assert.True(await compiler.CompileAsync(today.AddDays(-1), now, CancellationToken.None));
     }
 
 }

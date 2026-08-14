@@ -137,4 +137,34 @@ public sealed class AnalyticsApiTests : IAsyncLifetime
             DateTimeOffset.UnixEpoch));
         await context.SaveChangesAsync();
     }
+
+    [Fact]
+    public async Task RevenueOrdersEachDaysCurrenciesDeterministically()
+    {
+        // The collection join carries no ORDER BY of its own, so two currencies on one day were a tie
+        // the database could break either way — insertion order today, something else after a hash
+        // join or a table rewrite. MonthlyRecurringRevenue.Calculate sorts ordinally by code and
+        // /dashboard/summary passes that through, so an unordered /analytics/revenue could report the
+        // same platform's currencies in the opposite order, and a client keyed on array position
+        // would swap its two series with nothing to explain why.
+        //
+        // Seeded deliberately out of ordinal order (GBP before EUR) so the assertion cannot pass by
+        // accident of insertion.
+        var date = new DateOnly(2026, 5, 4);
+        await SeedRevenueAsync(date, [(80m, "GBP"), (120m, "EUR")]);
+
+        using HttpResponseMessage response = await _client.GetAsync(
+            new Uri($"/api/v1/analytics/revenue?from={date:yyyy-MM-dd}&to={date:yyyy-MM-dd}", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        JsonElement body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        JsonElement mrr = body.EnumerateArray().Single().GetProperty("mrr");
+
+        Assert.Collection(
+            mrr.EnumerateArray(),
+            first => Assert.Equal("EUR", first.GetProperty("currency").GetString()),
+            second => Assert.Equal("GBP", second.GetProperty("currency").GetString()));
+    }
+
 }

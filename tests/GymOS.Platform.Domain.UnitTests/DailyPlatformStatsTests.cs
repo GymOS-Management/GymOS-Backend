@@ -54,4 +54,42 @@ public sealed class DailyPlatformStatsTests
         Assert.Throws<DomainException>(() => DailyPlatformStats.Record(
             Yesterday, Counts with { Total = -1 }, [], Now));
     }
+
+    [Fact]
+    public void RecordRefusesAPopulationThatDoesNotReconcile()
+    {
+        // Analytics.md promises this identity explicitly: "without a column for it active + suspended
+        // would never reconcile to total — which reads as a bug to anyone who checks the arithmetic."
+        // GymStatus has exactly four values and the living-gym base excludes Deleted, so the three
+        // status counts partition the total exactly. There is no legitimate way to produce a row
+        // where they do not.
+        //
+        // The way an illegitimate one arose: the compiler issued four independent COUNT queries, each
+        // with its own READ COMMITTED snapshot, so a gym created between them was counted by some and
+        // not others. The row was then stored — write-once, never recomputed — and
+        // /analytics/gyms-growth served that self-contradicting day forever. This guard makes the
+        // aggregate refuse it rather than persist it.
+        // The real interleaving: the total was read first and returned 100, then a gym was created,
+        // then the three status counts returned 60/10/31 — summing to 101 against a total of 100.
+        var inconsistent = new GymCounts(
+            Total: 100, Active: 60, Suspended: 10, Provisioning: 31, New: 0, Canceled: 0, Expired: 0);
+
+        DomainException error = Assert.Throws<DomainException>(
+            () => DailyPlatformStats.Record(Yesterday, inconsistent, [], Now));
+
+        Assert.Contains("reconcile", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RecordAcceptsAPopulationThatReconciles()
+    {
+        // The other direction, so the guard cannot be satisfied by refusing everything.
+        var consistent = new GymCounts(
+            Total: 100, Active: 60, Suspended: 10, Provisioning: 30, New: 4, Canceled: 2, Expired: 1);
+
+        DailyPlatformStats stats = DailyPlatformStats.Record(Yesterday, consistent, [], Now);
+
+        Assert.Equal(100, stats.TotalGyms);
+    }
+
 }
