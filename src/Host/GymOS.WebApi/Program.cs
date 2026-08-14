@@ -159,6 +159,24 @@ try
     // are pending (AD-22 declare-and-validate).
     using (IServiceScope startupScope = app.Services.CreateScope())
     {
+        // The migrator's mode: apply migrations, then stop. Nothing else runs — the seeders write
+        // data and the R14 validator checks the role that serves requests, and neither is this
+        // role's job. Deployment runs this as `gymos_migrator`, which owns the schema; the API then
+        // starts as `gymos_app`, which owns nothing.
+        //
+        // The exit code is load-bearing. Compose gates `api` on this container finishing
+        // successfully, so exiting 0 after a failed migration would start the API against an
+        // unmigrated database — where R14's validator hits its pending-migrations guard and switches
+        // the whole control off for that boot. The surrounding try/catch already logs Fatal and
+        // rethrows, which produces a non-zero exit; this must stay inside it.
+        if (app.Configuration.GetValue<bool>("Database:MigrateOnly"))
+        {
+            await startupScope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
+
+            Log.Information("Migrations applied; exiting because Database:MigrateOnly is set.");
+            return 0;
+        }
+
         if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
         {
             await startupScope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
@@ -262,6 +280,8 @@ try
     app.MapAuditLogEndpoints();
 
     await app.RunAsync();
+
+    return 0;
 }
 catch (Exception exception)
 {
