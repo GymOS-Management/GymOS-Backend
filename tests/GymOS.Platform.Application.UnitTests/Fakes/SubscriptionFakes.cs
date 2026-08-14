@@ -28,6 +28,9 @@ internal sealed class FakePlanRepository : IPlanRepository
     public Task<SubscriptionPlan?> FindByIdForUpdateAsync(Guid planId, CancellationToken cancellationToken) =>
         FindByIdAsync(planId, cancellationToken); // in-memory: no rows, no locks
 
+    public Task<SubscriptionPlan?> FindByIdForShareAsync(Guid planId, CancellationToken cancellationToken) =>
+        FindByIdAsync(planId, cancellationToken); // in-memory: no rows, no locks
+
     public Task<SubscriptionPlan?> FindByCodeAsync(string code, CancellationToken cancellationToken) =>
         Task.FromResult(_plans.SingleOrDefault(plan =>
             string.Equals(plan.Code, code, StringComparison.OrdinalIgnoreCase)));

@@ -508,4 +508,58 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
                 """)
             .SingleAsync();
     }
+
+    [Fact]
+    public async Task A_missing_features_field_is_refused_on_the_gym_route_too()
+    {
+        // The two sibling routes disagreed. PUT /plans/{id}/features refuses a body with no `features`
+        // field, justified by six lines arguing that "silently treating 'the caller forgot the field'
+        // the same as 'the caller deliberately sent nothing' hides a mistake instead of catching it" —
+        // and PUT /gyms/{id}/features, declared next to it in the same file, coerced the null to an
+        // empty list. It then opened a transaction, changed nothing, and returned 200 with the full
+        // resolved catalogue: indistinguishable from a successful write.
+        //
+        // Worse, the committed OpenAPI contract already marks `features` required on
+        // SetGymFeaturesRequest, so the route accepted a body its own published schema calls invalid.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "empty-body-gym");
+
+        using HttpResponseMessage response = await _client.PutAsJsonAsync(
+            new Uri($"/api/v1/gyms/{gym}/features", UriKind.Relative), new { });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        JsonElement problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("features.required", problem.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task A_missing_features_field_does_not_preempt_the_404()
+    {
+        // The plan route's guard lived in the endpoint delegate, ahead of the dispatcher, so it
+        // answered before the handler's own checks: a PUT to a nonexistent plan with no `features`
+        // field returned 400 instead of 404, and a caller who fixed the reported problem failed again
+        // on the next attempt for a reason they were never told. The guard now sits in the handler,
+        // after the resource lookup and the precondition check, so the most specific answer wins.
+        var missing = Guid.NewGuid();
+
+        using HttpResponseMessage response = await _client.PutAsJsonAsync(
+            new Uri($"/api/v1/plans/{missing}/features", UriKind.Relative), new { });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_missing_features_field_does_not_preempt_the_428()
+    {
+        // Same ordering point, one step further in: the plan route requires If-Match, and omitting
+        // both the header and the field used to report the field. 428 is the one the caller must fix
+        // first — without it the write cannot be accepted at all.
+        Guid plan = (await PlatformApiHelpers.CreatePlanAsync(_client, "ORDER")).Id;
+
+        using HttpResponseMessage response = await _client.PutAsJsonAsync(
+            new Uri($"/api/v1/plans/{plan}/features", UriKind.Relative), new { });
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, response.StatusCode);
+    }
+
 }

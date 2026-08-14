@@ -22,6 +22,22 @@ public interface IPlanRepository
     /// </summary>
     Task<SubscriptionPlan?> FindByIdForUpdateAsync(Guid planId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The plan, share-locked for the caller's transaction: writers to it block, other readers do not.
+    /// </summary>
+    /// <remarks>
+    /// For a caller that must decide something from the plan's own state and needs it not to change
+    /// underneath — but has no reason to exclude other callers doing the same. Setting a gym's feature
+    /// exceptions reads the plan's opinion to judge whether an override still differs, and writes only
+    /// that gym's override rows; two such requests for different gyms on one plan touch nothing in
+    /// common. Taking <see cref="FindByIdForUpdateAsync"/> there serialised them all behind one plan
+    /// row for a guarantee a shared lock already gives.
+    ///
+    /// <para><b>The caller must hold an <see cref="IUnitOfWork"/> transaction</b>, or the lock is
+    /// released at the end of its own statement.</para>
+    /// </remarks>
+    Task<SubscriptionPlan?> FindByIdForShareAsync(Guid planId, CancellationToken cancellationToken);
+
     /// <summary>Loads by code, for the uniqueness check at creation. Codes are upper-cased first.</summary>
     Task<SubscriptionPlan?> FindByCodeAsync(string code, CancellationToken cancellationToken);
 

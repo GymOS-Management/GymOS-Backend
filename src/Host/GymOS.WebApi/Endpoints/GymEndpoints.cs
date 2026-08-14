@@ -396,7 +396,7 @@ public static class GymEndpoints
         CancellationToken cancellationToken)
     {
         Result<IReadOnlyList<ResolvedFeatureDetail>> result = await dispatcher.SendAsync(
-            new SetGymFeaturesCommand(gymId, request.Features ?? []), cancellationToken);
+            new SetGymFeaturesCommand(gymId, request.Features), cancellationToken);
 
         // No ETag: the resolution is not a versioned resource, and there is no If-Match to echo
         // (see the route's description).

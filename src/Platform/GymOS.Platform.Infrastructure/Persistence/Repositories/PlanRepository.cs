@@ -41,6 +41,30 @@ internal sealed class PlanRepository : IPlanRepository
         return await FindByIdAsync(planId, cancellationToken);
     }
 
+    public async Task<SubscriptionPlan?> FindByIdForShareAsync(
+        Guid planId,
+        CancellationToken cancellationToken)
+    {
+        // FOR SHARE, not FOR UPDATE — the difference is the whole point of this method existing.
+        //
+        // A caller that only needs the plan to hold still while it decides something does not need to
+        // exclude other such callers, only writers. FOR SHARE conflicts with UPDATE / FOR UPDATE /
+        // FOR NO KEY UPDATE, so a concurrent PUT /plans/{id}/features still blocks; it is compatible
+        // with other FOR SHARE, so gym-feature writes for different gyms on the SAME plan now proceed
+        // in parallel instead of one at a time.
+        //
+        // They were serialised before, because this read took FOR UPDATE keyed on the plan while the
+        // rows being written were per-gym overrides — disjoint. Rolling a feature out to 500 gyms on
+        // one plan executed strictly sequentially for a lock none of them needed to hold exclusively.
+        //
+        // Two-statement shape and the caller-holds-a-transaction precondition are as above.
+        await _dbContext.Database.ExecuteSqlAsync(
+            $"SELECT 1 FROM platform.subscription_plans WHERE id = {planId} FOR SHARE",
+            cancellationToken);
+
+        return await FindByIdAsync(planId, cancellationToken);
+    }
+
     public Task<SubscriptionPlan?> FindByCodeAsync(string code, CancellationToken cancellationToken)
     {
         string normalized = (code ?? string.Empty).Trim().ToUpperInvariant();

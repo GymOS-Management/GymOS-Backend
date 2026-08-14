@@ -141,6 +141,17 @@ internal sealed class SetGymFeaturesCommandHandler
     {
         ArgumentNullException.ThrowIfNull(command);
 
+        // The same refusal its sibling route makes, and for the same stated reason: treating "the
+        // caller forgot the field" as "the caller deliberately sent nothing" hides a mistake instead of
+        // catching it. This route used to coerce the null to an empty list, open a transaction, change
+        // nothing, and return 200 with the full resolved catalogue — indistinguishable from a
+        // successful write, and accepted despite the committed OpenAPI contract marking the field
+        // required on SetGymFeaturesRequest.
+        if (command.Features is null)
+        {
+            return Result.Failure<IReadOnlyList<ResolvedFeatureDetail>>(FeatureErrors.FeaturesRequired);
+        }
+
         try
         {
             return await ExecuteAsync(command, cancellationToken);
@@ -376,8 +387,8 @@ internal sealed class SetGymFeaturesCommandHandler
     /// <em>not</em> ask when it is reacting to a change its own caller has not saved yet. See
     /// <see cref="IFeatureExceptionMaintainer.WithdrawRedundantAsync"/>.</para>
     ///
-    /// <para>The plan itself is read <c>FOR UPDATE</c> (<see cref="IPlanRepository.
-    /// FindByIdForUpdateAsync"/>), held by the caller's transaction through the save: without the
+    /// <para>The plan itself is read <c>FOR SHARE</c> (<see cref="IPlanRepository.
+    /// FindByIdForShareAsync"/>), held by the caller's transaction through the save: without the
     /// lock, a concurrent <c>PUT /plans/{id}/features</c> could change what this plan says about a
     /// feature after this method reads it but before this request's write commits, so the decision
     /// made here would no longer match the plan by the time it took effect.</para>
@@ -392,7 +403,7 @@ internal sealed class SetGymFeaturesCommandHandler
             return [];
         }
 
-        SubscriptionPlan? plan = await _plans.FindByIdForUpdateAsync(subscription.PlanId, cancellationToken);
+        SubscriptionPlan? plan = await _plans.FindByIdForShareAsync(subscription.PlanId, cancellationToken);
 
         return plan is null ? [] : [.. plan.Features];
     }

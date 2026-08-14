@@ -79,6 +79,18 @@ internal sealed class SetPlanFeaturesCommandHandler
             return Result.Failure<PlanDetail>(version.Error!);
         }
 
+        // Guarded here rather than at the endpoint, and after the two checks above rather than before
+        // them. In the delegate it preempted this handler's own answers: a PUT to a nonexistent plan
+        // with no `features` field reported the field instead of the 404, and one missing both the
+        // field and If-Match reported the field instead of the 428 — so a caller who fixed what they
+        // were told failed again for a reason they had not been told. It also left the NullReference
+        // below reachable for every non-HTTP caller, since a job or a test does not pass through the
+        // delegate at all.
+        if (command.Features is null)
+        {
+            return Result.Failure<PlanDetail>(FeatureErrors.FeaturesRequired);
+        }
+
         // Resolve every key first, so a request naming one unknown feature changes nothing at all.
         // A partially applied feature set is worse than a rejected one: the caller cannot tell which
         // half landed.
