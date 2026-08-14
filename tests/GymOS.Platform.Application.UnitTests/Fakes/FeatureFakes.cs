@@ -17,12 +17,22 @@ internal sealed class FakeFeatureExceptionMaintainer : IFeatureExceptionMaintain
 
     public int ReturnValue { get; set; }
 
+    /// <summary>
+    /// Set to make the withdrawal fail, for the callers that must survive that. The real one can
+    /// genuinely fail: the override rows it deletes carry xmin tokens and are under no lock, so an
+    /// operator restating one underneath makes the delete match nothing.
+    /// </summary>
+    public Exception? Throws { get; set; }
+
     public Task<int> WithdrawRedundantAsync(
         Guid gymId, Guid? livePlanIdAfterChange, CancellationToken cancellationToken)
     {
         CalledForGymIds.Add(gymId);
         CalledWithLivePlanIds.Add(livePlanIdAfterChange);
-        return Task.FromResult(ReturnValue);
+
+        return Throws is not null
+            ? Task.FromException<int>(Throws)
+            : Task.FromResult(ReturnValue);
     }
 }
 

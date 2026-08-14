@@ -145,8 +145,22 @@ internal sealed class SetGymFeaturesCommandHandler
         {
             return await ExecuteAsync(command, cancellationToken);
         }
-        catch (UniquenessConflictException exception)
-            when (exception.ConstraintName == GymFeatureConstraint)
+        // Both races are caught, because the insert/insert one is not the only one — and not even the
+        // reachable one in the common case.
+        //
+        // A gym WITH a live plan is serialised by the FOR UPDATE below before its overrides are read,
+        // so a second concurrent request waits and then restates cleanly: no race. The unserialised
+        // window is a gym with NO live subscription, where no lock is taken at all. On exactly that
+        // path, if the gym already holds the override, two concurrent requests both load it with the
+        // same xmin and both restate; the loser's UPDATE matches nothing and surfaces as
+        // ConcurrencyConflictException, never as a uniqueness violation. Clearing an override fails
+        // the same way.
+        //
+        // So catching only UniquenessConflictException left the documented promise — "no If-Match,
+        // unlike the plan and catalogue writes... the later decision wins" — false for restate and
+        // clear, which are the operations an operator repeats most. The retry could only ever help a
+        // first-time grant.
+        catch (Exception exception) when (IsConcurrentDecisionOnTheSameException(exception))
         {
             // Two callers granting the same (gym, feature) exception concurrently both read "no
             // existing override" and both insert; the index lets exactly one through, and the loser
@@ -169,6 +183,24 @@ internal sealed class SetGymFeaturesCommandHandler
             return await ExecuteAsync(command, cancellationToken);
         }
     }
+
+    /// <summary>
+    /// Whether this failure is another caller deciding the same gym's same exception at the same
+    /// moment — the one race this endpoint retries, because it deliberately has no <c>If-Match</c> and
+    /// promises the later decision wins.
+    /// </summary>
+    /// <remarks>
+    /// Narrow on purpose. A uniqueness violation on any other constraint, or a concurrency conflict on
+    /// any other aggregate, is a genuine conflict this handler has no business retrying, and is left to
+    /// surface as the 409 it is.
+    /// </remarks>
+    private static bool IsConcurrentDecisionOnTheSameException(Exception exception) =>
+        exception switch
+        {
+            UniquenessConflictException uniqueness => uniqueness.ConstraintName == GymFeatureConstraint,
+            ConcurrencyConflictException => true,
+            _ => false,
+        };
 
     private async Task<Result<IReadOnlyList<ResolvedFeatureDetail>>> ExecuteAsync(
         SetGymFeaturesCommand command,

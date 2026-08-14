@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Application.Invoices;
 using GymOS.Platform.Application.Subscriptions;
 using GymOS.Platform.Application.UnitTests.Fakes;
@@ -279,4 +280,39 @@ public sealed class SubscriptionRenewalTests
         Assert.Single(context.Invoices.Invoices);
         Assert.Equal(1, context.UnitOfWork.SaveCount);
     }
+
+    [Fact]
+    public async Task AFailedExceptionWithdrawal_DoesNotUndoTheRenewalOrBurnItsInvoiceNumber()
+    {
+        // The withdrawal used to be staged INSIDE the billing transaction, and it is the one write in
+        // that transaction that can fail for reasons having nothing to do with billing: the override
+        // rows it deletes carry xmin tokens and are under no lock, so an operator restating one
+        // underneath makes the delete match nothing and the whole transaction rolls back.
+        //
+        // What rolls back with it is not recoverable. IssueForPeriodAsync has already drawn an invoice
+        // number from a sequence, and a sequence does not give numbers back — the issuer's own docs say
+        // "a rollback after the draw burns it". So a support agent editing a feature flag at 03:00
+        // could void a renewal and consume its invoice number, and the 15-minute sweep would burn
+        // another on every racing retry.
+        //
+        // The withdrawal now runs after the commit. It is housekeeping whose real guarantee is the
+        // nightly FeatureOverrideSweepJob; the billing write must not depend on it.
+        var context = new Context();
+        GymSubscription subscription = context.GivenSubscription(context.GivenPlan(amount: 49.99m));
+        context.Clock.Set(subscription.CurrentPeriodEndUtc.AddHours(3));
+
+        context.FeatureExceptions.Throws = new ConcurrencyConflictException(
+            new InvalidOperationException("an operator restated the override underneath"));
+
+        RenewalAction action = await context.Service.ProcessAsync(
+            subscription.Id, context.Clock.UtcNow, CancellationToken.None);
+
+        // The renewal stands, and so does its invoice.
+        Assert.Equal(RenewalAction.Renewed, action);
+        Assert.Single(context.Invoices.Invoices);
+
+        // And the withdrawal really was attempted, so this is not passing because the call was dropped.
+        Assert.Contains(subscription.GymId, context.FeatureExceptions.CalledForGymIds);
+    }
+
 }

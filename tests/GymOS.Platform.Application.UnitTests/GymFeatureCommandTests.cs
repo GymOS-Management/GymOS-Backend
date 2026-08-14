@@ -555,4 +555,39 @@ public sealed class GymFeatureCommandTests
         Assert.Equal(PlatformFeatures.All.Count, result.Value.Count);
         Assert.Empty(context.FeatureCatalogue.Overrides);
     }
+
+    [Fact]
+    public async Task ALostRestate_IsRetriedSoTheLaterDecisionWins()
+    {
+        // The retry branch had no deterministic test at all. Its only coverage was an integration test
+        // racing two HTTP requests, which passes whenever the two happen to serialise — a coin flip on
+        // scheduling rather than a check on the retry. FakeUnitOfWork could not throw, so no unit test
+        // could reach the branch, and DiscardCount was exposed for "a retry test" that was never
+        // written.
+        //
+        // It also caught the wrong exception. A gym WITH a live plan is serialised by a FOR UPDATE
+        // before its overrides are read, so there is no race there. The unserialised path is a gym with
+        // NO live subscription — and on that path, if the override already exists, the loser of two
+        // concurrent restates fails its xmin check and gets ConcurrencyConflictException, never a
+        // uniqueness violation. So the endpoint's documented promise, that the later decision wins
+        // without an If-Match, was false for exactly the operations an operator repeats most.
+        var context = new Context(PlatformPermissions.FeaturesManage);
+        Gym gym = context.GivenGym();
+
+        // No subscription assigned: this is the path where nothing serialises the callers.
+        context.UnitOfWork.SaveFailures.Enqueue(
+            new ConcurrencyConflictException(new InvalidOperationException("another operator restated it")));
+
+        Result<IReadOnlyList<ResolvedFeatureDetail>> result = await context.SetAsync(
+            gym.Id, [new GymFeatureRequest("crm", IsEnabled: true, Reason: "the later decision")]);
+
+        Assert.True(result.IsSuccess);
+
+        // Two saves: the one that lost, and the retry that won.
+        Assert.Equal(2, context.UnitOfWork.SaveCount);
+
+        // And the tracked state was cleared between them, or the retry would rewrite the doomed row.
+        Assert.Equal(1, context.UnitOfWork.DiscardCount);
+    }
+
 }

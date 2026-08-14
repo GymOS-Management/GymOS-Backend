@@ -174,9 +174,25 @@ internal sealed class FakeUnitOfWork : IUnitOfWork
 
     public int DiscardCount { get; private set; }
 
+    /// <summary>
+    /// Exceptions for the first N saves to throw, in order — <c>null</c> entries save normally.
+    /// </summary>
+    /// <remarks>
+    /// Without a hook here no unit test could reach a retry branch at all, which is why the retry on
+    /// PUT /gyms/{id}/features shipped with only a racing integration test that passes whenever the
+    /// two requests happen to serialise — a coin flip on scheduling rather than a check on the retry.
+    /// </remarks>
+    public Queue<Exception?> SaveFailures { get; } = new();
+
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         SaveCount++;
+
+        if (SaveFailures.Count > 0 && SaveFailures.Dequeue() is { } failure)
+        {
+            return Task.FromException<int>(failure);
+        }
+
         return Task.FromResult(0);
     }
 

@@ -175,13 +175,49 @@ public sealed class SubscriptionRenewalService
         // Passed the in-memory subscription's own liveness and plan id, not looked up: CancelNow
         // and Expire only set Status in memory, so a query run before the save below would still
         // match the not-yet-saved row as live and hand back the plan that is ending.
-        await _featureExceptions.WithdrawRedundantAsync(
-            subscription.GymId,
-            subscription.IsLive ? subscription.PlanId : null,
-            cancellationToken);
+        // Read here, used after the commit below: CancelNow and Expire only set Status in memory, so
+        // this has to be sampled while the in-memory subscription still describes the change that was
+        // just made — a query afterwards would answer about the committed row instead.
+        Guid? livePlanIdAfterChange = subscription.IsLive ? subscription.PlanId : null;
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+
+        // Withdrawn AFTER the billing transaction commits, and this ordering is load-bearing.
+        //
+        // The withdrawal deletes gym_feature_overrides rows, which carry xmin tokens and sit under no
+        // lock, so an operator restating one underneath makes the delete match nothing and raises a
+        // concurrency conflict. Staged inside the transaction above, that conflict rolled the whole
+        // renewal back — including an invoice number IssueForPeriodAsync had already drawn from a
+        // sequence, which does not give numbers back ("a rollback after the draw burns it"). A support
+        // agent editing a feature flag could therefore void a renewal and consume its number, and the
+        // 15-minute sweep would burn another on every racing retry.
+        //
+        // Billing must not depend on feature-flag housekeeping. The real guarantee for withdrawals is
+        // FeatureOverrideSweepJob's nightly pass, so a failure here is a deferral, not a loss: the
+        // sweep re-evaluates this gym and reaches the same verdict.
+        // Saved only when there is something to save, which is the overwhelmingly common case for a
+        // renewal: most gyms hold no exceptions at all. That keeps this step at one save — the
+        // repository's "one SaveChangesAsync per use case" rule — for every renewal that changes no
+        // exception, and takes a second one only where housekeeping genuinely has work to do, which is
+        // the case that must not share the billing transaction.
+        try
+        {
+            int withdrawn = await _featureExceptions.WithdrawRedundantAsync(
+                subscription.GymId, livePlanIdAfterChange, cancellationToken);
+
+            if (withdrawn > 0)
+            {
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+        }
+        catch (ConcurrencyConflictException)
+        {
+            // Only this one is swallowed, and only because it is the expected interleaving with an
+            // operator's own edit — whose decision should win anyway. Anything else propagates to the
+            // job, which reports it per gym, because a withdrawal failing for an unexpected reason is
+            // worth knowing about even though the renewal itself is already safely committed.
+        }
 
         return action;
     }
