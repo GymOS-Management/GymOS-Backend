@@ -40,3 +40,9 @@ node_modules/
 .claude/
 .neon
 skills-lock.json
+
+# Scratch for the superpowers subagent-driven-development workflow: per-plan ledgers, task briefs,
+# subagent reports and review packages. Working notes for a plan in flight, not a record of it — the
+# record is the git history and the plan document. Ignored so a coordination artefact can never be
+# mistaken for a deliverable and committed.
+.superpowers/
