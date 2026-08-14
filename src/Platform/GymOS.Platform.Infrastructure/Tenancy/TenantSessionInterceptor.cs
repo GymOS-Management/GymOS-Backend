@@ -11,13 +11,20 @@ namespace GymOS.Platform.Infrastructure.Tenancy;
 /// </summary>
 /// <remarks>
 /// <para><b>Written on every open, unconditionally — including an empty value for platform scope.</b>
-/// Npgsql pools physical connections, so a value set with a plain <c>SET</c> outlives the logical
-/// connection that set it and is inherited by whichever request borrows that physical connection
-/// next. That bug is intermittent, invisible, and exposes MORE data rather than less.</para>
-/// <para>Writing unconditionally makes inheritance impossible: nothing is ever read that this
-/// connection's current user did not just write. The shape this deliberately avoids is "set it when
-/// there is a tenant, reset it when there is not" — that has an execution path where neither branch
-/// runs, which is exactly the leak above.</para>
+/// Nothing is ever read that this connection's current user did not just write, so a value cannot be
+/// inherited from whichever request last borrowed the same physical connection.</para>
+/// <para><b>This is defence in depth, not the only thing preventing that inheritance — measured, not
+/// assumed.</b> Npgsql resets a pooled connection on close (<c>DISCARD ALL</c>/<c>RESET ALL</c>), which
+/// already clears a session GUC set by <c>set_config(…, false)</c>. That reset is switched off by
+/// <c>No Reset On Close=true</c>, and is not performed at all when multiplexing is enabled; neither is
+/// set anywhere in this solution today, and either could be set by a future connection-string change
+/// made for unrelated reasons. Changing <see cref="WriteTenantAsync"/> to return early when there is no
+/// tenant — the "set it when there is a tenant" shape — was tried against the isolation suite and all
+/// eight tests still passed, because the pool's own reset covers the gap under today's settings. The
+/// unconditional write is what keeps them passing when it does not.</para>
+/// <para>The shape this deliberately avoids is "set it when there is a tenant, reset it when there is
+/// not": that has an execution path where neither branch runs, and it depends on the pool reset it
+/// cannot see to stay correct.</para>
 /// <para><c>SET LOCAL</c> would also be immune, being transaction-scoped, and is not used because EF
 /// issues plain reads outside a transaction: it would either silently not apply or force a
 /// transaction around every query.</para>
