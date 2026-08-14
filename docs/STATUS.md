@@ -3,7 +3,7 @@
 **Last updated:** 2026-08-15 · **R14 (tenant isolation) has a subject and a passing validation for the
 first time.** `ITenantContext`, the connection-level session interceptor, the startup
 `TenantIsolationValidator`, and route-based `TenantResolutionMiddleware` are built and tested —
-**301 integration / 1397 total tests green**, 0 build warnings, `dotnet format` clean. **No production
+**303 integration / 1401 total tests green**, 0 build warnings, `dotnet format` clean. **No production
 table is tenant-scoped by it; `members` is next and will be the first.** Two things this increment
 found rather than fixed: the platform connects to PostgreSQL as a superuser, which makes
 `FORCE ROW LEVEL SECURITY` toothless against it, and there is still no way to issue a gym-scoped grant
@@ -181,7 +181,7 @@ before resuming work on any machine.
 | **Administrator activation & password-reset email** (`ADR-53`) — the `IEmailSender` seam + SMTP transport, `user_activation_tokens`, invite/re-send/reset endpoints, anonymous `GET`+`POST /auth/set-password`, console `/set-password` | ✅ **merged to `main`** (`c487012`) and to GymOS-Platform (`d27e32a`) — **1354 tests green**, verified live end to end through Mailpit *and* in a browser through to signing in as the invited administrator · design: `docs/superpowers/specs/2026-08-12-admin-activation-email-design.md` · ⬅ **review owed — this is a security surface and has had no adversarial pass** |
 | **Audit action filter — case and wildcards** | ✅ **merged** (`40b2bb3`) — `Gym.` used to match nothing and a typed `%` acted as a wildcard; now `ILIKE` with `SearchPatterns.StartsWith`. Proved in both directions (`user.` → 3 entries, `User.` → 0 on the old code) |
 | **Solution view + F5** | ✅ **merged** (`053f4d6`, `0d56184`) — Solution Explorer regrouped by role (Host/Platform/Shared/Tests, docker-compose at the root); F5 now starts postgres + api + **mailpit** with email wired, so the invitation flow works with nothing started by hand. No project renamed, moved, or re-referenced |
-| **R14 — tenant isolation mechanism** (`ITenantContext`/`ITenantContextSetter`, `TenantSessionInterceptor`, `TenantIsolationValidator`, route-based `TenantResolutionMiddleware`) | ✅ **mechanism built and tested, committed locally on `development`** (not yet pushed to `origin` — pushing is the maintainer's call) — **301 integration / 1397 total tests green**, 0 build warnings, `dotnet format` clean · rules: **`docs/BusinessRules/TenantIsolation.md`** · design: `docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md` · **R14 has a subject and a passing validation for the first time, and no production table is tenant-scoped yet** — Members is next and will be the first · two open items, both below under "Known open items": the deployment connects to PostgreSQL as a superuser (voids `FORCE`), and no gym-scoped grant can be issued through the API yet |
+| **R14 — tenant isolation mechanism** (`ITenantContext`/`ITenantContextSetter`, `TenantSessionInterceptor`, `TenantIsolationValidator`, route-based `TenantResolutionMiddleware`) | ✅ **mechanism built and tested, committed locally on `development`** (not yet pushed to `origin` — pushing is the maintainer's call) — **303 integration / 1401 total tests green**, 0 build warnings, `dotnet format` clean · rules: **`docs/BusinessRules/TenantIsolation.md`** · design: `docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md` · **R14 has a subject and a passing validation for the first time, and no production table is tenant-scoped yet** — Members is next and will be the first · three open items, all below under "Known open items": the deployment connects to PostgreSQL as a superuser (voids `FORCE`), no gym-scoped grant can be issued through the API yet, and `TenantScope` is owed rather than built |
 | M6+ — per approved roadmap (monitoring, settings) | next |
 
 ## M1.2 as built
@@ -1558,8 +1558,8 @@ real subject.
 GymOS.Backend.slnx` — **0 warnings, 0 errors**. `dotnet format --verify-no-changes
 GymOS.Backend.slnx` — **exit 0**. `dotnet test tests/GymOS.IntegrationTests --no-build` — **301
 passed**. Whole solution (`SharedKernel` 131 · `Platform.Domain.UnitTests` 434 ·
-`Platform.Application.UnitTests` 247 · `BuildingBlocks.UnitTests` 66 · `ArchitectureTests` 151 ·
-`Platform.Infrastructure.UnitTests` 67 · `IntegrationTests` 301) — **1397 passed**.
+`Platform.Application.UnitTests` 247 · `BuildingBlocks.UnitTests` 66 · `ArchitectureTests` 153 ·
+`Platform.Infrastructure.UnitTests` 67 · `IntegrationTests` 303) — **1401 passed**.
 
 ### Three open items this increment produced rather than closed
 
