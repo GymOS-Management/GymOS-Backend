@@ -98,6 +98,27 @@ construction — but it is the kind of thing that stops holding quietly.
 No sequence grants are needed: `GymOSModelConventions.ApplyClientAssignedKeys` makes every key
 client-assigned, so the database generates nothing.
 
+> **Correction, added 2026-08-15 after the increment's final review.** The paragraph above is wrong
+> and shipped that way. `ApplyClientAssignedKeys` governs the keys *EF* generates; it says nothing
+> about sequences created by hand-written migration SQL, and there is one —
+> `platform.next_invoice_number` (the `AddInvoices` migration) creates
+> `platform.invoice_number_seq_<year>` on the first invoice of a year and calls `nextval` on it. So
+> `gymos_app` was left with no `CREATE` on `platform` and no sequence privilege of any kind, and the
+> first invoice on a fresh database failed with `42501`.
+>
+> Two changes followed, and the distinction between them matters. The **fix** is the
+> `SecureRuntimeDdlFunctions` migration, which makes that function (and
+> `platform.ensure_audit_log_partitions`, broken the same way and silently) `SECURITY DEFINER` with a
+> pinned `search_path` and `EXECUTE` revoked from `PUBLIC` — so it runs as the owner and needs no
+> caller privilege on the sequence at all. The **hygiene** is
+> `ALTER DEFAULT PRIVILEGES … GRANT USAGE, SELECT ON SEQUENCES TO gymos_app`, added to
+> `10-roles.sql`, the runbook and the harness: it is not what makes invoicing work, it is what keeps
+> the next sequence — which may not arrive behind a function — from repeating this.
+>
+> The general lesson for D2, which is what this note is really for: the reasoning here was
+> **model-driven** ("EF generates nothing") about a question that is **database-driven** ("does any
+> SQL in this repository create a sequence"). §6 below carries the same mistake in a different place.
+
 ### D3 — `FORCE ROW LEVEL SECURITY` stays
 
 It is now belt to `gymos_app`'s braces, since policies apply to a non-owner regardless. It still
@@ -174,6 +195,28 @@ hosts do not exercise the separation either way, and making 300 tests carry a tw
 nothing would be cost without return. The line to hold is therefore: **any suite that touches a
 tenant-scoped table uses the full two-role shape.** Members' tests land on the far side of that line.
 If the rule starts being bent, the harness has drifted back to exactly where R14 found it.
+
+> **Correction, added 2026-08-15 after the increment's final review.** The rule as stated in the
+> paragraph above — "any suite that *touches* a tenant-scoped table" — is wrong, and wrong in a way
+> that will bite on the first day of the Members increment rather than eventually.
+>
+> `TenantIsolationValidator` builds its table list from `TenantScopedTables()`, which walks
+> **`_dbContext.Model`**. The check is **model-driven, not usage-driven**: the moment any production
+> entity implements `ITenantScoped`, that list is non-empty in *every* host that builds the model —
+> all ~300 of them — regardless of whether the suite ever reads or writes the table. Each of those
+> hosts connects as `PostgresFixture`'s single role, which owns the tables it migrated, so the
+> ownership check (`pg_has_role(current_user, c.relowner, 'USAGE')`) reports a problem for every one
+> and the validator refuses the boot.
+>
+> Nothing is broken today, because no production entity implements the marker yet — the tenancy
+> suite's probe entity is registered only in that suite's own host. The consequence is scheduling,
+> not correctness: **`PostgresFixture` must move to the migrator/app shape for the whole suite before
+> the Members increment adds its first `ITenantScoped` entity**, not alongside it. Recorded in
+> `docs/STATUS.md` so it is picked up as that increment's first task rather than discovered by ~300
+> simultaneous boot failures.
+>
+> The rule §6 should have stated: **any host that builds a model containing a tenant-scoped entity
+> needs the two-role shape** — which, once one exists, is all of them.
 
 ## 7. Testing
 

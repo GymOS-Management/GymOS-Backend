@@ -1,6 +1,20 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-15 · **R14's isolation now actually filters — the superuser gap is closed.**
+**Last updated:** 2026-08-15 · **The database-roles increment's final review is fixed: invoice
+issuance and audit partitioning work again as a role with no DDL rights.** Taking DDL away from the
+API process left two plpgsql functions — `platform.next_invoice_number` and
+`platform.ensure_audit_log_partitions` — issuing DDL as the *calling* role, so the first invoice of
+any year failed with a 500 and audit partition maintenance failed silently and permanently. Both are
+now `SECURITY DEFINER` with a pinned `search_path` and `EXECUTE` revoked from `PUBLIC`
+(`SecureRuntimeDdlFunctions`), and `/health/ready` reports unhealthy while migrations are pending
+instead of green. **Verified through the API against a freshly wiped stack: HTTP 500 / `42501` before,
+HTTP 200 and invoice `2026-000001` after.** Gates: build **0 warnings**, `dotnet format` **exit 0**,
+**1410 tests passed** (integration **312**). Details in "Database roles — final-review fixes as built".
+**One thing Members must do first** is now the top entry under "Known open items": `PostgresFixture`
+has to move to the migrator/app shape for the whole suite *before* the first production
+`ITenantScoped` entity exists, because the validator's table list is model-driven, not usage-driven.
+
+**Previously (2026-08-15, the roles themselves):** **R14's isolation now actually filters — the superuser gap is closed.**
 The deployment-half increment (`docs/superpowers/specs/2026-08-15-database-roles-design.md`) replaced
 the single superuser connection with three roles: `gymos_admin` (superuser, `POSTGRES_USER`, humans
 and maintenance only), `gymos_migrator` (`NOSUPERUSER NOBYPASSRLS`, owns the database/schemas/every
@@ -1706,6 +1720,79 @@ having been deliberately left alone by the R14 mechanism increment as out of its
 `SetUserRolesCommandHandler` still cannot issue a gym-scoped grant; and `TenantScope` is still owed, not
 built. All recorded, unchanged, under "Known open items" below.
 
+## Database roles — final-review fixes as built
+
+**Committed locally on `development`, not yet pushed.** The whole-branch review found what the
+per-task reviews structurally could not: **the increment took DDL rights away from the API process
+without auditing what runtime DDL that process still performs.** Two plpgsql functions installed by
+earlier migrations issue DDL as the *calling* role, and both broke the day the API stopped being a
+superuser — invisibly, because the integration harness runs a single role that owns everything.
+
+1. **`platform.next_invoice_number` could not issue the first invoice of any year.** It creates
+   `platform.invoice_number_seq_<year>` on first use; `gymos_app` has `USAGE` but no `CREATE` on
+   `platform`, and the function's own handler catches only `duplicate_object`/`unique_violation`, so
+   `42501` propagated out of `InvoiceNumberGenerator` as a **500**. Proved both ways against a
+   freshly wiped compose stack, through the API rather than by reasoning: assigning a subscription
+   returned **HTTP 500** with `Npgsql.PostgresException 42501: permission denied for schema platform`
+   in the log, and after the fix the same call returned **HTTP 200** and the invoice
+   `2026-000001`.
+2. **`platform.ensure_audit_log_partitions` failed silently and would have done so forever.** Same
+   missing `CREATE`, but its `EXCEPTION WHEN others` swallowed the privilege error and raised a
+   warning, so the function returned 0 and `AuditLogPartitionMaintainer` logged **Information**
+   "0 created" — its Error path could never fire. Every audit row would have landed in
+   `audit_logs_default` permanently once the `PartitionAuditLogs` migration's built-in three-month
+   lookahead elapsed.
+3. **Both fixed by a new migration, `SecureRuntimeDdlFunctions`**, using `CREATE OR REPLACE FUNCTION`
+   so databases that already ran the originals are fixed too. Both become `SECURITY DEFINER` — they
+   execute as their owner, `gymos_migrator`, which holds the `CREATE` they need — with the two
+   things that makes mandatory: a **pinned search path** (`SET search_path = pg_catalog, pg_temp`;
+   without it a caller can point an elevated function at a schema it writes and have its own code run
+   as the owner) and **`REVOKE ALL … FROM PUBLIC` plus an explicit `GRANT … TO gymos_app`**, because
+   `CREATE FUNCTION` grants `EXECUTE` to `PUBLIC` and on a `SECURITY DEFINER` function that lends the
+   owner's DDL rights to every role in the database. The grant is guarded on the role existing, so it
+   is inert in harnesses and managed instances that name their serving role differently; the runbook
+   carries the statement for those.
+4. **The `WHEN others` swallow is narrowed** to `check_violation OR duplicate_table` — rows already in
+   the DEFAULT partition for the range (the cause the original comment describes) and the creation
+   race the catalog check above it does not close. `insufficient_privilege` and everything else now
+   propagate to the maintainer's Error path.
+5. **Readiness now reports unhealthy while migrations are pending.** `/health/ready` used
+   `AddDbContextCheck` → `CanConnectAsync`, which is true of an empty database — so a bare
+   `dotnet run` (development sets `MigrateOnStartup: false` and nothing sets `MigrateOnly`) booted
+   **green** with R14 off, all three seeders skipped and both sweeps skipped. Worse than that was
+   measured: Npgsql treats `3D000` as "the database does not exist" rather than an error, so a host
+   pointed at a **nonexistent** database also boots green. One check named `database`
+   (`DatabaseReadinessHealthCheck`) replaces `AddDbContextCheck` and asks both questions; registering
+   a *second* check alongside it is what does not work here — the health service runs registrations
+   concurrently in separate scopes, so every host opens a second physical connection and the suite
+   took the container past `max_connections=300` (122 failures with `53300`).
+6. **Corrections to reasoning that was wrong rather than merely incomplete.** `10-roles.sql`, the
+   design's D2 and the runbook all claimed no sequence grants were needed because
+   `ApplyClientAssignedKeys` makes every key client-assigned — true of EF-generated keys, false of
+   the database, since hand-written migration SQL creates sequences. All three corrected and
+   `ALTER DEFAULT PRIVILEGES … GRANT USAGE, SELECT ON SEQUENCES` added (hygiene, not the fix — the
+   `SECURITY DEFINER` function needs no caller privilege on its sequence). The runbook's claim that
+   `REASSIGN OWNED` does not cover schemas is corrected: it does; databases and tablespaces are the
+   exceptions. `GYMOS_MIGRATE_ON_STARTUP` is gone from `docker-compose.yml`, `.env.example` and
+   `DOCKER.md` — an older `.env.example` shipped it as `true`, and a stale `.env` would have had the
+   API attempt DDL as `gymos_app` on every boot.
+7. **Two test changes worth naming.** `MigrateOnlyTests` now asserts SQLSTATE `42501` rather than
+   "something threw" — and the removal experiment the review asked for produced a **different**
+   answer than the review predicted: with the `MigrateOnly` branch deleted the host throws *nothing
+   at all* (six skip warnings and a green boot), so the old `ThrowsAnyAsync<Exception>` did fail. It
+   was a weak guard, not a vacuous one. `ApiEndpointTests` now migrates its host: it had been
+   asserting `/health/ready` = 200 against whatever an earlier suite happened to leave in the shared
+   database, which the old connectivity-only check could not tell apart from a correct one.
+
+**Gate numbers:** `dotnet build GymOS.Backend.slnx` — **0 warnings, 0 errors**. `dotnet format
+--verify-no-changes GymOS.Backend.slnx` — **exit 0**. `dotnet test tests/GymOS.IntegrationTests` —
+**312 passed** (311 before; the tenancy suite gains one test that watches both functions work as the
+app role, deliberately one method rather than four — this suite's connection budget is that tight).
+Whole solution — `SharedKernel` 131 · `Platform.Domain.UnitTests` 434 ·
+`Platform.Application.UnitTests` 247 · `BuildingBlocks.UnitTests` 66 ·
+`Platform.Infrastructure.UnitTests` 67 · `ArchitectureTests` 153 · `IntegrationTests` 312 —
+**1410 passed, 0 failed**.
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -1964,6 +2051,21 @@ squarely inside Members' own scope and is the real reason the tenant-resolution 
 been exercised against a real grant.
 
 ## Known open items / honest notes
+
+- **BLOCKS MEMBERS, AND MUST BE ITS FIRST TASK: `PostgresFixture` has to move to the
+  migrator/app shape for the whole integration suite, *before* the first production `ITenantScoped`
+  entity exists — not alongside it.** `TenantIsolationValidator` builds its table list from
+  `_dbContext.Model`, so the check is **model-driven, not usage-driven**: the moment any production
+  entity implements `ITenantScoped`, `TenantScopedTables()` is non-empty in **every** host that
+  builds the model — all ~312 integration tests' worth — whether or not that suite ever reads the
+  table. Those hosts connect as `PostgresFixture`'s single role, which owns the tables it migrated,
+  so the ownership check (`pg_has_role(current_user, c.relowner, 'USAGE')`) reports a problem and the
+  validator refuses **every** boot. Nothing is broken today: no production entity implements the
+  marker, and the tenancy suite's probe entity is registered only in that suite's own host. The
+  database-roles design's §6 stated the rule as "any suite that *touches* a tenant-scoped table uses
+  the two-role shape", which is wrong for exactly this reason; §6 now carries a correction. Adding
+  `Member` without doing this first produces ~300 simultaneous boot failures whose cause is nowhere
+  near the change that triggered them.
 
 - ~~**The platform's PostgreSQL connection is a superuser, which voids `FORCE ROW LEVEL SECURITY`
   entirely.**~~ **Closed by the database-roles increment (2026-08-15) — see "Database roles (R14
