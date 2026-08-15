@@ -51,7 +51,51 @@ public sealed class MigrateOnlyTests
         // returning normally) is exactly the bug that would let the API start against an
         // unmigrated database. The surrounding try/catch in Program.cs logs Fatal and rethrows,
         // so the exception must surface here rather than being swallowed silently.
-        await Assert.ThrowsAnyAsync<Exception>(() => MigrateOnlyAsync(builder.ConnectionString));
+        //
+        // ── Why this asserts a specific SQLSTATE and not just "something threw" ────────────────
+        // It used to be `ThrowsAnyAsync<Exception>`, and that assertion held with the entire
+        // MigrateOnly branch deleted from Program.cs: the host simply fell through to
+        // TenantIsolationValidator, which opened its own connection to the same nonexistent
+        // database and threw 3D000 (invalid_catalog_name). The test was green either way, so it
+        // pinned nothing about the feature it was written for.
+        //
+        // 42501 is reachable only through the migrator. It comes from EF's CreateAsync — Migrate
+        // finds no history table, asks the database creator to create the database, and the test
+        // role holds no CREATEDB — so it can only be raised by something that tried to MIGRATE.
+        // Every other path against this connection string stops earlier, at 3D000. Watched failing
+        // with the branch removed before being trusted; see the report for that increment.
+        PostgresException failure = await ThrowsPostgresExceptionAsync(
+            () => MigrateOnlyAsync(builder.ConnectionString));
+
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, failure.SqlState);
+    }
+
+    /// <summary>
+    /// Runs <paramref name="action"/> and returns the <see cref="PostgresException"/> it produced,
+    /// unwrapping whatever the host stack wrapped it in.
+    /// </summary>
+    /// <remarks>
+    /// The exception travels out of <c>WebApplicationFactory</c>'s host build, and neither the number
+    /// of wrapper layers nor their types are a property this suite should assert on — but the
+    /// SQLSTATE underneath is exactly the property it should. Walking the chain keeps the assertion
+    /// on the database's answer rather than on the framework's plumbing. A failure with no
+    /// <see cref="PostgresException"/> anywhere in it fails the test with the whole chain in the
+    /// message, since "it threw something else entirely" is the interesting case to read.
+    /// </remarks>
+    private static async Task<PostgresException> ThrowsPostgresExceptionAsync(Func<Task> action)
+    {
+        Exception thrown = await Assert.ThrowsAnyAsync<Exception>(action);
+
+        for (Exception? current = thrown; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException postgres)
+            {
+                return postgres;
+            }
+        }
+
+        Assert.Fail($"Expected a PostgresException somewhere in the chain, got: {thrown}");
+        return null!;
     }
 
     private static AppDbContext CreateContext(string connectionString)
