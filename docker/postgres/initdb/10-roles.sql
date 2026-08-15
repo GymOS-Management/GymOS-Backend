@@ -50,6 +50,12 @@ ALTER SCHEMA public OWNER TO gymos_migrator;
 --
 -- The constraint this creates: these attach only to objects created BY gymos_migrator. Anything that
 -- ever creates a table as another role produces a table gymos_app cannot touch.
+--
+-- DUPLICATED, unavoidably, in tests/GymOS.IntegrationTests/Tenancy/TenantIsolationTests.cs
+-- (CreateRolesSql): an initdb script mounted into a container and a Testcontainers fixture cannot
+-- share a SQL file. Change these two statements and you must change that copy in the same commit —
+-- if they drift, ATableCreatedByTheMigratorIsUsableByTheAppRoleWithNoExplicitGrant keeps passing
+-- against the suite's own grants while production breaks on the first table a future migration adds.
 ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO gymos_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator

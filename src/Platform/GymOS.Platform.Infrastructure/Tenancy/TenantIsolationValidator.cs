@@ -19,19 +19,27 @@ namespace GymOS.Platform.Infrastructure.Tenancy;
 /// state, and the guard <c>SuperAdminSeeder</c> already has. Anything else is fatal, because a
 /// security control that swallows "the table isn't there" passes on an empty database and on every
 /// misconfiguration that resembles one.</para>
-/// <para><b>The connected role is checked only when there is something to protect.</b> A role with
-/// <c>rolsuper</c> or <c>rolbypassrls</c> bypasses row-level security entirely, above whatever the
-/// table flags say — <c>FORCE</c> does not constrain it. But nothing in production implements
-/// <see cref="ITenantScoped"/> yet, and this application's own deployment connects as a superuser
-/// (<c>docker-compose.yml</c>'s <c>POSTGRES_USER</c>), so an unconditional check would fail every
-/// developer's boot today for a risk that does not exist until the first tenant-scoped table lands.
-/// The day it does, this fires and names the role, instead of quietly serving every tenant's rows to
-/// every caller.</para>
-/// <para><b>Both of its skip paths say so out loud.</b> Either early return switches this control off
-/// entirely — including the connected-role check — and a security control that turns itself off must
-/// not do it silently. A deployment with <c>MigrateOnStartup=false</c> and a migration left pending
-/// would otherwise disable R14 with nothing in the log to find afterwards. The warnings name which
-/// condition did it, so "was this control running?" is answerable from the boot log.</para>
+/// <para><b>The connected role is checked unconditionally.</b> A role with <c>rolsuper</c> or
+/// <c>rolbypassrls</c> bypasses row-level security entirely, above whatever the table flags say —
+/// <c>FORCE</c> does not constrain it. This check used to be gated on something implementing
+/// <see cref="ITenantScoped"/>, purely because the deployment connected as a superuser
+/// (<c>docker-compose.yml</c>'s <c>POSTGRES_USER</c>) and an unconditional check would have failed
+/// every boot. The deployment now connects as <c>gymos_app</c>, so the gate is gone — and the gate
+/// was itself the hole: an entity that forgot the marker produced zero tenant-scoped tables and
+/// switched the whole control, role check included, silently off. The role a host connects as is a
+/// property of the deployment, not of the model, so nothing about the model may excuse checking it.</para>
+/// <para><b>And the connected role must not own what it is isolated from.</b> An owner can execute
+/// <c>ALTER TABLE ... NO FORCE ROW LEVEL SECURITY</c> and switch a table's own isolation off in one
+/// statement — well within reach of the SQL injection row-level security mostly exists to contain.
+/// Two roles is what removes that: <c>gymos_migrator</c> owns the schema and runs DDL,
+/// <c>gymos_app</c> owns nothing and serves requests. This asserts that separation rather than
+/// trusting the deployment to have kept it.</para>
+/// <para><b>Its remaining skip path says so out loud.</b> The pending-migrations return switches this
+/// control off entirely, and a security control that turns itself off must not do it silently. A
+/// deployment with <c>MigrateOnStartup=false</c> and a migration left pending would otherwise disable
+/// R14 with nothing in the log to find afterwards. Having nothing tenant-scoped is no longer a skip —
+/// it logs and falls through, so the role checks still run — but it is warned about for the same
+/// reason: it is also what a forgotten <see cref="ITenantScoped"/> marker looks like from in here.</para>
 /// <para><b>Public, not internal.</b> It is invoked from <c>Program.cs</c> in the
 /// <c>GymOS.WebApi</c> host, which has no <c>InternalsVisibleTo</c> grant onto this assembly — the
 /// same reason <c>FeatureExceptionMaintainer</c> is public rather than internal.</para>
@@ -49,10 +57,10 @@ public sealed partial class TenantIsolationValidator
     private static partial void LogSkippedPendingMigrations(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Warning,
-        Message = "Tenant isolation validation (R14) checked nothing: no entity in the EF model " +
-            "implements ITenantScoped, so neither the per-table checks nor the connected-role " +
-            "BYPASSRLS check ran. Expected while no production table is tenant-scoped; once one is, " +
-            "an entity missing the ITenantScoped marker produces this same message.")]
+        Message = "Tenant isolation validation (R14) checked no table: no entity in the EF model " +
+            "implements ITenantScoped, so the per-table checks had nothing to run against. The " +
+            "connected-role checks still ran. Expected while no production table is tenant-scoped; " +
+            "once one is, an entity missing the ITenantScoped marker produces this same message.")]
     private static partial void LogNoTenantScopedEntities(ILogger logger);
 
     /// <summary>Creates the validator with its database context and logger.</summary>
@@ -72,17 +80,20 @@ public sealed partial class TenantIsolationValidator
             return;
         }
 
+        // Before the zero-entities branch, and collected regardless of it: the role a host connects as
+        // is a property of the deployment, not of the EF model, so an empty model must not be able to
+        // excuse checking it.
+        var problems = new List<string>(await InspectConnectedRoleAsync(cancellationToken));
+
         var tenantScopedTables = TenantScopedTables().ToList();
 
         if (tenantScopedTables.Count == 0)
         {
-            // Nothing to protect yet, so nothing to check — see the role note in the remarks. Logged
-            // because this is also what a forgotten ITenantScoped marker looks like from in here.
+            // Nothing tenant-scoped to inspect per table — but this is also what a forgotten
+            // ITenantScoped marker looks like from in here, so it is logged rather than passed over.
+            // It falls through instead of returning: the role checks above still stand on their own.
             LogNoTenantScopedEntities(_logger);
-            return;
         }
-
-        var problems = new List<string>(await InspectConnectedRoleAsync(cancellationToken));
 
         foreach (var (schema, table) in tenantScopedTables)
         {
@@ -162,9 +173,12 @@ public sealed partial class TenantIsolationValidator
         var problems = new List<string>();
 
         // One round trip per table, straight from pg_catalog. `relforcerowsecurity` is the one that
-        // matters most: this application connects as the owner of its tables, and PostgreSQL exempts
-        // an owner from its own policies, so checking `relrowsecurity` alone passes on a table whose
-        // policies never filter a single row (D5).
+        // matters most: PostgreSQL exempts a table's owner from its own policies, so checking
+        // `relrowsecurity` alone passes on a table whose policies never filter a single row for the
+        // owner (D5) — and `gymos_migrator` does own every table here.
+        //
+        // The new column goes LAST on purpose: every GetBoolean/GetInt64 below indexes this SELECT
+        // positionally, so inserting anywhere else would silently re-point four existing checks.
         await using var command = _dbContext.Database.GetDbConnection().CreateCommand();
         command.CommandText =
             """
@@ -175,7 +189,8 @@ public sealed partial class TenantIsolationValidator
                 (SELECT count(*) FROM information_schema.columns col
                  WHERE col.table_schema = n.nspname
                    AND col.table_name = c.relname
-                   AND col.column_name = 'tenant_id') AS has_tenant_id
+                   AND col.column_name = 'tenant_id') AS has_tenant_id,
+                pg_get_userbyid(c.relowner) = current_user AS owned_by_connected_role
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = @schema AND c.relname = @table
@@ -203,26 +218,40 @@ public sealed partial class TenantIsolationValidator
                 return problems;
             }
 
+            // 3: has_tenant_id
             if (reader.GetInt64(3) == 0)
             {
                 problems.Add($"  {schema}.{table}: no tenant_id column.");
             }
 
+            // 0: relrowsecurity
             if (!reader.GetBoolean(0))
             {
                 problems.Add($"  {schema}.{table}: row-level security is not enabled.");
             }
 
+            // 1: relforcerowsecurity
             if (!reader.GetBoolean(1))
             {
                 problems.Add(
                     $"  {schema}.{table}: row-level security is not FORCED, so the table owner — " +
-                    "which is how this application connects — bypasses every policy on it.");
+                    "the role migrations run as — bypasses every policy on it.");
             }
 
+            // 2: policies
             if (reader.GetInt64(2) == 0)
             {
                 problems.Add($"  {schema}.{table}: no row-level security policy.");
+            }
+
+            // 4: owned_by_connected_role
+            if (reader.GetBoolean(4))
+            {
+                problems.Add(
+                    $"  {schema}.{table}: the connected role owns this table, so it can execute " +
+                    "ALTER TABLE ... NO FORCE ROW LEVEL SECURITY and switch the table's own " +
+                    "isolation off. Migrations must run as a role that is not the one serving " +
+                    "requests.");
             }
         }
         finally

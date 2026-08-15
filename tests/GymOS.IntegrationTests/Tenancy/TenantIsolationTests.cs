@@ -15,18 +15,26 @@ namespace GymOS.IntegrationTests.Tenancy;
 /// R14's mechanism, proven rather than installed: a tenant sees only its own rows, a write cannot be
 /// forged for another tenant, the table owner does not bypass the policy, platform scope reads
 /// nothing rather than everything, an unprotected table fails the boot, platform scope still reads
-/// nothing when it borrows the same physical connection a tenant just used, and the two conditions
-/// under which the validator checks nothing at all are logged rather than passed over in silence.
+/// nothing when it borrows the same physical connection a tenant just used, a bypassing or
+/// table-owning role fails the boot whether or not anything is tenant-scoped, the role serving
+/// requests cannot turn its own isolation off while the migrator can, and the one condition under
+/// which the validator still checks nothing is logged rather than passed over in silence.
 /// </summary>
 /// <remarks>
-/// <para><b>The suite's own database, and its own database role.</b> Every assertion here counts rows,
-/// so the suite takes an isolated database. It also takes a dedicated <c>NOSUPERUSER NOBYPASSRLS</c>
-/// role and hands that role ownership of the database — because the container's bootstrap role is a
-/// superuser, and PostgreSQL exempts superusers from row-level security unconditionally, <c>FORCE</c>
-/// included. Run as the bootstrap role, all six tests below would report "no isolation" no matter what
-/// the policies said. The dedicated role reproduces the production shape D5 describes: the application
-/// connects as <c>gymos</c>, owns its tables, and is subject to their policies only because they are
-/// forced.</para>
+/// <para><b>The suite's own database, and its own pair of database roles.</b> Every assertion here
+/// counts rows, so the suite takes an isolated database. It also takes two dedicated
+/// <c>NOSUPERUSER NOBYPASSRLS</c> roles, because the container's bootstrap role is a superuser and
+/// PostgreSQL exempts superusers from row-level security unconditionally, <c>FORCE</c> included — run
+/// as the bootstrap role, every test below would report "isolation works" no matter what the policies
+/// said.</para>
+/// <para>The pair mirrors the deployment (<c>docker/postgres/initdb/10-roles.sql</c>) rather than
+/// inventing a shape of its own. <see cref="MigratorRole"/> owns the database, the <c>public</c>
+/// schema, everything migrations create and the probe table; <see cref="AppRole"/> owns nothing and is
+/// what the host, the validator and every isolation test connect as, reaching the migrator's tables
+/// only through <c>ALTER DEFAULT PRIVILEGES</c>. That separation is what
+/// <see cref="TheAppRoleCannotDisableItsOwnIsolation"/> and
+/// <see cref="TheMigratorRoleCanDisableIt_WhichIsWhyTheAppRoleIsNotTheMigrator"/> exist to prove: one
+/// statement, refused for the role serving requests and accepted for the role that is not.</para>
 /// <para><b><c>Maximum Pool Size=1</c>.</b> Rebuilt here rather than in <c>PostgresFixture</c>, whose
 /// five-connection cap is load-bearing for the rest of the suite. One connection is what makes
 /// <see cref="TheTenantDoesNotLeakIntoTheNextUseOfAPooledConnection"/> deterministic: the two scopes it
@@ -41,47 +49,90 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     private static readonly Guid TenantB = new("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
 
     /// <summary>
-    /// The role the suite connects as. Not a superuser and not <c>BYPASSRLS</c>: those attributes
-    /// defeat row-level security outright, so a suite running under them proves nothing.
+    /// The role that owns this suite's database, its schemas and its tables, and applies migrations —
+    /// the local stand-in for <c>gymos_migrator</c>. Nothing connects as it to serve a request.
     /// </summary>
-    private const string ApplicationRole = "gymos_tenant_isolation";
-
-    /// <summary>A password for a throwaway role inside a throwaway container; not a secret.</summary>
-    private const string ApplicationRolePassword = "tenant-isolation-role";
+    private const string MigratorRole = "gymos_tenant_isolation_migrator";
 
     /// <summary>
-    /// Creates the role once per container and hands it this database. Ownership of <c>public</c>
-    /// moves too, or the role cannot create <c>__EFMigrationsHistory</c> and migrations fail on the
-    /// first statement.
+    /// The role the host, the validator and every isolation test connect as — the local stand-in for
+    /// <c>gymos_app</c>. Not a superuser and not <c>BYPASSRLS</c>, because those attributes defeat
+    /// row-level security outright; and the owner of nothing, because an owner can turn <c>FORCE</c>
+    /// off on its own tables in one statement.
     /// </summary>
-    private static readonly string GrantDatabaseToApplicationRoleSql =
+    private const string AppRole = "gymos_tenant_isolation_app";
+
+    /// <summary>Passwords for throwaway roles inside a throwaway container; not secrets.</summary>
+    private const string MigratorRolePassword = "tenant-isolation-migrator";
+
+    /// <summary>Passwords for throwaway roles inside a throwaway container; not secrets.</summary>
+    private const string AppRolePassword = "tenant-isolation-app";
+
+    /// <summary>
+    /// Creates both roles once per container and hands this database to <see cref="MigratorRole"/>.
+    /// Ownership of <c>public</c> moves too, or the migrator cannot create
+    /// <c>__EFMigrationsHistory</c> and migrations fail on their first statement.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>The <c>ALTER DEFAULT PRIVILEGES</c> pair is duplicated from
+    /// <c>docker/postgres/initdb/10-roles.sql</c>, deliberately and unavoidably</b> — an initdb script
+    /// mounted into a container and a Testcontainers fixture cannot share a SQL file. Keep the two in
+    /// step: a change to one is a change to both. If they drift,
+    /// <see cref="ATableCreatedByTheMigratorIsUsableByTheAppRoleWithNoExplicitGrant"/> keeps passing
+    /// while production breaks on the first table a future migration adds, which is precisely the
+    /// divergence class this increment exists to close. That file carries the matching pointer back
+    /// here.</para>
+    /// <para>Also without <c>IN SCHEMA</c>, for the reason that file gives: <c>platform</c> is created
+    /// by a migration, so an <c>IN SCHEMA platform</c> form could only run afterwards — by which point
+    /// it would not cover the tables that migration had just created. And these must run before the
+    /// migrations and the probe, because default privileges attach at <c>CREATE</c> time and do
+    /// nothing for objects that already exist.</para>
+    /// </remarks>
+    private static readonly string CreateRolesSql =
         $"""
         DO $$
         BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{ApplicationRole}') THEN
-                CREATE ROLE "{ApplicationRole}"
-                    LOGIN PASSWORD '{ApplicationRolePassword}' NOSUPERUSER NOBYPASSRLS;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{MigratorRole}') THEN
+                CREATE ROLE "{MigratorRole}"
+                    LOGIN PASSWORD '{MigratorRolePassword}' NOSUPERUSER NOBYPASSRLS;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{AppRole}') THEN
+                CREATE ROLE "{AppRole}"
+                    LOGIN PASSWORD '{AppRolePassword}' NOSUPERUSER NOBYPASSRLS;
             END IF;
         END
         $$;
 
         DO $$
         BEGIN
-            EXECUTE format('ALTER DATABASE %I OWNER TO %I', current_database(), '{ApplicationRole}');
+            EXECUTE format('ALTER DATABASE %I OWNER TO %I', current_database(), '{MigratorRole}');
         END
         $$;
 
-        ALTER SCHEMA public OWNER TO "{ApplicationRole}";
+        ALTER SCHEMA public OWNER TO "{MigratorRole}";
+
+        -- Kept in step with docker/postgres/initdb/10-roles.sql by hand; see this field's remarks.
+        ALTER DEFAULT PRIVILEGES FOR ROLE {MigratorRole}
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {AppRole};
+        ALTER DEFAULT PRIVILEGES FOR ROLE {MigratorRole}
+            GRANT USAGE ON SCHEMAS TO {AppRole};
         """;
 
     private readonly PostgresFixture _postgres;
     private readonly List<IServiceScope> _scopes = [];
-    private readonly List<AppDbContext> _superuserContexts = [];
+    private readonly List<AppDbContext> _rawContexts = [];
     private string _connectionString = null!;
 
     /// <summary>
-    /// The container's bootstrap role, before ownership moves to <see cref="ApplicationRole"/> — a
-    /// superuser, and the role Task 5's suite deliberately avoids connecting the application host as.
+    /// The same database as <see cref="_connectionString"/>, connected as <see cref="MigratorRole"/>:
+    /// the owner of the schema, and the role that applies migrations and creates the probe.
+    /// </summary>
+    private string _migratorConnectionString = null!;
+
+    /// <summary>
+    /// The container's bootstrap role, before ownership moves to <see cref="MigratorRole"/> — a
+    /// superuser, and the role this suite deliberately avoids connecting the application host as.
     /// Kept so <see cref="CreateSuperuserContext"/> can still reach the database through it after
     /// <see cref="InitializeAsync"/> hands the database and schema away.
     /// </summary>
@@ -93,7 +144,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// Kept separate from <see cref="_bootstrapConnectionString"/>'s database so
     /// <see cref="TheHarnessRoleIsNotExemptFromRowLevelSecurity"/> proves something about the fixture's
     /// default connection rather than about a database this suite has already reassigned to
-    /// <see cref="ApplicationRole"/>.
+    /// <see cref="MigratorRole"/>.
     /// </summary>
     private string _harnessRoleConnectionString = null!;
 
@@ -107,34 +158,70 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
         // CreateIsolatedDatabaseAsync now hands back a connection as PostgresFixture's own harness
         // role (Task 1), which has no CREATEROLE — this suite genuinely needs a superuser to create
-        // ApplicationRole and hand it the database, so it takes PostgresFixture.BootstrapConnectionString
-        // and points it at the database CreateIsolatedDatabaseAsync just created, rather than reusing
-        // the (now non-superuser) connection string that method returns.
+        // its two roles and hand the database to the migrator, so it takes
+        // PostgresFixture.BootstrapConnectionString and points it at the database
+        // CreateIsolatedDatabaseAsync just created, rather than reusing the (now non-superuser)
+        // connection string that method returns.
         string isolatedDatabaseName = new NpgsqlConnectionStringBuilder(
             await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation")).Database!;
 
         _bootstrapConnectionString = new NpgsqlConnectionStringBuilder(_postgres.BootstrapConnectionString)
         {
             Database = isolatedDatabaseName,
+
+            // Unpooled, for the same reason as the migrator string below. This one is used a handful
+            // of times per instance — the role script here, and the two tests that want a superuser
+            // validator — but xUnit builds a fresh instance per test method against a fresh database,
+            // so its pool is never reused and only parks idle connections nothing will claim.
+            Pooling = false,
         }.ConnectionString;
 
-        await ExecuteAsync(_bootstrapConnectionString, GrantDatabaseToApplicationRoleSql);
+        await ExecuteAsync(_bootstrapConnectionString, CreateRolesSql);
+
+        _migratorConnectionString = new NpgsqlConnectionStringBuilder(_bootstrapConnectionString)
+        {
+            Username = MigratorRole,
+            Password = MigratorRolePassword,
+
+            // Unpooled, for the reason PostgresFixture.Unpooled already gives: xUnit builds a fresh
+            // instance of this class per test method, each against a uniquely named database, so this
+            // connection string is never reused and a pool behind it only parks idle connections that
+            // nothing will claim. The migrator is used a handful of times per test, so the handshake
+            // cost is irrelevant.
+            //
+            // Measured, not predicted. Splitting this suite in two added four test methods, and each
+            // method is a fresh instance holding its own pools; with this string and the bootstrap one
+            // pooled at the inherited size of five, the run went past `max_connections=300` and failed
+            // ten tests with `53300: sorry, too many clients already` in whichever suite happened to be
+            // dialing in at the time. Unpooling this one alone left six; unpooling both left none. The
+            // same run against HEAD passed 306/306, so this was introduced here rather than inherited.
+            Pooling = false,
+        }.ConnectionString;
 
         _connectionString = new NpgsqlConnectionStringBuilder(_bootstrapConnectionString)
         {
-            Username = ApplicationRole,
-            Password = ApplicationRolePassword,
+            Username = AppRole,
+            Password = AppRolePassword,
 
-            // One physical connection, so connection reuse is certain rather than lucky (D6).
+            // One physical connection, so connection reuse is certain rather than lucky (D6). Pooling
+            // is re-enabled explicitly: this string is derived from the unpooled bootstrap one above
+            // and would otherwise inherit `Pooling=false`, which would silently give every scope its
+            // own physical connection and quietly defeat
+            // TheTenantDoesNotLeakIntoTheNextUseOfAPooledConnection.
+            Pooling = true,
             MaxPoolSize = 1,
         }.ConnectionString;
 
-        // Migrations before the host boots, for three reasons. They create the `platform` schema the
-        // probe table lives in; TenantIsolationValidator returns early and silently while any
-        // migration is pending, so a database that has not been migrated would make
+        // Migrations before the host boots, and as the MIGRATOR, for four reasons. They create the
+        // `platform` schema the probe table lives in; the app role owns nothing and so could not
+        // create it; TenantIsolationValidator returns early while any migration is pending, so a
+        // database that has not been migrated would make
         // AProtectedTablePassesValidation_AnUnprotectedOneFailsTheBoot assert on a validator that
         // never looked at anything; and EF compares the model against the migrations snapshot when it
         // migrates, so the host — whose model carries the probe — must not be the one to do it.
+        //
+        // Everything created here inherits the ALTER DEFAULT PRIVILEGES grants above, which is the
+        // only reason the app role can read __EFMigrationsHistory or touch the probe at all.
         await using (AppDbContext migrator = CreateMigrationContext())
         {
             await migrator.Database.MigrateAsync();
@@ -142,7 +229,8 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
         // Before the host, not after: Program.cs runs the real validator during startup, and the probe
         // is a mapped ITenantScoped entity from this point on. An absent (or unprotected) probe table
-        // is exactly the condition the validator kills the boot for.
+        // is exactly the condition the validator kills the boot for — as is one owned by the role the
+        // host connects as, which is why this runs as the migrator.
         await CreateProbeAsync(TenantProbeSchema.CreateSql);
 
         _host = AuthenticationHost.Create(
@@ -167,7 +255,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        foreach (AppDbContext context in _superuserContexts)
+        foreach (AppDbContext context in _rawContexts)
         {
             await context.DisposeAsync();
         }
@@ -208,17 +296,32 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     [Fact]
     public async Task TheOwnerDoesNotBypassThePolicy()
     {
-        // The test that justifies FORCE. This application connects as the owner of its tables, and
-        // PostgreSQL exempts an owner from its own policies — so WITHOUT `FORCE ROW LEVEL SECURITY`
-        // this passes while filtering nothing, and every other test here passes with it.
+        // The test that justifies FORCE. PostgreSQL exempts a table's owner from its own policies, so
+        // WITHOUT `FORCE ROW LEVEL SECURITY` the owner's reads filter nothing.
         //
-        // Confirm the connected role really is the owner, or the test proves nothing about the risk.
-        Assert.True(await ConnectedRoleOwnsProbeTableAsync());
+        // The owner moved when this suite split into a migrator and an app role: the role serving
+        // requests now owns nothing, so asserting through it would prove nothing about the risk — the
+        // policy constrains a non-owner with or without FORCE. The property has to be observed through
+        // the role that IS the owner, which is what the last assertion does.
+        //
+        // Note where the two guards sit relative to each other, because it is not what it looks like.
+        // Deleting FORCE from TenantProbeSchema.CreateSql does NOT reach the assertion below: the
+        // validator kills the host during InitializeAsync first, with "row-level security is not
+        // FORCED" — run, not assumed. So this assertion is not the tripwire for a probe that ships
+        // unforced; it is the tripwire for FORCE being turned off at RUNTIME, on a table that booted
+        // correctly, which is exactly what an owner-privileged injected statement would do.
+        Assert.True(await TheMigratorOwnsTheProbeTableAsync());
 
         await SeedAsync(TenantA, "a-note");
         await SeedAsync(TenantB, "b-note");
 
         Assert.Single(await NotesAsAsync(TenantA));
+
+        // The owner, with no tenant set: FORCE is why this is 0 and not 2. Confirmed by running an
+        // `ALTER TABLE ... NO FORCE` as the migrator immediately above this line, which turned it into
+        // `Expected: 0, Actual: 2` — so this assertion does detect the condition rather than merely
+        // restate it.
+        Assert.Equal(0L, await ProbeRowsVisibleToTheOwnerAsync());
     }
 
     [Fact]
@@ -268,28 +371,20 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ASuperuserIsAcceptedWhileNothingIsTenantScoped()
-    {
-        // The check is conditional on there being something to protect, deliberately. Nothing in
-        // production implements ITenantScoped yet, so an unconditional check would fail every
-        // developer's `docker compose up` today for a risk that does not exist until `members` lands.
-        // When it does land, the boot fails loudly instead of quietly serving cross-tenant reads.
-        await DropProbeAsync();
-
-        await ValidatorWithNoTenantScopedEntitiesAsSuperuserAsync().ValidateAsync(CancellationToken.None);
-    }
-
-    [Fact]
     public async Task HavingNothingToCheckIsLoggedAsAWarning_NotSkippedSilently()
     {
-        // The early return above switches off the per-table checks AND the connected-role check
-        // together, so "nothing implements ITenantScoped" and "somebody forgot the marker on Member"
-        // are the same code path seen from in here. It must therefore leave a trace: a boot where this
-        // control did nothing has to be distinguishable, afterwards, from a boot where it passed.
+        // "Nothing implements ITenantScoped" and "somebody forgot the marker on Member" are the same
+        // code path seen from in here, so it must leave a trace: a boot where the per-table checks
+        // inspected nothing has to be distinguishable, afterwards, from a boot where they passed.
+        //
+        // Read as the APP role, not the bootstrap superuser it used to use. The connected-role check
+        // is no longer gated on the model having something tenant-scoped, so a superuser context here
+        // now throws rather than logging — which is the whole point of
+        // ASuperuserFailsTheBootEvenWithNothingTenantScoped. The assertions below are untouched.
         await DropProbeAsync();
 
         var logger = new CapturingLogger<TenantIsolationValidator>();
-        await new TenantIsolationValidator(CreateSuperuserContext(withTenantProbe: false), logger)
+        await new TenantIsolationValidator(CreateRawContext(_connectionString, withTenantProbe: false), logger)
             .ValidateAsync(CancellationToken.None);
 
         (LogLevel Level, string Message) entry = Assert.Single(logger.Entries);
@@ -347,6 +442,78 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ASuperuserFailsTheBootEvenWithNothingTenantScoped()
+    {
+        // The check used to be conditional on something implementing ITenantScoped, purely because the
+        // deployment connected as a superuser and an unconditional check would have failed every boot.
+        // That is fixed, so the condition goes — which also closes the hole where an entity that forgets
+        // the marker silently switches the whole control off.
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ValidatorWithNoTenantScopedEntitiesAsSuperuserAsync().ValidateAsync(CancellationToken.None));
+
+        Assert.Contains("BYPASSRLS", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATenantScopedTableOwnedByTheConnectedRoleFailsTheBoot()
+    {
+        // The migrator/app split is the reason an injected statement cannot disable isolation. If the
+        // connecting role owns the table, it can run ALTER TABLE ... NO FORCE and the split has silently
+        // stopped existing — so the boot asserts the separation rather than trusting the deployment.
+        await CreateProbeAsync(TenantProbeSchema.CreateSql);
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ValidatorOwningTheProbeAsync().ValidateAsync(CancellationToken.None));
+
+        Assert.Contains("owns", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TheAppRoleCannotDisableItsOwnIsolation()
+    {
+        // The reason for two roles rather than one non-superuser role. An owner can turn FORCE off in a
+        // single statement, and that statement is within reach of the SQL injection row-level security
+        // mostly exists to contain. The app role owns nothing, so PostgreSQL refuses it.
+        await CreateProbeAsync(TenantProbeSchema.CreateSql);
+
+        PostgresException error = await Assert.ThrowsAsync<PostgresException>(
+            () => ExecuteAsAppRoleAsync("ALTER TABLE platform.tenant_probe NO FORCE ROW LEVEL SECURITY;"));
+
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+    }
+
+    [Fact]
+    public async Task TheMigratorRoleCanDisableIt_WhichIsWhyTheAppRoleIsNotTheMigrator()
+    {
+        // The control for the test above: it must fail for a privilege reason, not because the statement
+        // is malformed, the table is missing, or the connection is broken.
+        await CreateProbeAsync(TenantProbeSchema.CreateSql);
+
+        await ExecuteAsMigratorRoleAsync("ALTER TABLE platform.tenant_probe NO FORCE ROW LEVEL SECURITY;");
+
+        await ExecuteAsMigratorRoleAsync("ALTER TABLE platform.tenant_probe FORCE ROW LEVEL SECURITY;");
+    }
+
+    [Fact]
+    public async Task ATableCreatedByTheMigratorIsUsableByTheAppRoleWithNoExplicitGrant()
+    {
+        // The piece most likely to be subtly wrong, and its production failure mode is a permission error
+        // on a table a future migration has only just added. Nothing here grants anything: the INSERT
+        // works only because of the ALTER DEFAULT PRIVILEGES in CreateRolesSql, which were confirmed
+        // load-bearing twice over: deleting them from CreateRolesSql fails this test with
+        // `42501: permission denied for table __EFMigrationsHistory` before it reaches its body, and
+        // an `ALTER DEFAULT PRIVILEGES ... REVOKE ALL ON TABLES` aimed at just this table fails the
+        // INSERT below with `42501: permission denied for table default_privilege_probe`.
+        await ExecuteAsMigratorRoleAsync(
+            "CREATE TABLE platform.default_privilege_probe (id uuid PRIMARY KEY);");
+
+        await ExecuteAsAppRoleAsync(
+            $"INSERT INTO platform.default_privilege_probe (id) VALUES ('{Guid.NewGuid()}');");
+
+        await ExecuteAsAppRoleAsync("SELECT count(*) FROM platform.default_privilege_probe;");
+    }
+
+    [Fact]
     public async Task TheHarnessRoleIsNotExemptFromRowLevelSecurity()
     {
         // The premise every other test in this suite rests on. If the harness silently handed back a
@@ -398,7 +565,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     private AppDbContext CreateMigrationContext()
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseNpgsql(_migratorConnectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
             .UseSnakeCaseNamingConvention()
             .Options;
 
@@ -479,15 +646,38 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         new(CreateSuperuserContext(withTenantProbe: false), NullLogger<TenantIsolationValidator>.Instance);
 
     /// <summary>
+    /// A validator whose connection is <see cref="MigratorRole"/> — the role that created the probe
+    /// table and therefore owns it. Not a superuser and not <c>BYPASSRLS</c>, deliberately: the only
+    /// thing wrong with this connection is that it owns what it would be serving requests from, so the
+    /// ownership check is the only thing that can make it fail.
+    /// </summary>
+    private TenantIsolationValidator ValidatorOwningTheProbeAsync() =>
+        new(CreateMigratorContext(withTenantProbe: true), NullLogger<TenantIsolationValidator>.Instance);
+
+    /// <summary>
     /// A raw <see cref="AppDbContext"/> connected through <see cref="_bootstrapConnectionString"/>
     /// rather than through <c>_host</c>'s DI, so the connected role is the container's bootstrap
-    /// superuser instead of <see cref="ApplicationRole"/>. Tracked in <see cref="_superuserContexts"/>
-    /// for disposal, the same way <see cref="ValidatorAsync"/> tracks its scope.
+    /// superuser instead of <see cref="AppRole"/>.
     /// </summary>
-    private AppDbContext CreateSuperuserContext(bool withTenantProbe)
+    private AppDbContext CreateSuperuserContext(bool withTenantProbe) =>
+        CreateRawContext(_bootstrapConnectionString, withTenantProbe);
+
+    /// <summary>
+    /// The same, connected as <see cref="MigratorRole"/> — the role that owns the probe table, which
+    /// the validator must refuse to serve requests as.
+    /// </summary>
+    private AppDbContext CreateMigratorContext(bool withTenantProbe) =>
+        CreateRawContext(_migratorConnectionString, withTenantProbe);
+
+    /// <summary>
+    /// An <see cref="AppDbContext"/> outside <c>_host</c>'s DI, so the test picks the connected role.
+    /// Tracked in <see cref="_rawContexts"/> for disposal, the same way <see cref="ValidatorAsync"/>
+    /// tracks its scope.
+    /// </summary>
+    private AppDbContext CreateRawContext(string connectionString, bool withTenantProbe)
     {
         DbContextOptionsBuilder<AppDbContext> builder = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_bootstrapConnectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
             .UseSnakeCaseNamingConvention();
 
         if (withTenantProbe)
@@ -496,14 +686,14 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         }
 
         var context = new AppDbContext(builder.Options);
-        _superuserContexts.Add(context);
+        _rawContexts.Add(context);
         return context;
     }
 
     /// <summary>
     /// A plain <see cref="AppDbContext"/> over <see cref="_harnessRoleConnectionString"/> — whatever
-    /// <see cref="PostgresFixture.CreateIsolatedDatabaseAsync"/> hands back, deliberately not this
-    /// suite's own <see cref="ApplicationRole"/> — so <see cref="TheHarnessRoleIsNotExemptFromRowLevelSecurity"/>
+    /// <see cref="PostgresFixture.CreateIsolatedDatabaseAsync"/> hands back, deliberately neither of
+    /// this suite's own roles — so <see cref="TheHarnessRoleIsNotExemptFromRowLevelSecurity"/>
     /// checks the fixture's default connection rather than a role this suite built for itself.
     /// </summary>
     private AppDbContext CreateHarnessRoleContext()
@@ -516,17 +706,27 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         return new AppDbContext(options);
     }
 
-    private Task CreateProbeAsync(string createSql) => ExecuteAsync(_connectionString, createSql);
+    /// <summary>
+    /// The probe is DDL, so it is the migrator's to create and drop — the app role owns nothing and
+    /// would be refused. This is also what makes the probe migrator-owned, which is the precondition
+    /// for <see cref="TheAppRoleCannotDisableItsOwnIsolation"/>.
+    /// </summary>
+    private Task CreateProbeAsync(string createSql) => ExecuteAsMigratorRoleAsync(createSql);
 
-    private Task DropProbeAsync() => ExecuteAsync(_connectionString, TenantProbeSchema.DropSql);
+    private Task DropProbeAsync() => ExecuteAsMigratorRoleAsync(TenantProbeSchema.DropSql);
+
+    private Task ExecuteAsAppRoleAsync(string sql) => ExecuteAsync(_connectionString, sql);
+
+    private Task ExecuteAsMigratorRoleAsync(string sql) => ExecuteAsync(_migratorConnectionString, sql);
 
     /// <summary>
-    /// Whether the role this suite connects as owns the probe table — the precondition that makes
-    /// <see cref="TheOwnerDoesNotBypassThePolicy"/> a test of the risk rather than of nothing.
+    /// Whether <see cref="MigratorRole"/> — and not the role the suite serves requests as — owns the
+    /// probe table. The precondition that makes <see cref="TheOwnerDoesNotBypassThePolicy"/> a test of
+    /// the risk rather than of nothing.
     /// </summary>
-    private async Task<bool> ConnectedRoleOwnsProbeTableAsync()
+    private async Task<bool> TheMigratorOwnsTheProbeTableAsync()
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = new NpgsqlConnection(_migratorConnectionString);
         await connection.OpenAsync();
 
         await using NpgsqlCommand command = connection.CreateCommand();
@@ -538,6 +738,21 @@ public sealed class TenantIsolationTests : IAsyncLifetime
             """;
 
         return (bool)(await command.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>
+    /// Rows the probe table yields to its own owner with no tenant set. <c>FORCE</c> is the only
+    /// reason this is not "all of them".
+    /// </summary>
+    private async Task<long> ProbeRowsVisibleToTheOwnerAsync()
+    {
+        await using var connection = new NpgsqlConnection(_migratorConnectionString);
+        await connection.OpenAsync();
+
+        await using NpgsqlCommand command = connection.CreateCommand();
+        command.CommandText = "SELECT count(*) FROM platform.tenant_probe";
+
+        return (long)(await command.ExecuteScalarAsync())!;
     }
 
     private static async Task ExecuteAsync(string connectionString, string sql)
