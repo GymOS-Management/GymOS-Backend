@@ -1928,7 +1928,7 @@ Infrastructure 67 · Architecture 153), each project run individually to complet
 plus build 0 warnings and `dotnet format` exit 0. **Run the integration suite before the next merge to
 `staging`.**
 
-**Also still true:** `development` is **58 commits ahead of `staging`** in this repo and Platform is 26
+**Also still true:** `development` is **59 commits ahead of `staging`** in this repo and Platform is 26
 ahead. Nothing has been promoted since 13 August (backend) / 12 August (platform). That is a decision
 nobody has taken, not an oversight.
 
