@@ -17,6 +17,7 @@ using GymOS.WebApi.Analytics;
 using GymOS.WebApi.Auth;
 using GymOS.WebApi.Endpoints;
 using GymOS.WebApi.Extensions;
+using GymOS.WebApi.Health;
 using GymOS.WebApi.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
@@ -128,8 +129,23 @@ try
     builder.Services.AddGymOSApiReferenceBrowser(builder.Configuration, builder.Environment);
 
     // Readiness gates on the database only (AD-48); liveness has no dependencies.
+    //
+    // ONE registration, not two. It replaces AddDbContextCheck<AppDbContext>("database"), whose
+    // CanConnectAsync is true of an empty database, a database three migrations behind, and a
+    // correct one alike — see DatabaseReadinessHealthCheck for why "reachable" is the wrong question
+    // and what it asks instead. Keeping the name `database` keeps /dashboard/health's payload
+    // unchanged.
+    //
+    // Registering a second check alongside it was the obvious shape and is the wrong one here: the
+    // health-check service runs registrations concurrently, each in its own scope with its own
+    // DbContext, so a second check makes every host's Npgsql pool open a second physical connection
+    // the first time anything probes /health/ready. The integration suite boots on the order of a
+    // hundred hosts against one container, and that alone took the run past `max_connections=300` —
+    // 122 failures with `53300: remaining connection slots are reserved for roles with the SUPERUSER
+    // attribute`, in tests that had nothing to do with health. Measured, not predicted; see
+    // PostgresFixture, which already carries two other instances of the same lesson.
     builder.Services.AddHealthChecks()
-        .AddDbContextCheck<AppDbContext>("database");
+        .AddCheck<DatabaseReadinessHealthCheck>("database");
 
     // OpenTelemetry (AD-38): traces + metrics; OTLP export activates only when an
     // endpoint is configured (production: Azure Monitor / any OTLP backend).
@@ -153,10 +169,19 @@ try
 
     var app = builder.Build();
 
-    // Development convenience: apply migrations at startup when configured
-    // (production applies them from the deployment pipeline). The identity catalog
-    // sync always runs — idempotent, and it skips with a warning when migrations
-    // are pending (AD-22 declare-and-validate).
+    // Startup work, in the order the next step depends on the previous one.
+    //
+    // Migrations are NOT this process's job in any environment: the one-shot `migrator` service
+    // (`Database:MigrateOnly`, running as gymos_migrator) owns them, in development and production
+    // alike, and `api` waits for it to exit 0. `Database:MigrateOnStartup` remains as an escape
+    // hatch for a host driving its own database — the integration suite is the only user — and is
+    // `false` in every compose file and appsettings file in the repository.
+    //
+    // Everything below the migration branches skips itself while migrations are pending, each with
+    // a warning: the identity and feature catalog syncs, the SuperAdmin seeder, R14's validator, and
+    // both maintenance sweeps. That is a whole boot's worth of controls silently off, which is why
+    // PendingMigrationsHealthCheck (registered above) makes readiness fail for the same condition
+    // rather than leaving those warnings as the only trace.
     using (IServiceScope startupScope = app.Services.CreateScope())
     {
         // The migrator's mode: apply migrations, then stop. Nothing else runs — the seeders write

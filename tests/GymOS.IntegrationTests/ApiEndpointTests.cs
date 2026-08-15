@@ -22,7 +22,24 @@ public sealed class ApiEndpointTests : IAsyncLifetime
     public Task InitializeAsync()
     {
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-            builder.UseSetting("ConnectionStrings:Database", _postgres.ConnectionString));
+        {
+            builder.UseSetting("ConnectionStrings:Database", _postgres.ConnectionString);
+
+            // Migrate, like every other host in this suite does through AuthenticationHost.Create.
+            //
+            // This host used to set only the connection string, which left it on
+            // appsettings.Development.json's `MigrateOnStartup: false` — so it migrated nothing and
+            // borrowed whatever state some earlier suite had left in the container's shared default
+            // database. HealthReady_Returns200_AgainstTheRealDatabase passed anyway, because
+            // readiness asked CanConnectAsync, which an empty database answers yes to. Since
+            // readiness now also asks whether the schema is current
+            // (DatabaseReadinessHealthCheck), that borrowed state is the difference between 200 and
+            // 503, and the test would pass or fail on execution order. Migrating here is idempotent
+            // — the shared database is normally already migrated — and it makes the test assert
+            // "healthy against a real, migrated database", which is what its name claims.
+            builder.UseSetting("Database:MigrateOnStartup", "true");
+        });
+
         _client = _factory.CreateClient();
         return Task.CompletedTask;
     }
