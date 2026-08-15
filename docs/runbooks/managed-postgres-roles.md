@@ -94,9 +94,13 @@ to `gymos_migrator`, not merely declared for the future.
 -- whichever role currently owns the database's objects — typically the administrator login itself.
 REASSIGN OWNED BY CURRENT_USER TO gymos_migrator;
 
--- The database and its schemas are not "owned objects" in the sense REASSIGN OWNED covers — they
--- need their own ALTER. Adjust the schema list to whatever this instance actually has; `platform` is
--- GymOS's own schema, `public` is PostgreSQL's default one and usually still exists alongside it.
+-- REASSIGN OWNED covers schemas; it does NOT cover databases or tablespaces, which are the two
+-- exceptions PostgreSQL names. The database therefore needs its own ALTER. The two schema ALTERs
+-- are redundant when the administrator owned those schemas and the REASSIGN above succeeded — they
+-- are kept because ALTER ... OWNER TO is idempotent and this instance may have schemas owned by a
+-- role other than the one you are connected as, which REASSIGN OWNED BY CURRENT_USER does not
+-- touch. Adjust the schema list to whatever this instance actually has; `platform` is GymOS's own
+-- schema, `public` is PostgreSQL's default one and usually still exists alongside it.
 ALTER DATABASE gymos OWNER TO gymos_migrator;
 ALTER SCHEMA public   OWNER TO gymos_migrator;
 ALTER SCHEMA platform OWNER TO gymos_migrator;
@@ -110,6 +114,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO gymos_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator
     GRANT USAGE ON SCHEMAS TO gymos_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator
+    GRANT USAGE, SELECT ON SEQUENCES TO gymos_app;
 ```
 
 **Stop here and read this before considering the instance ready.** Default privileges are exactly
@@ -130,11 +136,41 @@ cover:
 -- one-time ownership transfer specifically.
 GRANT USAGE ON SCHEMA platform TO gymos_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platform TO gymos_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA platform TO gymos_app;
 ```
 
-If `public` also holds tables you expect `gymos_app` to read, repeat the last `GRANT` for `public` too.
-No sequence grants are needed for either schema: `GymOSModelConventions.ApplyClientAssignedKeys` makes
-every primary key client-assigned, so the database generates nothing from a sequence.
+If `public` also holds tables you expect `gymos_app` to read, repeat the last two `GRANT`s for
+`public` too.
+
+**On sequences.** An earlier version of this runbook said no sequence grants were needed, on the
+grounds that `GymOSModelConventions.ApplyClientAssignedKeys` makes every primary key client-assigned
+so "the database generates nothing from a sequence". That is true of the keys EF generates and false
+of the database as a whole: hand-written migration SQL creates sequences too —
+`platform.next_invoice_number` creates one per year and calls `nextval` on it. The grant above is
+included so a sequence reached directly is not a permission error.
+
+## Step 2b — grant EXECUTE on the two `SECURITY DEFINER` functions
+
+Two functions issue DDL on the application's behalf and therefore run as their owner rather than as
+the caller: `platform.next_invoice_number` creates a per-year sequence on the first invoice of a
+year, and `platform.ensure_audit_log_partitions` creates next month's audit partition. `gymos_app`
+holds no `CREATE` on `platform` and could not do either itself.
+
+Because they are `SECURITY DEFINER`, the `SecureRuntimeDdlFunctions` migration revokes the `EXECUTE`
+that `CREATE FUNCTION` grants to `PUBLIC` — otherwise every role in the database could run DDL as the
+schema owner through them — and grants it back to `gymos_app` specifically. **If your serving role is
+named `gymos_app`, that migration has already done this and you need do nothing here.** Run these
+only if this instance's serving role is named something else:
+
+```sql
+GRANT EXECUTE ON FUNCTION platform.next_invoice_number(integer) TO <your serving role>;
+GRANT EXECUTE ON FUNCTION platform.ensure_audit_log_partitions(date, integer) TO <your serving role>;
+```
+
+The symptom of skipping this is asymmetric, which is why it gets its own step: invoice issuance fails
+loudly with `42501` on the first invoice of a year, while audit partition maintenance fails at Error
+level in the log and nowhere else — audit writes keep succeeding into the DEFAULT partition, so
+nothing user-visible breaks until someone tries to detach a month.
 
 ## Step 3 — point the deployment at the new roles
 

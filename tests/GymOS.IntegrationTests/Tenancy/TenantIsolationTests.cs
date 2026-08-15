@@ -117,6 +117,29 @@ public sealed class TenantIsolationTests : IAsyncLifetime
             GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {AppRole};
         ALTER DEFAULT PRIVILEGES FOR ROLE {MigratorRole}
             GRANT USAGE ON SCHEMAS TO {AppRole};
+        ALTER DEFAULT PRIVILEGES FOR ROLE {MigratorRole}
+            GRANT USAGE, SELECT ON SEQUENCES TO {AppRole};
+        """;
+
+    /// <summary>
+    /// The two <c>SECURITY DEFINER</c> functions that issue DDL on the application's behalf
+    /// (<c>SecureRuntimeDdlFunctions</c>), granted to this suite's app role.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="CreateRolesSql"/> because it can only run <i>after</i> migrations:
+    /// the functions do not exist until then. The migration itself grants <c>EXECUTE</c> to
+    /// <c>gymos_app</c> — the deployment's name — and revokes the <c>PUBLIC</c> default that
+    /// <c>CREATE FUNCTION</c> hands out, because a <c>SECURITY DEFINER</c> function executable by
+    /// <c>PUBLIC</c> lends the owner's DDL rights to every role in the database. This suite's app
+    /// role is named for this suite, so it needs the same explicit grant a managed deployment with
+    /// its own role names needs (<c>docs/runbooks/managed-postgres-roles.md</c>). Without it the
+    /// host's startup partition maintenance fails on every boot of this suite — quietly, since that
+    /// maintainer is non-fatal by design.
+    /// </remarks>
+    private const string GrantRuntimeFunctionsSql =
+        $"""
+        GRANT EXECUTE ON FUNCTION platform.next_invoice_number(integer) TO {AppRole};
+        GRANT EXECUTE ON FUNCTION platform.ensure_audit_log_partitions(date, integer) TO {AppRole};
         """;
 
     private readonly PostgresFixture _postgres;
@@ -226,6 +249,9 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         {
             await migrator.Database.MigrateAsync();
         }
+
+        // After the migrations that create the functions, and as the migrator, which owns them.
+        await ExecuteAsync(_migratorConnectionString, GrantRuntimeFunctionsSql);
 
         // Before the host, not after: Program.cs runs the real validator during startup, and the probe
         // is a mapped ITenantScoped entity from this point on. An absent (or unprotected) probe table
@@ -558,6 +584,104 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheTwoFunctionsThatIssueDdlOnTheAppRoleSBehalfWorkAndStayContained()
+    {
+        // The gap the increment's own reviews could not see: taking DDL away from the serving role
+        // without auditing what runtime DDL it still performs. Two functions installed by earlier
+        // migrations create objects when the application calls them — platform.next_invoice_number
+        // creates that year's sequence on the first invoice of a year, and
+        // platform.ensure_audit_log_partitions creates next month's audit partition — and both were
+        // plain plpgsql, so both ran as the CALLER. As gymos_app, which holds no CREATE on platform,
+        // invoicing failed outright with 42501 and partition maintenance failed silently, its
+        // `EXCEPTION WHEN others` reporting the privilege error as a routine warning.
+        //
+        // This is the only harness where any of that is observable. Every other suite connects as a
+        // single role that owns everything it migrated, so both calls succeed there whether the fix
+        // exists or not — which is how the defect reached a review in the first place.
+        //
+        // ── Why four properties in one test method ────────────────────────────────────────────
+        // Not for brevity. xUnit builds a fresh instance of this class per test method, and each
+        // instance provisions its own database, migrates it, and boots a host — this suite's own
+        // comments record a previous split into four methods pushing the run past
+        // `max_connections=300` and failing ten tests elsewhere with 53300. Splitting these four
+        // assertions across four methods did exactly that again (123 failures across the suite);
+        // they share one arrangement and one failure mode, so they share an instance.
+        //
+        // Watched failing before being trusted: with the SecureRuntimeDdlFunctions migration's Up
+        // body emptied, the first assertion fails with `42501: permission denied for schema
+        // platform` and the catalog assertions fail on prosecdef.
+
+        // 1. The app role can call them at all, and they do the work.
+        long invoiceNumber = await ScalarAsAppRoleAsync<long>(
+            "SELECT platform.next_invoice_number(2026)");
+
+        Assert.Equal(1, invoiceNumber);
+
+        // A month far enough out that neither the migration's three-month lookahead nor the host's
+        // own startup maintenance has already created it — otherwise the function returns 0 for the
+        // uninteresting reason that there was nothing to do, and the privilege is never exercised.
+        int created = await ScalarAsAppRoleAsync<int>(
+            "SELECT platform.ensure_audit_log_partitions(date '2099-01-01', 0)");
+
+        Assert.Equal(1, created);
+
+        await using var connection = new NpgsqlConnection(_migratorConnectionString);
+        await connection.OpenAsync();
+
+        // 2. SECURITY DEFINER bought the app role the right to CALL them. It must not have handed it
+        // ownership of what they produce, or the two-role split would be undone by the very fix that
+        // made invoicing work — an owner can ALTER its own table's isolation off. The objects belong
+        // to the definer, which is the migrator.
+        await using (NpgsqlCommand owner = connection.CreateCommand())
+        {
+            owner.CommandText =
+                """
+                SELECT pg_get_userbyid(c.relowner)
+                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'platform' AND c.relname = 'invoice_number_seq_2026'
+                """;
+
+            Assert.Equal(MigratorRole, (string)(await owner.ExecuteScalarAsync())!);
+        }
+
+        // 3 and 4. The two properties that make SECURITY DEFINER safe rather than a
+        // privilege-escalation vector, read from the catalog rather than from the migration's text.
+        // An unpinned search_path lets a caller point the elevated function at a schema it writes
+        // and have its own code run as the schema owner. EXECUTE left at the CREATE FUNCTION default
+        // — PUBLIC — lends that same elevation to every role in the database. Either alone turns the
+        // fix into a worse defect than the one it fixed.
+        await using NpgsqlCommand definers = connection.CreateCommand();
+        definers.CommandText =
+            """
+            SELECT p.proname,
+                   p.prosecdef,
+                   coalesce(array_to_string(p.proconfig, ','), '') LIKE '%search_path=%' AS path_pinned,
+                   has_function_privilege('public', p.oid, 'EXECUTE') AS public_may_execute
+            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'platform'
+              AND p.proname IN ('next_invoice_number', 'ensure_audit_log_partitions')
+            ORDER BY p.proname
+            """;
+
+        var inspected = new List<string>();
+
+        await using (NpgsqlDataReader reader = await definers.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                string name = reader.GetString(0);
+                inspected.Add(name);
+
+                Assert.True(reader.GetBoolean(1), $"{name} is not SECURITY DEFINER.");
+                Assert.True(reader.GetBoolean(2), $"{name} does not pin its search_path.");
+                Assert.False(reader.GetBoolean(3), $"{name} is executable by PUBLIC.");
+            }
+        }
+
+        Assert.Equal(["ensure_audit_log_partitions", "next_invoice_number"], inspected);
+    }
+
+    [Fact]
     public async Task TheHarnessRoleIsNotExemptFromRowLevelSecurity()
     {
         // The premise every other test in this suite rests on. If the harness silently handed back a
@@ -817,6 +941,18 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         command.CommandText = "SELECT count(*) FROM platform.tenant_probe";
 
         return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>Runs a single-value query on the app-role connection and returns its result.</summary>
+    private async Task<T> ScalarAsAppRoleAsync<T>(string sql)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        await using NpgsqlCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+
+        return (T)(await command.ExecuteScalarAsync())!;
     }
 
     private static async Task ExecuteAsync(string connectionString, string sql)

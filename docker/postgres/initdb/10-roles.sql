@@ -61,5 +61,17 @@ ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator
 ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator
     GRANT USAGE ON SCHEMAS TO gymos_app;
 
--- No sequence grants: GymOSModelConventions.ApplyClientAssignedKeys makes every key client-assigned,
--- so the database generates nothing.
+-- Sequences. This line used to be a comment saying no sequence grants were needed, because
+-- GymOSModelConventions.ApplyClientAssignedKeys makes every key client-assigned and "the database
+-- generates nothing". That reasoning covers the keys EF generates and nothing else: hand-written
+-- migration SQL creates sequences too. platform.next_invoice_number creates one per year and calls
+-- nextval on it, and gymos_app held no sequence privilege of any kind — the first invoice of a year
+-- failed outright.
+--
+-- Note what does and does not fix that. Invoice numbering reaches its sequence through a
+-- SECURITY DEFINER function (migration SecureRuntimeDdlFunctions), so it runs as the sequence's
+-- owner and would work without this grant. This is here for the next sequence, which will not
+-- necessarily arrive behind a function — and so the file no longer states, wrongly, that nothing in
+-- this database is ever generated.
+ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator
+    GRANT USAGE, SELECT ON SEQUENCES TO gymos_app;
