@@ -2069,9 +2069,21 @@ been exercised against a real grant.
     every interpolation with `%I`/`%L`, so no arbitrary DDL is reachable — but the runbook should have
     the operator check `pg_get_userbyid(proowner)` for both functions.
 
-- **BLOCKS MEMBERS, AND MUST BE ITS FIRST TASK: `PostgresFixture` has to move to the
-  migrator/app shape for the whole integration suite, *before* the first production `ITenantScoped`
-  entity exists — not alongside it.** `TenantIsolationValidator` builds its table list from
+- ~~**BLOCKS MEMBERS, AND MUST BE ITS FIRST TASK: `PostgresFixture` has to move to the
+  migrator/app shape for the whole integration suite.**~~ **Done 2026-08-15 (`7a75dc5`), suite green at
+  313.** The fixture now builds `gymos_test_migrator` and `gymos_test_app`, applies the deployment's
+  `ALTER DEFAULT PRIVILEGES` grants and the `EXECUTE` grants on the two `SECURITY DEFINER` functions,
+  and migrates each database as the migrator before handing back an app connection string;
+  `AuthenticationHost` no longer migrates. **What it surfaced is the part worth keeping: nine suites
+  were doing their own DDL and only worked because one role owned everything** — eight migrated
+  themselves redundantly, `OutboxCaptureTests` calls `EnsureCreated`, `AuditLogPartitioningTests`
+  detaches a partition. Each now uses the migrator explicitly. Three consequences were changes rather
+  than breakage: a fresh database is no longer unmigrated, so the two tests needing that state ask for
+  it by name (`CreateUnmigratedDatabaseAsync`); `MigrateOnly` now runs as the migrator against an empty
+  database, which is the arrangement it exists for; and pooled connections are returned after 15s
+  instead of Npgsql's default 300s, because the cap bounds each pool while nothing bounds the number of
+  pools and migrating every database pushed the run past `max_connections`. The original reasoning,
+  kept because it is why this had to come first: `TenantIsolationValidator` builds its table list from
   `_dbContext.Model`, so the check is **model-driven, not usage-driven**: the moment any production
   entity implements `ITenantScoped`, `TenantScopedTables()` is non-empty in **every** host that
   builds the model — all ~312 integration tests' worth — whether or not that suite ever reads the

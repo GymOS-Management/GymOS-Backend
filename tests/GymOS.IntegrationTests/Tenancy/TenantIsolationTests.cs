@@ -456,9 +456,17 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         }
         finally
         {
-            // Revoked in a finally: the roles outlive this database (they are created once per
-            // container), so a leaked membership would silently disarm TheAppRoleCannotDisableItsOwnIsolation
-            // in whichever test happened to run next.
+            // Revoked in a finally, and the stakes went up when the roles moved into PostgresFixture:
+            // they are created once per container and now serve EVERY suite, not just this one. A leaked
+            // membership would not merely disarm TheAppRoleCannotDisableItsOwnIsolation — it would make
+            // the app role an owner everywhere, so every host booted afterwards would fail
+            // TenantIsolationValidator's ownership check and the run would collapse into unrelated
+            // failures.
+            //
+            // Two things keep that from being fragile: this collection is serialised by xUnit, so no
+            // other suite is mid-flight while the grant is held, and the revoke runs even if the
+            // assertions throw. What it does not survive is the process dying between the two, which is
+            // a torn-down container and a fresh one next run.
             await ExecuteAsync(_bootstrapConnectionString, $"REVOKE {MigratorRole} FROM {AppRole};");
         }
     }
