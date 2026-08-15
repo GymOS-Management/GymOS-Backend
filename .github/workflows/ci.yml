@@ -91,6 +91,8 @@ jobs:
           POSTGRES_PASSWORD: ci-not-a-real-password
           GYMOS_JWT_SIGNING_KEY: ci-not-a-real-signing-key-at-least-32-bytes
           API_IMAGE: gymos-api:ci
+          GYMOS_MIGRATOR_PASSWORD: ci-not-a-real-migrator-password
+          GYMOS_APP_PASSWORD: ci-not-a-real-app-password
         run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
 
       # The fail-fast markers are load-bearing, so they are tested rather than trusted:
