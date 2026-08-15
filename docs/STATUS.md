@@ -20,7 +20,12 @@ remark overstated what it changed, and the managed-Postgres runbook verified `da
 found that the design's §4 wording could not be honoured: it says "clear on dispose", but
 `TenantContext.SetTenant` refuses a re-point and offers no reset by design, so the helper owns a DI
 scope per gym instead and lets the scope's death do the clearing. **What Members still needs is one
-thing, not two:** no gym-scoped grant can be issued through the API at all.
+thing, and it is bigger than it looked:** no gym-scoped grant can be issued through the API — and
+issuing one against today's permission evaluator would be a **privilege-escalation defect**, because
+`GetEffectivePermissionsAsync` filters on `UserId` alone, so a gym-scoped grant would confer its role's
+permissions platform-wide. That is now **designed and approved, not built**
+(`docs/superpowers/specs/2026-08-15-gym-scoped-grants-design.md`), with a build order that never opens
+the window; Members carries it. See "Known open items".
 
 **Previously (2026-08-15, the roles themselves):** **R14's isolation now actually filters — the superuser gap is closed.**
 The deployment-half increment (`docs/superpowers/specs/2026-08-15-database-roles-design.md`) replaced
@@ -2119,14 +2124,34 @@ been exercised against a real grant.
   `ITenantScoped`, so it runs — and would refuse the boot — on every start, not only the day `members`
   lands. Reasoning in `docs/BusinessRules/TenantIsolation.md`.
 
-- **A gym-scoped grant cannot be issued through the API at all (R14 close-out).**
+- **A gym-scoped grant cannot be issued through the API at all (R14 close-out) — and a 2026-08-15
+  design pass found that issuing one today would be a privilege-escalation defect, not a gap.**
   `SetUserRolesCommandHandler` rejects any attempt at a non-platform-scoped role and only ever writes
   `UserRole.TenantId = null`, so every grant any role holds today is platform-wide. That is the real
   reason `TenantResolutionMiddleware`'s grant check — built and integration-tested in this increment —
   has never had a gym-scoped grant to check against; the existing suite is entirely platform-scope
-  callers, which is also why the middleware is provably inert against it. The Members increment needs a
-  way to create a gym-scoped grant; it does not exist yet. Reasoning in
-  `docs/BusinessRules/TenantIsolation.md`.
+  callers, which is also why the middleware is provably inert against it.
+  **Three findings, all read from the code rather than reasoned about:** (1)
+  `IdentityQueries.GetEffectivePermissionsAsync` filters on `UserId` alone and `UserSecuritySnapshot`
+  carries a flat permission list with no tenant, so a `UserRole` row with a `TenantId` would confer its
+  role's permissions on **every** route, platform ones included; (2) `TenantResolutionMiddleware` runs
+  *after* `UseAuthorization()`, so the endpoint policy is evaluated before any tenant is resolved while
+  `AuthorizationBehavior` runs after it — making the evaluator tenant-aware breaks M1.3's "both layers
+  read the same evaluator, so they cannot disagree" unless the ordering changes first; (3) no
+  tenant-scoped `Role` can exist at all, because the only `Role.Create` call in `src/` is
+  `PlatformIdentitySeeder`, always `RoleScope.Platform` — a grant endpoint would have nothing to grant.
+  **Designed and approved, deliberately not built:**
+  `docs/superpowers/specs/2026-08-15-gym-scoped-grants-design.md`. Ten decisions, chief among them that
+  tenant resolution moves between `UseAuthentication()` and `UseAuthorization()` (its current placement
+  is justified by a reason that does not hold — reading grants needs the authenticated *identity*, which
+  authentication already supplies), that effective permissions become the union of platform-wide grants
+  and grants naming the acting tenant, and that per-gym roles are provisioned with the gym. The build
+  order is chosen so the escalation window never opens: ordering, then evaluation, then issuance.
+  **The Members increment builds it** — it brings the first `ITenantScoped` entity and is the only
+  increment that can prove it end to end. One claim in the spec is marked as taken from framework
+  documentation rather than observed (that `WebApplication` inserts `UseRouting` at the head of the
+  pipeline, so route values exist at authentication time); step 1 must confirm it before the reorder is
+  trusted.
 
 - ~~**`TenantScope` is owed, not built (R14 close-out).**~~ **Built 2026-08-15**, TDD, six unit tests in
   `GymOS.BuildingBlocks.UnitTests`; build 0 warnings, `dotnet format` exit 0.

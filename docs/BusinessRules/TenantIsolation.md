@@ -251,12 +251,22 @@ by the database-roles increment (2026-08-15).** The API now connects as `gymos_a
 (`NOSUPERUSER NOBYPASSRLS`, owns nothing); see "The three database roles" and "Why `FORCE` is mandatory",
 above.
 
-- **No gym-scoped grant can be issued through the API yet.** `SetUserRolesCommandHandler` rejects any
-  attempt at a non-platform-scoped role and only ever writes `UserRole.TenantId = null`, so every grant
-  any role holds today is platform-wide. That is the real reason `TenantResolutionMiddleware`'s grant
-  check has never had a gym-scoped grant to check against — the existing test suite is entirely
-  platform-scope callers. The Members increment needs a way to create a gym-scoped grant; it does not
-  exist yet.
+- **No gym-scoped grant can be issued through the API yet — and issuing one today would be a
+  privilege-escalation defect, not merely a gap.** `SetUserRolesCommandHandler` rejects any attempt at a
+  non-platform-scoped role and only ever writes `UserRole.TenantId = null`, so every grant any role
+  holds today is platform-wide. That is the real reason `TenantResolutionMiddleware`'s grant check has
+  never had a gym-scoped grant to check against — the existing test suite is entirely platform-scope
+  callers. **What a 2026-08-15 design pass found is that the write path is the small part:**
+  `IdentityQueries.GetEffectivePermissionsAsync` filters on `UserId` alone and `UserSecuritySnapshot`
+  has no tenant dimension, so a gym-scoped grant would confer its role's permissions on *every* route;
+  and `TenantResolutionMiddleware` runs after `UseAuthorization()`, so the endpoint policy and the
+  pipeline behavior could not both see the acting tenant. On top of that, nothing can create a
+  tenant-scoped `Role` at all — the only `Role.Create` call in `src/` is the seeder, always
+  `RoleScope.Platform`.
+  **Designed, not built:** `docs/superpowers/specs/2026-08-15-gym-scoped-grants-design.md` carries the
+  decisions (tenant resolution moves between authentication and authorization; permissions become the
+  union of platform grants and grants naming the acting tenant; per-gym roles provisioned with the gym)
+  and a build order in which the escalation window never opens. The Members increment builds it.
 - ~~**`TenantScope` is owed.**~~ **Built 2026-08-15** (`BuildingBlocks.Application/Tenancy`), six unit
   tests. It owns a DI scope per gym rather than clearing an ambient context — see "Where the tenant
   comes from", above, for why the design's "clear on dispose" could not be built as written. **It has
