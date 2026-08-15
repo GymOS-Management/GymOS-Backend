@@ -469,6 +469,43 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GrantingTheAppRoleMembershipInTheMigratorFailsTheBoot()
+    {
+        // The ownership check must test effective privilege, not name equality. `GRANT migrator TO app`
+        // is a plausible way for a future increment to "fix" a permission error, and nothing in
+        // 10-roles.sql forbids it — but it hands the app role the owner's rights, so
+        // ALTER TABLE ... NO FORCE comes back within reach while `current_user` still reads as the app
+        // role. A check written as `pg_get_userbyid(relowner) = current_user` reports clean through
+        // exactly that, which is the green-while-proving-nothing shape this increment exists to remove.
+        await CreateProbeAsync(TenantProbeSchema.CreateSql);
+        await ExecuteAsync(_bootstrapConnectionString, $"GRANT {MigratorRole} TO {AppRole};");
+
+        try
+        {
+            // First, that the risk is real rather than theoretical: the statement PostgreSQL refused
+            // the app role in TheAppRoleCannotDisableItsOwnIsolation now succeeds, because membership
+            // is inherited by default. Restored immediately, so the assertion below is about ownership
+            // and not about the flag this line just cleared.
+            await ExecuteAsAppRoleAsync("ALTER TABLE platform.tenant_probe NO FORCE ROW LEVEL SECURITY;");
+            await ExecuteAsMigratorRoleAsync("ALTER TABLE platform.tenant_probe FORCE ROW LEVEL SECURITY;");
+
+            // And that the validator sees it. `current_user` is still the app role throughout, so only
+            // a check written in terms of effective privilege can catch this.
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => ValidatorAsync().ValidateAsync(CancellationToken.None));
+
+            Assert.Contains("owns", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            // Revoked in a finally: the roles outlive this database (they are created once per
+            // container), so a leaked membership would silently disarm TheAppRoleCannotDisableItsOwnIsolation
+            // in whichever test happened to run next.
+            await ExecuteAsync(_bootstrapConnectionString, $"REVOKE {MigratorRole} FROM {AppRole};");
+        }
+    }
+
+    [Fact]
     public async Task TheAppRoleCannotDisableItsOwnIsolation()
     {
         // The reason for two roles rather than one non-superuser role. An owner can turn FORCE off in a
@@ -487,11 +524,18 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     {
         // The control for the test above: it must fail for a privilege reason, not because the statement
         // is malformed, the table is missing, or the connection is broken.
+        //
+        // The flag is read back rather than letting "no exception" stand as the pass condition. Not
+        // throwing is an implicit assertion, and an implicit assertion is one a later `try`/`catch`
+        // around ExecuteAsMigratorRoleAsync would neuter in silence — leaving a control that passes
+        // unconditionally and therefore certifies nothing about the test it exists to support.
         await CreateProbeAsync(TenantProbeSchema.CreateSql);
 
         await ExecuteAsMigratorRoleAsync("ALTER TABLE platform.tenant_probe NO FORCE ROW LEVEL SECURITY;");
+        Assert.False(await ProbeIsForcedAsync());
 
         await ExecuteAsMigratorRoleAsync("ALTER TABLE platform.tenant_probe FORCE ROW LEVEL SECURITY;");
+        Assert.True(await ProbeIsForcedAsync());
     }
 
     [Fact]
@@ -733,6 +777,26 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         command.CommandText =
             """
             SELECT pg_get_userbyid(c.relowner) = current_user
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'platform' AND c.relname = 'tenant_probe'
+            """;
+
+        return (bool)(await command.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>
+    /// Whether the probe table currently has <c>FORCE ROW LEVEL SECURITY</c> set, read straight from
+    /// <c>pg_class</c> — so a test that changes the flag can assert it actually changed.
+    /// </summary>
+    private async Task<bool> ProbeIsForcedAsync()
+    {
+        await using var connection = new NpgsqlConnection(_migratorConnectionString);
+        await connection.OpenAsync();
+
+        await using NpgsqlCommand command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT c.relforcerowsecurity
             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = 'platform' AND c.relname = 'tenant_probe'
             """;

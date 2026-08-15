@@ -14,8 +14,12 @@ internal static class TenantProbeSchema
 
         ALTER TABLE platform.tenant_probe ENABLE ROW LEVEL SECURITY;
 
-        -- Without FORCE the owner — which is how this application connects — bypasses the policy
-        -- below entirely, and every isolation test would pass while filtering nothing (D5).
+        -- FORCE governs the OWNER, which is the migrator role: PostgreSQL exempts a table's owner from
+        -- its own policies, so without this the migrator's reads filter nothing (D5). The app role is
+        -- subject to the policy because it is not the owner, with or without FORCE — so FORCE is not
+        -- what protects the request path here. It is what stops the role that runs DDL from quietly
+        -- reading across every tenant, and what has to be true for the boot validator to accept the
+        -- table at all. See TheOwnerDoesNotBypassThePolicy, which observes it through the migrator.
         ALTER TABLE platform.tenant_probe FORCE ROW LEVEL SECURITY;
 
         DROP POLICY IF EXISTS tenant_probe_isolation ON platform.tenant_probe;

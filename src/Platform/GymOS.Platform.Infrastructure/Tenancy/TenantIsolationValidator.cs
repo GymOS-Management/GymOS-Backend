@@ -33,7 +33,9 @@ namespace GymOS.Platform.Infrastructure.Tenancy;
 /// statement — well within reach of the SQL injection row-level security mostly exists to contain.
 /// Two roles is what removes that: <c>gymos_migrator</c> owns the schema and runs DDL,
 /// <c>gymos_app</c> owns nothing and serves requests. This asserts that separation rather than
-/// trusting the deployment to have kept it.</para>
+/// trusting the deployment to have kept it — and asks whether the connected role can <i>act as</i> the
+/// owner, not whether it is <i>named</i> the owner, because a granted membership in the owning role
+/// confers the same power while leaving <c>current_user</c> unchanged.</para>
 /// <para><b>Its remaining skip path says so out loud.</b> The pending-migrations return switches this
 /// control off entirely, and a security control that turns itself off must not do it silently. A
 /// deployment with <c>MigrateOnStartup=false</c> and a migration left pending would otherwise disable
@@ -177,8 +179,18 @@ public sealed partial class TenantIsolationValidator
         // `relrowsecurity` alone passes on a table whose policies never filter a single row for the
         // owner (D5) — and `gymos_migrator` does own every table here.
         //
-        // The new column goes LAST on purpose: every GetBoolean/GetInt64 below indexes this SELECT
-        // positionally, so inserting anywhere else would silently re-point four existing checks.
+        // `owned_by_connected_role` goes LAST on purpose: every GetBoolean/GetInt64 below indexes this
+        // SELECT positionally, so inserting anywhere else would silently re-point four existing checks.
+        //
+        // It asks `pg_has_role`, not `pg_get_userbyid(c.relowner) = current_user`. The name comparison
+        // reads correctly and is wrong: `GRANT gymos_migrator TO gymos_app` — a plausible way to make a
+        // permission error go away, and nothing forbids it — hands the app role the owner's rights
+        // through inherited membership while `current_user` still reads `gymos_app`. The connected role
+        // could then execute ALTER TABLE ... NO FORCE and this check would report clean. `pg_has_role`
+        // with USAGE is true both when the role IS the owner and when it has been granted membership in
+        // it, which is the question actually worth asking: not "is it named the owner" but "can it act
+        // as the owner". Confirmed by test, not by reading the docs — see
+        // GrantingTheAppRoleMembershipInTheMigratorFailsTheBoot.
         await using var command = _dbContext.Database.GetDbConnection().CreateCommand();
         command.CommandText =
             """
@@ -190,7 +202,7 @@ public sealed partial class TenantIsolationValidator
                  WHERE col.table_schema = n.nspname
                    AND col.table_name = c.relname
                    AND col.column_name = 'tenant_id') AS has_tenant_id,
-                pg_get_userbyid(c.relowner) = current_user AS owned_by_connected_role
+                pg_has_role(current_user, c.relowner, 'USAGE') AS owned_by_connected_role
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = @schema AND c.relname = @table
@@ -248,10 +260,11 @@ public sealed partial class TenantIsolationValidator
             if (reader.GetBoolean(4))
             {
                 problems.Add(
-                    $"  {schema}.{table}: the connected role owns this table, so it can execute " +
-                    "ALTER TABLE ... NO FORCE ROW LEVEL SECURITY and switch the table's own " +
-                    "isolation off. Migrations must run as a role that is not the one serving " +
-                    "requests.");
+                    $"  {schema}.{table}: the connected role owns this table — directly, or through " +
+                    "membership in the role that does — so it can execute ALTER TABLE ... NO FORCE " +
+                    "ROW LEVEL SECURITY and switch the table's own isolation off. Migrations must " +
+                    "run as a role that is not the one serving requests, and the role serving " +
+                    "requests must not be a member of it.");
             }
         }
         finally
