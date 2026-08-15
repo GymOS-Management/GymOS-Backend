@@ -118,7 +118,7 @@ security even given an SQL injection. Two endpoints matter to infrastructure:
 | Endpoint | Checks | Used for |
 |---|---|---|
 | `/health/live` | nothing, by design | Liveness. "The process is up." A dependency outage must not make the orchestrator kill a healthy process. |
-| `/health/ready` | database connectivity | Readiness, and what `depends_on: service_healthy` and the container `HEALTHCHECK` use. |
+| `/health/ready` | the database is reachable **and** its schema matches this build's migrations | Readiness, and what `depends_on: service_healthy` and the container `HEALTHCHECK` use. |
 
 Those map one-to-one onto Kubernetes `livenessProbe` and `readinessProbe`, which is why the split
 exists before there is a Kubernetes.
@@ -191,10 +191,16 @@ file-based default, do not give it an empty compose default.
 | `GYMOS_JWT_SIGNING_KEY` | unset; file fallback applies | **required**, ≥32 bytes, validated at start-up |
 | `API_IMAGE` | built from source | **required** — production runs the artefact CI tested |
 | `GYMOS_SEED_ADMIN_*` | `admin@gymos.local` / `gymos-dev-admin-password` | set for a new environment's first deploy, then unset |
-| `GYMOS_MIGRATE_ON_STARTUP` | `false` — migrations are the `migrator` service's job, not the API's, in every environment (§2, §6) | `false`, same reason |
 | `GYMOS_FORWARDED_HEADERS_ENABLED` | `false` | `true` behind a proxy, or the rate limiter sees one bucket for everyone |
 
 Generate a signing key with `openssl rand -base64 48`.
+
+**`GYMOS_MIGRATE_ON_STARTUP` no longer exists.** `docker-compose.yml` hard-codes
+`Database__MigrateOnStartup: 'false'` on the API with nothing interpolated behind it. Migrations are
+the `migrator` service's job in every environment (§2, §6), and the API connects as `gymos_app`,
+which holds no DDL rights — so the variable could only ever have produced a failed migration on every
+boot. It was removed rather than left defaulting to `false` because an older `.env.example` shipped it
+as `true`, and a `.env` copied from that version would have kept setting it.
 
 ---
 
@@ -423,7 +429,10 @@ migrations as a side effect of a container starting: bring the stack up with `do
 (the `migrator` service applies them and exits before `api` starts — see §2, §6) rather than starting
 `api` on its own, or check `docker compose logs migrator` if it already ran and this still appears.
 `SuperAdminSeeder` and `PlatformIdentitySeeder` both skip with a clear warning when migrations are
-pending rather than throwing this.
+pending rather than throwing this. As of the readiness change described in §2, an `api` container in
+that state also reports **unhealthy** rather than healthy, so `docker compose ps` shows the problem
+without anyone reading a log — the readiness check asks whether the schema is current, not merely
+whether the database answers.
 
 **API is `unhealthy`, logs mention `SigningKey field is required`**
 Something set `Security__Jwt__SigningKey` to an empty value, which overrides the file-based

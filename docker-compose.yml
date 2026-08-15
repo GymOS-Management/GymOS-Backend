@@ -170,10 +170,16 @@ services:
       # rather than defaulted to empty here, for the precedence reason above.
       Serilog__MinimumLevel__Default: ${GYMOS_LOG_LEVEL:-Information}
 
-      # Off by default. Applying schema changes as a side effect of a container starting means a
-      # rolling deployment can run two migrations concurrently; the overlay files decide, and
-      # docs/Infrastructure/DOCKER.md gives the one-shot command production uses instead.
-      Database__MigrateOnStartup: ${GYMOS_MIGRATE_ON_STARTUP:-false}
+      # Hard-coded `false`, with no environment variable behind it. Migrations belong to the one-shot
+      # `migrator` service below, which connects as gymos_migrator; this container connects as
+      # gymos_app, which holds no DDL rights at all, so turning this on now produces a failed
+      # migration rather than a migrated database.
+      #
+      # It used to read ${GYMOS_MIGRATE_ON_STARTUP:-false}, and that variable's value in an older
+      # .env.example was `true`. A developer with a stale .env would have had this container attempt
+      # DDL as gymos_app on every boot. Removing the interpolation is what makes the stale value
+      # inert; the variable is gone from .env.example and DOCKER.md too, so nothing reintroduces it.
+      Database__MigrateOnStartup: 'false'
 
     volumes:
       # ASP.NET writes DataProtection keys on start-up. With a read-only root filesystem and no
