@@ -20,8 +20,8 @@ public sealed class PlatformStatsPersistenceTests : IAsyncLifetime
         string connectionString = await _postgres.CreateIsolatedDatabaseAsync("platform_stats");
         _host = new PlatformStatsHost(connectionString);
 
-        await using AppDbContext context = _host.CreateDbContext();
-        await context.Database.MigrateAsync();
+        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
     public Task DisposeAsync() => Task.CompletedTask;

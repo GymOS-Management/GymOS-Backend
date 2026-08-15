@@ -25,19 +25,22 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         {
             builder.UseSetting("ConnectionStrings:Database", _postgres.ConnectionString);
 
-            // Migrate, like every other host in this suite does through AuthenticationHost.Create.
+            // No `Database:MigrateOnStartup` here, deliberately, and this used to say the opposite.
             //
-            // This host used to set only the connection string, which left it on
+            // The history is worth keeping, because it is why the assertion is trustworthy now. This
+            // host originally set only the connection string, leaving it on
             // appsettings.Development.json's `MigrateOnStartup: false` — so it migrated nothing and
-            // borrowed whatever state some earlier suite had left in the container's shared default
-            // database. HealthReady_Returns200_AgainstTheRealDatabase passed anyway, because
-            // readiness asked CanConnectAsync, which an empty database answers yes to. Since
-            // readiness now also asks whether the schema is current
-            // (DatabaseReadinessHealthCheck), that borrowed state is the difference between 200 and
-            // 503, and the test would pass or fail on execution order. Migrating here is idempotent
-            // — the shared database is normally already migrated — and it makes the test assert
-            // "healthy against a real, migrated database", which is what its name claims.
-            builder.UseSetting("Database:MigrateOnStartup", "true");
+            // borrowed whatever state an earlier suite had left in the container's shared default
+            // database. HealthReady_Returns200_AgainstTheRealDatabase passed anyway, because readiness
+            // asked CanConnectAsync, which an empty database answers yes to. Once readiness also began
+            // asking whether the schema is current (DatabaseReadinessHealthCheck), that borrowed state
+            // became the difference between 200 and 503, and the test would have passed or failed on
+            // execution order — so this host was made to migrate itself.
+            //
+            // It no longer can: the role every host connects as owns nothing and holds no DDL.
+            // PostgresFixture migrates the default database in InitializeAsync instead, so the
+            // guarantee this comment has always been about — a real, migrated database, not a borrowed
+            // one — now holds for every suite rather than for this one because it asked.
         });
 
         _client = _factory.CreateClient();

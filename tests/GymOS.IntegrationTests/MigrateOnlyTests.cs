@@ -19,10 +19,16 @@ public sealed class MigrateOnlyTests
         // The migrator's whole job is DDL. If it also seeded, those rows would be written by the role
         // that owns the schema rather than the one that serves requests — and the seeders would run
         // twice in the deployment, once here and once when the API boots.
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("migrate_only");
+        // An empty database, and the migrator's credentials — which is the arrangement this mode
+        // exists for. In the deployment the `migrator` compose service runs it as `gymos_migrator`
+        // against a database nothing has touched; handing it the app role's connection string would
+        // fail on `permission denied for schema public` long before it could seed anything, and a
+        // pre-migrated database would leave it with nothing to do.
+        string connectionString = await _postgres.CreateUnmigratedDatabaseAsync("migrate_only");
 
-        await MigrateOnlyAsync(connectionString);
+        await MigrateOnlyAsync(PostgresFixture.AsMigrator(connectionString));
 
+        // Read back as the app role, which is what the API would connect as afterwards.
         await using AppDbContext context = CreateContext(connectionString);
 
         Assert.Empty(await context.Database.GetPendingMigrationsAsync());

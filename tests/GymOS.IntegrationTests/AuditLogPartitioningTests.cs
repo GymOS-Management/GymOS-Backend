@@ -25,12 +25,15 @@ public sealed class AuditLogPartitioningTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
+    /// <summary>Kept for the one statement in this suite that needs the migrator: DETACH PARTITION.</summary>
+    private string _connectionString = null!;
+
     public AuditLogPartitioningTests(PostgresFixture postgres) => _postgres = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("audit_partitions");
-        _host = AuthenticationHost.Create(connectionString);
+        _connectionString = await _postgres.CreateIsolatedDatabaseAsync("audit_partitions");
+        _host = AuthenticationHost.Create(_connectionString);
         _client = _host.CreateClient();
 
         using HttpResponseMessage ready = await _client.GetAsync(new Uri("/health/ready", UriKind.Relative));
@@ -243,9 +246,21 @@ public sealed class AuditLogPartitioningTests : IAsyncLifetime
         // It came from pg_catalog, but checking the shape keeps that assumption explicit.
         Assert.Matches(@"^platform\.audit_logs_\d{4}_\d{2}$", currentPartition);
 
+        // DETACH requires ownership of the parent, so it goes over a migrator connection rather than
+        // through dbContext — which connects as the app role, owns nothing, and is refused with
+        // `42501: must be owner of table audit_logs`. That refusal is the arrangement working, not an
+        // obstacle: in the deployment this statement belongs to the retention job's DDL path, never to
+        // the role serving requests.
+        await using (var migrator = new Npgsql.NpgsqlConnection(PostgresFixture.AsMigrator(_connectionString)))
+        {
+            await migrator.OpenAsync();
+
+            await using var detach = migrator.CreateCommand();
+            detach.CommandText = "ALTER TABLE platform.audit_logs DETACH PARTITION " + currentPartition;
+            await detach.ExecuteNonQueryAsync();
+        }
+
 #pragma warning disable EF1002, EF1003 // Validated identifier above; DDL admits no parameter here.
-        await dbContext.Database.ExecuteSqlRawAsync(
-            "ALTER TABLE platform.audit_logs DETACH PARTITION " + currentPartition);
 
         Assert.Equal(0, await dbContext.Set<AuditLog>().CountAsync());
 

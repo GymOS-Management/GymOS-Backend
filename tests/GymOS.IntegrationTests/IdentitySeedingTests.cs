@@ -24,8 +24,8 @@ public sealed class IdentitySeedingTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _connectionString = await _postgres.CreateDatabaseAsync("seeding_tests");
-        await using AppDbContext context = CreateContext();
-        await context.Database.MigrateAsync();
+        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
     public Task DisposeAsync() => Task.CompletedTask;

@@ -58,9 +58,8 @@ public sealed class IdempotencyPipelineTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _connectionString = await _postgres.CreateIsolatedDatabaseAsync("idempotency_pipeline");
-        await using ServiceProvider provider = BuildProvider();
-        await using AsyncServiceScope scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
+        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
     public Task DisposeAsync() => Task.CompletedTask;

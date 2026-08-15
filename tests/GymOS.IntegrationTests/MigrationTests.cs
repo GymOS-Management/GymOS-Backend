@@ -15,17 +15,30 @@ public sealed class MigrationTests
     [Fact]
     public async Task Migrations_ApplyCleanly_AndAreIdempotent()
     {
-        string connectionString = await _postgres.CreateDatabaseAsync("migration_tests");
-        DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+        // The one suite that must migrate for itself, because applying migrations *is* its subject.
+        // It therefore asks for a database the fixture has deliberately left empty, and connects as the
+        // migrator — the app role every other suite uses owns nothing and holds no DDL.
+        string appConnectionString = await _postgres.CreateUnmigratedDatabaseAsync("migration_tests");
+
+        DbContextOptions<AppDbContext> migratorOptions = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(
+                PostgresFixture.AsMigrator(appConnectionString),
+                npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
             .UseSnakeCaseNamingConvention()
             .Options;
 
-        await using (var context = new AppDbContext(options))
+        await using (var context = new AppDbContext(migratorOptions))
         {
             await context.Database.MigrateAsync();
             await context.Database.MigrateAsync(); // second run must be a no-op
         }
+
+        // Read back as the app role: the tables must be reachable by the role that actually serves
+        // requests, which is a stronger statement than the migrator being able to see what it created.
+        DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(appConnectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSnakeCaseNamingConvention()
+            .Options;
 
         await using (var context = new AppDbContext(options))
         {

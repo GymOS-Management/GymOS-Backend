@@ -76,7 +76,10 @@ internal sealed class AuthenticationHost : IAsyncDisposable
         var settings = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["ConnectionStrings:Database"] = connectionString,
-            ["Database:MigrateOnStartup"] = "true",
+            // False, because the role this host connects as cannot run DDL — PostgresFixture migrates
+            // each database as the migrator before handing back an app connection string, exactly as
+            // the deployment's one-shot migrator service does before the API starts.
+            ["Database:MigrateOnStartup"] = "false",
             ["Security:Jwt:SigningKey"] = SigningKey,
             ["Seed:SuperAdmin:Email"] = SuperAdminEmail,
             ["Seed:SuperAdmin:Password"] = SuperAdminPassword,

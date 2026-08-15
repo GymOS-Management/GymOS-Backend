@@ -52,7 +52,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// The role that owns this suite's database, its schemas and its tables, and applies migrations —
     /// the local stand-in for <c>gymos_migrator</c>. Nothing connects as it to serve a request.
     /// </summary>
-    private const string MigratorRole = "gymos_tenant_isolation_migrator";
+    private const string MigratorRole = PostgresFixture.MigratorRole;
 
     /// <summary>
     /// The role the host, the validator and every isolation test connect as — the local stand-in for
@@ -60,88 +60,15 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// row-level security outright; and the owner of nothing, because an owner can turn <c>FORCE</c>
     /// off on its own tables in one statement.
     /// </summary>
-    private const string AppRole = "gymos_tenant_isolation_app";
-
-    /// <summary>Passwords for throwaway roles inside a throwaway container; not secrets.</summary>
-    private const string MigratorRolePassword = "tenant-isolation-migrator";
-
-    /// <summary>Passwords for throwaway roles inside a throwaway container; not secrets.</summary>
-    private const string AppRolePassword = "tenant-isolation-app";
+    private const string AppRole = PostgresFixture.AppRole;
 
     /// <summary>
-    /// Creates both roles once per container and hands this database to <see cref="MigratorRole"/>.
-    /// Ownership of <c>public</c> moves too, or the migrator cannot create
-    /// <c>__EFMigrationsHistory</c> and migrations fail on their first statement.
+    /// The suite no longer builds its own roles, grants or migrations: <c>PostgresFixture</c> does all
+    /// three for every database it hands out, so what this suite used to construct for itself is now
+    /// the harness-wide default. A second, differently-named pair here would actively break — the
+    /// fixture migrates before returning the connection string, so the tables belong to its migrator
+    /// and a local app role would hold no grants over them.
     /// </summary>
-    /// <remarks>
-    /// <para><b>The <c>ALTER DEFAULT PRIVILEGES</c> pair is duplicated from
-    /// <c>docker/postgres/initdb/10-roles.sql</c>, deliberately and unavoidably</b> — an initdb script
-    /// mounted into a container and a Testcontainers fixture cannot share a SQL file. Keep the two in
-    /// step: a change to one is a change to both. If they drift,
-    /// <see cref="ATableCreatedByTheMigratorIsUsableByTheAppRoleWithNoExplicitGrant"/> keeps passing
-    /// while production breaks on the first table a future migration adds, which is precisely the
-    /// divergence class this increment exists to close. That file carries the matching pointer back
-    /// here.</para>
-    /// <para>Also without <c>IN SCHEMA</c>, for the reason that file gives: <c>platform</c> is created
-    /// by a migration, so an <c>IN SCHEMA platform</c> form could only run afterwards — by which point
-    /// it would not cover the tables that migration had just created. And these must run before the
-    /// migrations and the probe, because default privileges attach at <c>CREATE</c> time and do
-    /// nothing for objects that already exist.</para>
-    /// </remarks>
-    private static readonly string CreateRolesSql =
-        $"""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{MigratorRole}') THEN
-                CREATE ROLE "{MigratorRole}"
-                    LOGIN PASSWORD '{MigratorRolePassword}' NOSUPERUSER NOBYPASSRLS;
-            END IF;
-
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{AppRole}') THEN
-                CREATE ROLE "{AppRole}"
-                    LOGIN PASSWORD '{AppRolePassword}' NOSUPERUSER NOBYPASSRLS;
-            END IF;
-        END
-        $$;
-
-        DO $$
-        BEGIN
-            EXECUTE format('ALTER DATABASE %I OWNER TO %I', current_database(), '{MigratorRole}');
-        END
-        $$;
-
-        ALTER SCHEMA public OWNER TO "{MigratorRole}";
-
-        -- Kept in step with docker/postgres/initdb/10-roles.sql by hand; see this field's remarks.
-        ALTER DEFAULT PRIVILEGES FOR ROLE {MigratorRole}
-            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {AppRole};
-        ALTER DEFAULT PRIVILEGES FOR ROLE {MigratorRole}
-            GRANT USAGE ON SCHEMAS TO {AppRole};
-        ALTER DEFAULT PRIVILEGES FOR ROLE {MigratorRole}
-            GRANT USAGE, SELECT ON SEQUENCES TO {AppRole};
-        """;
-
-    /// <summary>
-    /// The two <c>SECURITY DEFINER</c> functions that issue DDL on the application's behalf
-    /// (<c>SecureRuntimeDdlFunctions</c>), granted to this suite's app role.
-    /// </summary>
-    /// <remarks>
-    /// Separate from <see cref="CreateRolesSql"/> because it can only run <i>after</i> migrations:
-    /// the functions do not exist until then. The migration itself grants <c>EXECUTE</c> to
-    /// <c>gymos_app</c> — the deployment's name — and revokes the <c>PUBLIC</c> default that
-    /// <c>CREATE FUNCTION</c> hands out, because a <c>SECURITY DEFINER</c> function executable by
-    /// <c>PUBLIC</c> lends the owner's DDL rights to every role in the database. This suite's app
-    /// role is named for this suite, so it needs the same explicit grant a managed deployment with
-    /// its own role names needs (<c>docs/runbooks/managed-postgres-roles.md</c>). Without it the
-    /// host's startup partition maintenance fails on every boot of this suite — quietly, since that
-    /// maintainer is non-fatal by design.
-    /// </remarks>
-    private const string GrantRuntimeFunctionsSql =
-        $"""
-        GRANT EXECUTE ON FUNCTION platform.next_invoice_number(integer) TO {AppRole};
-        GRANT EXECUTE ON FUNCTION platform.ensure_audit_log_partitions(date, integer) TO {AppRole};
-        """;
-
     private readonly PostgresFixture _postgres;
     private readonly List<IServiceScope> _scopes = [];
     private readonly List<AppDbContext> _rawContexts = [];
@@ -185,8 +112,8 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         // PostgresFixture.BootstrapConnectionString and points it at the database
         // CreateIsolatedDatabaseAsync just created, rather than reusing the (now non-superuser)
         // connection string that method returns.
-        string isolatedDatabaseName = new NpgsqlConnectionStringBuilder(
-            await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation")).Database!;
+        string appConnectionString = await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation");
+        string isolatedDatabaseName = new NpgsqlConnectionStringBuilder(appConnectionString).Database!;
 
         _bootstrapConnectionString = new NpgsqlConnectionStringBuilder(_postgres.BootstrapConnectionString)
         {
@@ -199,12 +126,15 @@ public sealed class TenantIsolationTests : IAsyncLifetime
             Pooling = false,
         }.ConnectionString;
 
-        await ExecuteAsync(_bootstrapConnectionString, CreateRolesSql);
-
-        _migratorConnectionString = new NpgsqlConnectionStringBuilder(_bootstrapConnectionString)
+        // No role creation here any more. PostgresFixture builds the migrator/app pair once per
+        // container, hands every database it creates to the migrator, applies the default privileges
+        // and migrates as the migrator — the shape this suite used to construct for itself. Keeping a
+        // second, differently-named pair would now actively break: the fixture migrates before handing
+        // the string back, so the tables belong to *its* migrator and a local app role would hold no
+        // grants over them.
+        _migratorConnectionString = new NpgsqlConnectionStringBuilder(
+            PostgresFixture.AsMigrator(appConnectionString))
         {
-            Username = MigratorRole,
-            Password = MigratorRolePassword,
 
             // Unpooled, for the reason PostgresFixture.Unpooled already gives: xUnit builds a fresh
             // instance of this class per test method, each against a uniquely named database, so this
@@ -221,16 +151,14 @@ public sealed class TenantIsolationTests : IAsyncLifetime
             Pooling = false,
         }.ConnectionString;
 
-        _connectionString = new NpgsqlConnectionStringBuilder(_bootstrapConnectionString)
+        _connectionString = new NpgsqlConnectionStringBuilder(appConnectionString)
         {
-            Username = AppRole,
-            Password = AppRolePassword,
-
             // One physical connection, so connection reuse is certain rather than lucky (D6). Pooling
-            // is re-enabled explicitly: this string is derived from the unpooled bootstrap one above
-            // and would otherwise inherit `Pooling=false`, which would silently give every scope its
-            // own physical connection and quietly defeat
-            // TheTenantDoesNotLeakIntoTheNextUseOfAPooledConnection.
+            // is asserted explicitly rather than inherited: the fixture's app string is pooled today,
+            // but a future change making it unpooled would silently give every scope its own physical
+            // connection and quietly defeat
+            // TheTenantDoesNotLeakIntoTheNextUseOfAPooledConnection — which would still pass, having
+            // become a duplicate of PlatformScopeReadsNothing_NotEverything.
             Pooling = true,
             MaxPoolSize = 1,
         }.ConnectionString;
@@ -245,13 +173,12 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         //
         // Everything created here inherits the ALTER DEFAULT PRIVILEGES grants above, which is the
         // only reason the app role can read __EFMigrationsHistory or touch the probe at all.
-        await using (AppDbContext migrator = CreateMigrationContext())
-        {
-            await migrator.Database.MigrateAsync();
-        }
-
-        // After the migrations that create the functions, and as the migrator, which owns them.
-        await ExecuteAsync(_migratorConnectionString, GrantRuntimeFunctionsSql);
+        // Migrations and the runtime-function grants both moved into PostgresFixture, which now does
+        // them for every database it hands out rather than only for this suite. The reasons they had to
+        // happen before the host boots are unchanged and still hold: they create the `platform` schema
+        // the probe lives in, the app role owns nothing and could not create it, TenantIsolationValidator
+        // returns early while any migration is pending, and EF compares the model against the migrations
+        // snapshot — so the host, whose model carries the probe, must not be the one to migrate.
 
         // Before the host, not after: Program.cs runs the real validator during startup, and the probe
         // is a mapped ITenantScoped entity from this point on. An absent (or unprotected) probe table
@@ -423,9 +350,14 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     {
         // The other early return, and the more dangerous one: a deployment with
         // Database:MigrateOnStartup=false and a migration left pending disables R14 entirely on that
-        // boot. Against an unmigrated database — which is what a fresh isolated database is — the
-        // validator must say so rather than return a silent pass.
-        string unmigrated = await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation_pending");
+        // boot, so the validator must say so rather than return a silent pass.
+        //
+        // Asked for by name. This used to say "which is what a fresh isolated database is", and that
+        // stopped being true the moment PostgresFixture began migrating each database it hands out —
+        // at which point this test quietly started exercising the *other* early return ("checked
+        // nothing: no entity implements ITenantScoped") and asserting on its message. It failed
+        // loudly, which is the only reason the drift was visible.
+        string unmigrated = await _postgres.CreateUnmigratedDatabaseAsync("tenant_isolation_pending");
 
         await using var context = new AppDbContext(
             new DbContextOptionsBuilder<AppDbContext>()
@@ -697,6 +629,61 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         try
         {
             Assert.False((bool)(await command.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await context.Database.CloseConnectionAsync();
+        }
+    }
+
+    [Fact]
+    public async Task TheHarnessRoleOwnsNothingAndHoldsNoDdl()
+    {
+        // The premise the Members increment rests on, asserted here so it cannot quietly stop being
+        // true. `TenantIsolationValidator` builds its table list from the EF model, so the moment any
+        // production entity implements ITenantScoped, its ownership check runs in EVERY integration
+        // host — not only in suites that read the table. A harness whose role owns the tables it
+        // migrated fails that check on every one of them.
+        //
+        // This suite builds its own migrator/app pair, so it would keep passing on its own while the
+        // other three hundred hosts broke. That is why this test interrogates PostgresFixture's role
+        // rather than this suite's: it is the one every other suite actually connects as.
+        //
+        // Two assertions, because "owns nothing" and "cannot execute DDL" are different claims and the
+        // second is the one an attacker cares about. A role can own no tables and still hold CREATE on
+        // the schema, which is enough to make one and then own it.
+        await using AppDbContext context = CreateHarnessRoleContext();
+
+        // Deliberately asked in terms that hold whether or not migrations have run: an earlier draft
+        // used has_schema_privilege(..., 'platform', ...) and died on `3F000 schema does not exist`,
+        // which is a test failing for the wrong reason rather than a red phase worth trusting.
+        await using var command = context.Database.GetDbConnection().CreateCommand();
+        command.CommandText =
+            """
+            SELECT
+                (SELECT count(*) FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE c.relkind = 'r'
+                   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                   AND pg_get_userbyid(c.relowner) = current_user) AS tables_owned,
+                (SELECT pg_get_userbyid(datdba) = current_user
+                 FROM pg_database WHERE datname = current_database()) AS owns_database,
+                has_database_privilege(current_user, current_database(), 'CREATE') AS can_create
+            """;
+
+        await context.Database.OpenConnectionAsync();
+
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+
+            Assert.Equal(0, reader.GetInt64(0));
+            Assert.False(reader.GetBoolean(1));
+
+            // CREATE on the database is what lets a role add a schema and own everything in it, so
+            // owning nothing today means little without this.
+            Assert.False(reader.GetBoolean(2));
         }
         finally
         {

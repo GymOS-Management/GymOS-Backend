@@ -74,19 +74,33 @@ public sealed class OutboxCaptureTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _connectionString = await _postgres.CreateDatabaseAsync("outbox_tests");
-        await using IntegrationDbContext context = CreateContext(new CorrelationContext());
-        await context.Database.EnsureCreatedAsync();
+        // Unmigrated, deliberately. This suite builds its own tiny schema through EnsureCreated rather
+        // than using the application's, and EnsureCreated does nothing at all when the database already
+        // contains tables — so against a migrated database it silently created no `integration_tests`
+        // schema and every test failed later with `42P01: relation does not exist`.
+        _connectionString = await _postgres.CreateUnmigratedDatabaseAsync("outbox_tests");
+
+        // EnsureCreated is DDL, so it runs as the migrator: the app role this suite's tests connect as
+        // owns nothing and holds no CREATE. What it creates lands under the migrator, which is what
+        // makes the ALTER DEFAULT PRIVILEGES grants apply to it — the same arrangement the deployment
+        // uses, where migrations create and the API only reads and writes.
+        await using (IntegrationDbContext migrator =
+            CreateContext(new CorrelationContext(), PostgresFixture.AsMigrator(_connectionString)))
+        {
+            await migrator.Database.EnsureCreatedAsync();
+        }
     }
 
     public Task DisposeAsync() => Task.CompletedTask;
 
-    private IntegrationDbContext CreateContext(CorrelationContext correlationContext)
+    private IntegrationDbContext CreateContext(
+        CorrelationContext correlationContext,
+        string? connectionString = null)
     {
         var interceptor = new OutboxSaveChangesInterceptor(
             new FakeClock(KnownInstant), correlationContext, new SystemUser());
         DbContextOptions<IntegrationDbContext> options = new DbContextOptionsBuilder<IntegrationDbContext>()
-            .UseNpgsql(_connectionString)
+            .UseNpgsql(connectionString ?? _connectionString)
             .UseSnakeCaseNamingConvention()
             .AddInterceptors(interceptor)
             .Options;
