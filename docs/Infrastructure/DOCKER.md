@@ -1,14 +1,17 @@
 # Docker infrastructure
 
-**Status:** production-grade for a single host. Two services run today; the compose files are shaped
-so the eleven planned ones arrive without redesign.
+**Status:** production-grade for a single host. Four services run today (`postgres`, `api`,
+`migrator`, `mailpit`); the compose files are shaped so the remaining planned ones arrive without
+redesign.
 
 ```bash
 docker compose up -d          # that is the whole setup step
 ```
 
-No `.env`, no database install, no migration command. The stack comes up with PostgreSQL 17, the API
-migrated and seeded, and a working sign-in.
+No `.env`, no database install, no migration command to type. The stack comes up with PostgreSQL 17,
+a one-shot `migrator` service applying migrations and exiting before the API starts (§2, §6), the API
+seeded, and a working sign-in. The API never migrates itself, in any environment — see "Database
+roles and the migrator" below.
 
 ---
 
@@ -78,10 +81,39 @@ Health is `pg_isready -U … -d …` with the user and database named explicitly
 reports healthy during the window when the entrypoint has a temporary server up for the init
 scripts and the real database does not yet exist, which would let the API start too early.
 
+**Database roles and the migrator.** The application never connects to PostgreSQL as a superuser.
+`docker/postgres/initdb/10-roles.sql` runs once, on an empty data directory, as `POSTGRES_USER`
+(now `gymos_admin`, itself the only superuser) and creates two more: `gymos_migrator`
+(`NOSUPERUSER NOBYPASSRLS`, owns the database, its schemas, and every table) and `gymos_app`
+(`NOSUPERUSER NOBYPASSRLS`, owns nothing). `gymos_admin` is for humans and `psql`; `gymos_migrator` is
+used only by the one-shot `gymos-migrator` service below; `gymos_app` is what the API connects as at
+runtime. The reasoning — an owner can switch its own row-level security off in one statement, a
+non-owner cannot — is recorded in `docs/BusinessRules/TenantIsolation.md`; the same three roles on a
+managed instance with no `/docker-entrypoint-initdb.d` are in `docs/runbooks/managed-postgres-roles.md`.
+
+### `gymos-migrator` — one-shot migrations
+
+Same image as `gymos-api`, run with `Database:MigrateOnly` instead of the web server: apply pending
+EF Core migrations, exit `0` on success, exit non-zero on failure, never bind a port. It connects as
+`gymos_migrator`, which owns the schema; `api` declares
+`depends_on: { migrator: { condition: service_completed_successfully } }`, so the API never starts
+against an unmigrated (or wrongly migrated) database. `restart: 'no'` — this container is meant to
+exit, not loop.
+
+This is what replaced `Database:MigrateOnStartup` running inside the API container. That setting is
+now `false` in every environment, development included — migrating as a side effect of the API's own
+start-up meant a rolling deployment could run two migrations concurrently, and a failed migration took
+out the very process meant to report it. Splitting it into its own container makes the exit code the
+thing that matters: if the migrator ever exited `0` after a failed migration, the API would start
+against an unmigrated database and `TenantIsolationValidator`'s own pending-migrations guard would
+quietly switch off the whole isolation check for that boot, logged only as a warning.
+
 ### `gymos-api` — GymOS Web API
 
-Stateless. Migrates and seeds at start-up in development; in production it expects a migrated
-database (§6). Two endpoints matter to infrastructure:
+Stateless, and no longer migrates anything itself in any environment — the `migrator` service above
+always runs first. It still seeds on start-up (`SuperAdminSeeder`, the identity/roles declare-and-
+validate seeder), connected as `gymos_app`, which owns nothing and cannot alter a table's row-level
+security even given an SQL injection. Two endpoints matter to infrastructure:
 
 | Endpoint | Checks | Used for |
 |---|---|---|
@@ -154,10 +186,12 @@ file-based default, do not give it an empty compose default.
 | Variable | Development | Production |
 |---|---|---|
 | `POSTGRES_PASSWORD` | public default (`gymos_dev_password`) | **required** — `${VAR:?}` aborts the command |
+| `GYMOS_MIGRATOR_PASSWORD` | public default (`gymos_dev_migrator_password`) | **required** — `${VAR:?}` aborts the command |
+| `GYMOS_APP_PASSWORD` | public default (`gymos_dev_app_password`) | **required** — `${VAR:?}` aborts the command |
 | `GYMOS_JWT_SIGNING_KEY` | unset; file fallback applies | **required**, ≥32 bytes, validated at start-up |
 | `API_IMAGE` | built from source | **required** — production runs the artefact CI tested |
 | `GYMOS_SEED_ADMIN_*` | `admin@gymos.local` / `gymos-dev-admin-password` | set for a new environment's first deploy, then unset |
-| `GYMOS_MIGRATE_ON_STARTUP` | `true` | `false` — see §6 |
+| `GYMOS_MIGRATE_ON_STARTUP` | `false` — migrations are the `migrator` service's job, not the API's, in every environment (§2, §6) | `false`, same reason |
 | `GYMOS_FORWARDED_HEADERS_ENABLED` | `false` | `true` behind a proxy, or the rate limiter sees one bucket for everyone |
 
 Generate a signing key with `openssl rand -base64 48`.
@@ -169,10 +203,30 @@ Generate a signing key with `openssl rand -base64 48`.
 ### Development
 
 ```bash
-docker compose up -d                  # PostgreSQL + API, migrated and seeded
+docker compose up -d                  # PostgreSQL + migrator (applies migrations, exits) + API + mailpit
 docker compose logs -f api            # follow
 docker compose down                   # stop, keep data
 docker compose down -v                # stop, destroy data
+```
+
+**A cold `docker compose up -d` can lose a build race on some Docker versions.** `api` and `migrator`
+both build from the same Dockerfile and now start closer together than before (`api` waits on
+`migrator`'s exit, not on a build); on a machine that has never built the image, Compose can end up
+building it twice concurrently instead of once and reusing the result, which is slow and has been
+observed to fail outright on some Docker Engine/Compose combinations. Build once first, then bring the
+stack up, and the race does not happen:
+
+```bash
+docker compose build api              # migrator uses the same image, so this covers both
+docker compose up -d
+```
+
+Picking up a **new** role (or any change to `docker/postgres/initdb/`) needs the data directory to be
+empty, because initdb scripts run exactly once. `docker compose down -v` destroys the volume first:
+
+```bash
+docker compose down -v                # destroys the database — confirm you don't need it first
+docker compose up -d
 ```
 
 Sign in at `http://localhost:5080` with `admin@gymos.local` / `gymos-dev-admin-password`. The
@@ -197,38 +251,53 @@ PostgreSQL in Docker, which is what the port on 5432 is published for.
 docker build -f src/Host/GymOS.WebApi/Dockerfile -t ghcr.io/gymos-management/gymos-api:0.7.0 .
 docker push ghcr.io/gymos-management/gymos-api:0.7.0
 
-# 2. Apply migrations as their own step, BEFORE deploying.
-dotnet ef migrations script --idempotent \
-    --project src/Platform/GymOS.Platform.Infrastructure \
-    --startup-project src/Host/GymOS.WebApi \
-    --output migrate.sql
-psql "$PRODUCTION_CONNECTION_STRING" -v ON_ERROR_STOP=1 -f migrate.sql
-
-# 3. Deploy.
-export POSTGRES_PASSWORD=…  GYMOS_JWT_SIGNING_KEY=…  API_IMAGE=ghcr.io/…/gymos-api:0.7.0
+# 2. Deploy. The migrator service applies migrations and exits before api starts —
+#    see "gymos-migrator" in §2 — so this one command is now the whole deployment step.
+export POSTGRES_PASSWORD=…  GYMOS_MIGRATOR_PASSWORD=…  GYMOS_APP_PASSWORD=…  \
+       GYMOS_JWT_SIGNING_KEY=…  API_IMAGE=ghcr.io/…/gymos-api:0.7.0
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-**Why migrations are a separate step.** `Database__MigrateOnStartup` is off in production because
-applying schema changes as a side effect of a container start means two replicas can migrate the
-same database concurrently, and a failed migration takes out the very process that was supposed to
-report it. The script is *idempotent*, so re-running it is safe, and it can be reviewed before it
-touches anything. The runtime image has no SDK by design, which is why the script is generated
-where the SDK lives.
+**Why migrations still run as their own step, just no longer a manual one.**
+`Database__MigrateOnStartup` is off in production, same reasoning as before: applying schema changes
+as a side effect of a container start means two replicas can migrate the same database concurrently,
+and a failed migration takes out the very process that was supposed to report it. What changed is
+*how* the separate step happens — a one-shot `migrator` container (§2), running the same image as
+`api` with `Database:MigrateOnly`, rather than a `dotnet ef migrations script` generated by hand on a
+machine with the SDK and piped into `psql`. `api`'s `depends_on: migrator: condition:
+service_completed_successfully` is what makes the migrator's exit code load-bearing: if it ever
+exited `0` after a failed migration, the API would start against an unmigrated database.
+`dotnet ef migrations script --idempotent` piped to `psql` is still a reasonable way to *review* a
+pending migration's SQL by hand before a release, on a machine that has the SDK — it is no longer the
+deployment step itself.
 
 ### Continuous integration
 
 `.github/workflows/ci.yml` has a `docker` job, running in parallel with the tests, that does on a
-clean checkout exactly what a new contributor does: build the image, `docker compose up -d`, and
-check that the result is usable. It then asserts the hardening — non-root uid, read-only root
-filesystem, `cap_drop: ALL`, `no-new-privileges`, postgres on the data network only — because a
-security setting nobody verifies is a security setting that can be removed by accident. It then
-starts every optional profile and requires all seven containers to report healthy, and proves the
-production overlay *refuses* to render when its secrets are unset.
+clean checkout exactly what a new contributor does: build the image, `docker compose up -d` (which now
+includes the `migrator` service applying migrations before `api` starts), and check that the result is
+usable. It then asserts the hardening — non-root uid, read-only root filesystem, `cap_drop: ALL`,
+`no-new-privileges`, postgres on the data network only — because a security setting nobody verifies is
+a security setting that can be removed by accident. It then starts every optional profile and requires
+every running container to report healthy (the one-shot `migrator` has already exited by this point and
+does not appear in that check), and proves the production overlay *refuses* to render when its secrets
+are unset — the fail-fast `${VAR:?}` guards, now covering `GYMOS_MIGRATOR_PASSWORD` and
+`GYMOS_APP_PASSWORD` as well as the pre-existing ones.
 
-The full production boot is not in CI: it needs the migration step (§6), which needs the SDK the
-runtime image deliberately lacks. CI validates the production overlay statically; the boot itself is
-verified by hand at release time.
+The full production boot is not in CI: the production overlay's required secrets are supplied only for
+the static validation step (`docker compose … config`), not for an actual `up -d`, so nothing there
+needs the SDK — the migrator itself is the runtime image running `Database:MigrateOnly`, which needs
+no `dotnet-ef` tool at all. CI validates the production overlay statically; the boot itself is verified
+by hand at release time.
+
+**Known gap, found while updating this document, not fixed here (documentation-only change):** the
+"Validate compose files (production)" CI step sets `POSTGRES_PASSWORD`, `GYMOS_JWT_SIGNING_KEY`, and
+`API_IMAGE` but not `GYMOS_MIGRATOR_PASSWORD` or `GYMOS_APP_PASSWORD`. Reproduced locally: `docker
+compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet` with only those three set
+aborts with `required variable GYMOS_MIGRATOR_PASSWORD is missing a value`, exit code 1 — so this CI
+step, which expects to *succeed*, now fails. This is a CI workflow defect the database-roles increment
+introduced and did not catch; `.github/workflows/ci.yml` needs the two new variables added to that
+step's `env:` block.
 
 Production expects a reverse proxy in front for TLS (Azure Front Door, Caddy, an ingress
 controller). Set `GYMOS_FORWARDED_HEADERS_ENABLED=true` when one is there, and not before — with it
@@ -319,9 +388,10 @@ docker inspect --format '{{.HostConfig.SecurityOpt}}'  gymos-api
 docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' gymos-api
 docker network inspect gymos-data --format '{{.Internal}}'
 
-# Database
-docker compose exec postgres psql -U gymos -d gymos
-docker compose exec postgres psql -U gymos -d gymos -c '\dt platform.*'
+# Database — gymos_admin is the superuser, for humans and ad hoc maintenance. It is never what the
+# API connects as (gymos_app) or what migrations run as (gymos_migrator) — see §2.
+docker compose exec postgres psql -U gymos_admin -d gymos
+docker compose exec postgres psql -U gymos_admin -d gymos -c '\dt platform.*'
 
 # Rebuild after a code change (layer cache makes this fast)
 docker compose up -d --build api
@@ -334,17 +404,26 @@ docker compose down -v
 
 ## 10. Troubleshooting
 
-**`password authentication failed for user "gymos"`**
-`POSTGRES_PASSWORD` is applied **only at initdb**, on an empty data directory. Changing it later has
-no effect on an existing volume — this is the single most common confusion here, and it is how a
-production smoke test failed during this work. Either change it inside the database
-(`ALTER USER gymos WITH PASSWORD '…'`) or destroy the volume (`docker compose down -v`, which
-destroys the data with it).
+**`password authentication failed for user "gymos_admin"` (or `gymos_migrator` / `gymos_app`)**
+`POSTGRES_PASSWORD`, `GYMOS_MIGRATOR_PASSWORD`, and `GYMOS_APP_PASSWORD` are all applied **only at
+initdb**, on an empty data directory — `docker/postgres/initdb/10-roles.sql` creates the latter two
+roles and reads their passwords once, the same way the image's own entrypoint sets the superuser's.
+Changing any of them later has no effect on an existing volume — this is the single most common
+confusion here, and it is how a production smoke test failed during this work. Either change the
+password inside the database (`ALTER ROLE gymos_app WITH PASSWORD '…'`, substituting whichever role) or
+destroy the volume (`docker compose down -v`, which destroys the data with it, and is also required
+whenever the roles themselves change — see §6's development workflow). **A stale `.env` still setting
+`POSTGRES_USER=gymos`** (the pre-roles name) produces a related but distinct failure: the healthcheck
+probes a role `10-roles.sql` never creates, so `postgres` reports unhealthy and nothing downstream ever
+starts — delete or update an old `.env` before bringing the stack up.
 
 **`relation "platform.users" does not exist`**
-The database has no schema. In development, `Database__MigrateOnStartup` should be `true`; in
-production, run the migration script (§6) *before* starting the API. Both seeders now skip with a
-clear warning when migrations are pending rather than throwing this.
+The database has no schema. `Database__MigrateOnStartup` is `false` everywhere now, so nothing applies
+migrations as a side effect of a container starting: bring the stack up with `docker compose up -d`
+(the `migrator` service applies them and exits before `api` starts — see §2, §6) rather than starting
+`api` on its own, or check `docker compose logs migrator` if it already ran and this still appears.
+`SuperAdminSeeder` and `PlatformIdentitySeeder` both skip with a clear warning when migrations are
+pending rather than throwing this.
 
 **API is `unhealthy`, logs mention `SigningKey field is required`**
 Something set `Security__Jwt__SigningKey` to an empty value, which overrides the file-based
@@ -390,12 +469,14 @@ compile under different rules than CI. It is copied in the restore stage for exa
 Only `gymos-postgres-data` holds anything whose loss matters. Uploads will join it when AD-44 lands.
 
 ```bash
-# Logical backup — portable across versions, restorable table by table.
-docker compose exec -T postgres pg_dump -U gymos -d gymos --format=custom \
+# Logical backup — portable across versions, restorable table by table. gymos_admin (the superuser)
+# rather than gymos_migrator: a backup is a maintenance operation, not the schema owner's job, and
+# the superuser reads across every table regardless of row-level security.
+docker compose exec -T postgres pg_dump -U gymos_admin -d gymos --format=custom \
     > "backup-$(date +%Y%m%d-%H%M%S).dump"
 
 # Restore into an empty database.
-docker compose exec -T postgres pg_restore -U gymos -d gymos --clean --if-exists < backup.dump
+docker compose exec -T postgres pg_restore -U gymos_admin -d gymos --clean --if-exists < backup.dump
 ```
 
 `pg_dump`, not a volume copy: a filesystem snapshot of a running PostgreSQL is only consistent if
@@ -406,9 +487,12 @@ different minor version.
 
 ```bash
 docker run --rm -d --name pg-restore-test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=gymos \
-    -e POSTGRES_USER=gymos postgres:17-alpine
-docker exec -i pg-restore-test pg_restore -U gymos -d gymos --clean --if-exists < backup.dump
-docker exec pg-restore-test psql -U gymos -d gymos -c 'SELECT count(*) FROM platform.gyms;'
+    -e POSTGRES_USER=gymos_admin postgres:17-alpine
+# --no-owner: this throwaway container is a bare postgres image with none of GymOS's initdb scripts,
+# so gymos_migrator (the role that owns every table in the backup) does not exist here. Without
+# --no-owner, pg_restore tries to ALTER … OWNER TO gymos_migrator and fails on exactly that role.
+docker exec -i pg-restore-test pg_restore -U gymos_admin -d gymos --clean --if-exists --no-owner < backup.dump
+docker exec pg-restore-test psql -U gymos_admin -d gymos -c 'SELECT count(*) FROM platform.gyms;'
 docker rm -f pg-restore-test
 ```
 
@@ -422,7 +506,7 @@ Deleting the `postgres` service and repointing `ConnectionStrings__Database` is 
 
 | What | How | Notes |
 |---|---|---|
-| **API** | Build a new tag in CI, apply migrations (§6), `up -d`. | Compose recreates the container. Single-host has a brief gap; a proxy plus two replicas removes it. |
+| **API** | Build a new tag in CI, `up -d` (§6) — the `migrator` service applies migrations and exits before `api` is recreated. | Compose recreates the container. Single-host has a brief gap; a proxy plus two replicas removes it. |
 | **PostgreSQL patch** (17.x → 17.y) | `docker compose pull postgres && docker compose up -d postgres` | Same major: the data directory is compatible. Back up first anyway. |
 | **PostgreSQL major** (17 → 18) | `pg_dump`, start the new major on an empty volume, `pg_restore`. | The data directory is **not** compatible across majors. Never a `pull`. |
 | **Base images** | Rebuild. `mcr.microsoft.com/dotnet/aspnet:10.0` is a moving tag that picks up runtime security patches. | Rebuild on a schedule, not only when the code changes — an image untouched for months is an unpatched image. |

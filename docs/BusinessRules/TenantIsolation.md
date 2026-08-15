@@ -3,10 +3,59 @@
 **Module:** cross-cutting (`BuildingBlocks.Application`/`Infrastructure`, `Platform.Infrastructure`,
 `WebApi`) — it owns no schema of its own; it protects whichever schema a tenant-scoped table lives in.
 **Status:** **mechanism built and proven — R14 (AD-49), enforced by a startup validation that did not
-exist before this increment.** **No production table is tenant-scoped yet.** The first is `members`,
-in the increment after this one; everything below describes machinery proven against a table that
-exists only for the tests.
-Design: [`docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md`](../superpowers/specs/2026-08-14-r14-tenant-isolation-design.md).
+exist before this increment — and now actually filters.** The deployment connects as a non-superuser
+role that owns nothing (§3, below); the superuser-connection gap this document used to record here is
+closed. **No production table is tenant-scoped yet.** The first is `members`, in the increment after
+this one; everything below describes machinery proven against a table that exists only for the tests.
+Design: [`docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md`](../superpowers/specs/2026-08-14-r14-tenant-isolation-design.md)
+(the mechanism) and
+[`docs/superpowers/specs/2026-08-15-database-roles-design.md`](../superpowers/specs/2026-08-15-database-roles-design.md)
+(the roles that make it actually run).
+
+## The three database roles
+
+The application never connects as a superuser. Three roles replace the single bootstrap account:
+
+| Role | Attributes | Owns | Used by |
+|---|---|---|---|
+| `gymos_admin` | superuser — this is `POSTGRES_USER` | the cluster | humans, `psql`, maintenance |
+| `gymos_migrator` | `NOSUPERUSER NOBYPASSRLS` | database `gymos`, its schemas, every table | the one-shot `migrator` compose service only |
+| `gymos_app` | `NOSUPERUSER NOBYPASSRLS` | nothing | the API at runtime |
+
+Created by `docker/postgres/initdb/10-roles.sql`, which reads both passwords via psql's `\getenv`
+rather than shell-interpolating them into SQL — a password containing a single quote cannot break the
+statement or inject anything.
+
+### Why two non-superuser roles, not one
+
+A single non-superuser role that owned its own tables would still not be enough. **An owner can
+execute `ALTER TABLE … NO FORCE ROW LEVEL SECURITY` and switch its own isolation off in one statement**
+— no superuser privilege required, just ownership. Row-level security exists largely as a defence
+against SQL injection, and an injected statement running as that owner disables the very control meant
+to contain it, with nothing to notice until the next boot's validator run, potentially weeks later.
+
+Splitting the role in two closes that gap by taking ownership away from the role that serves requests.
+`gymos_migrator` owns every table and runs DDL; `gymos_app` owns nothing and holds no DDL rights at
+all, so the identical injected statement is refused outright — a non-owner cannot switch off a policy
+it does not own, full stop. This is the whole reason for the split: an owner *can* be talked into
+disabling its own protection in a single statement; a non-owner cannot be, regardless of what SQL it is
+tricked into running.
+
+### The constraint this creates — stated plainly, because it is the one that will bite someone
+
+`gymos_app`'s read/write access comes from `ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator`, declared
+once at initdb time with no `IN SCHEMA` clause so it covers every schema and table created afterward,
+including ones migrations haven't written yet. **Default privileges attach only to objects created *by
+`gymos_migrator`*.** Anything that ever creates a table as another role — a manual `psql` session as
+`gymos_admin`, a future tool that runs DDL under its own identity — produces a table `gymos_app` cannot
+read, write, or even see with a plain `SELECT`, and the failure looks exactly like a permission bug
+rather than anything pointing at privileges. Today only the migrator holds DDL rights, so the
+constraint holds by construction — but that is precisely the kind of thing that stops holding quietly,
+the day a second path to creating a table appears.
+
+An Azure-managed deployment starting from an existing database needs the ownership-transfer procedure
+and the explicit `GRANT … ON ALL TABLES` this constraint implies for objects that already exist,
+recorded in [`docs/runbooks/managed-postgres-roles.md`](../runbooks/managed-postgres-roles.md).
 
 ## Purpose
 
@@ -106,38 +155,37 @@ the name of efficiency without re-reading this paragraph first.
 ## Why `FORCE` is mandatory, and why it is not enough on its own
 
 PostgreSQL exempts a table's **owner** from that table's own row-level security policies, unless the
-table also carries `FORCE ROW LEVEL SECURITY`. The application connects as `gymos`, and every migration
-runs as `gymos`, so `gymos` owns every table it creates. Without `FORCE`, every policy in this design
-would exist, read correctly in a code review, and filter nothing — which is why the startup validator
-asserts `relforcerowsecurity` specifically, not merely `relrowsecurity`, and a tenant-scoped table
-missing it fails the boot rather than passing a check that looked complete.
+table also carries `FORCE ROW LEVEL SECURITY`. Every migration runs as `gymos_migrator`, so
+`gymos_migrator` owns every table it creates. Without `FORCE`, every policy in this design would exist,
+read correctly in a code review, and filter nothing for that connection — which is why the startup
+validator asserts `relforcerowsecurity` specifically, not merely `relrowsecurity`, and a tenant-scoped
+table missing it fails the boot rather than passing a check that looked complete.
 
-**`FORCE` stops the table's owner from bypassing its own policies. It does not stop a superuser, and
+**`FORCE` stops a table's owner from bypassing its own policies. It does not stop a superuser, and
 PostgreSQL gives no way to make it stop one: row security is never applied to a superuser, or to any
-role carrying `BYPASSRLS`, whether or not the table is forced.** This is not a hypothetical for this
-platform. Today's deployment connects to PostgreSQL as `gymos`, and the compose files that create that
-role — `docker-compose.yml` and both its overlays, plus `appsettings.Development.json` — grant it
-superuser privilege at `initdb` time. Against a superuser, `FORCE` buys nothing at all, and the
-reasoning this design used to reject a separate, non-owner runtime role ("little is bought once `FORCE`
-is asserted at boot") simply does not hold once the connecting role is a superuser rather than a plain
-owner.
+role carrying `BYPASSRLS`, whether or not the table is forced.** This was not a hypothetical for this
+platform: the deployment used to connect to PostgreSQL as `gymos`, the bootstrap superuser the
+`postgres` image creates, and against a superuser `FORCE` bought nothing at all — the reasoning R14
+originally used to reject a separate, non-owner runtime role ("little is bought once `FORCE` is
+asserted at boot") did not hold once the connecting role was a superuser rather than a plain owner.
 
-The validator closes this gap the only way it can from inside the application: it also refuses to boot
-against a connected role that reports `rolsuper` or `rolbypassrls`. **That check has never actually
-fired, because it only runs once at least one table implements `ITenantScoped`, and none does yet** —
-so today's stack boots exactly as it always has, and the day `members` lands as the first tenant-scoped
-table, the host will not start until whoever deploys it either changes which role the API connects as,
-or knowingly accepts that this control is not real for that table. Changing the connecting role is
-**not done here** — it touches three compose files, `appsettings`, CI, and needs either
-`REASSIGN OWNED` or a volume destroy against every developer's existing database, because the initdb
-scripts that create the role do not re-run against a volume that already exists. It is recorded as an
-open decision for the maintainer, not as work this increment finished.
+**This is now fixed.** The API connects as `gymos_app`, which is `NOSUPERUSER NOBYPASSRLS` and owns
+nothing (§3, above), so `FORCE` governs it exactly as designed, and the owner-bypass risk is closed by
+ownership rather than by `FORCE` alone — see "Why two non-superuser roles, not one", above. The
+validator's role check — refusing to boot against a connected role reporting `rolsuper` or
+`rolbypassrls` — is now unconditional rather than gated on some entity implementing `ITenantScoped`, so
+it is exercised on every boot rather than waiting for `members` to land before it can even fire.
+`gymos_migrator` still owns the tables and still needs `FORCE` to be bound by its own policies;
+the validator continues to assert `relforcerowsecurity` unchanged.
 
 **The owner-bypass guard was proved, not merely asserted.** With `FORCE ROW LEVEL SECURITY` removed from
 the test table, the isolation test that expects one tenant's row back reported
 `Assert.Single() Failure: The collection contained 2 items` — the exact silent failure this whole
 section exists to prevent — and passed again once the line was restored. A control that cannot be shown
-failing is indistinguishable from one that does nothing; this one was shown.
+failing is indistinguishable from one that does nothing; this one was shown. The role split itself was
+proved the same way: `ALTER TABLE … NO FORCE ROW LEVEL SECURITY` is refused (SQLSTATE 42501) on the
+`gymos_app` connection, and succeeds on the `gymos_migrator` connection running the identical statement
+as the control — the pair that keeps the first assertion meaningful rather than merely green.
 
 ## Fail closed: unset means nothing, not everything
 
@@ -176,15 +224,16 @@ this tenant, and if so, which tenant". Do not add an existence check here to fix
 
 ## Known open items
 
-None of the following is fixed by this increment. All are recorded here, and in
-`docs/STATUS.md`, because "the mechanism is built" is not the same claim as "the platform is isolated" —
-that second claim waits on them.
+None of the following still-open items is fixed by this increment; one item that used to be listed
+here — the superuser connection — has since been closed and is kept below only as a struck-through
+record. All open items are recorded here, and in `docs/STATUS.md`, because "the mechanism is built" is
+not the same claim as "the platform is isolated" — that second claim waits on them.
 
-- **The deployment connects as a PostgreSQL superuser**, which voids `FORCE` entirely against it — see
-  "Why `FORCE` is mandatory", above. Nothing is exposed today because no production table is
-  tenant-scoped yet; the validator's role check will refuse to boot the day one is, which is the correct
-  failure, but changing which role the platform connects as is a decision for the maintainer, not
-  something this increment did.
+~~The deployment connects as a PostgreSQL superuser, which voids `FORCE` entirely against it.~~ **Closed
+by the database-roles increment (2026-08-15).** The API now connects as `gymos_app`
+(`NOSUPERUSER NOBYPASSRLS`, owns nothing); see "The three database roles" and "Why `FORCE` is mandatory",
+above.
+
 - **No gym-scoped grant can be issued through the API yet.** `SetUserRolesCommandHandler` rejects any
   attempt at a non-platform-scoped role and only ever writes `UserRole.TenantId = null`, so every grant
   any role holds today is platform-wide. That is the real reason `TenantResolutionMiddleware`'s grant

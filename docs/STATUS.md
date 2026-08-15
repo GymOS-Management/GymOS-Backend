@@ -1,15 +1,40 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-15 · **R14 (tenant isolation) has a subject and a passing validation for the
-first time.** `ITenantContext`, the connection-level session interceptor, the startup
+**Last updated:** 2026-08-15 · **R14's isolation now actually filters — the superuser gap is closed.**
+The deployment-half increment (`docs/superpowers/specs/2026-08-15-database-roles-design.md`) replaced
+the single superuser connection with three roles: `gymos_admin` (superuser, `POSTGRES_USER`, humans
+and maintenance only), `gymos_migrator` (`NOSUPERUSER NOBYPASSRLS`, owns the database/schemas/every
+table, the one-shot `migrator` compose service), and `gymos_app` (`NOSUPERUSER NOBYPASSRLS`, owns
+nothing, the API at runtime). Created by `docker/postgres/initdb/10-roles.sql`, which reads both
+passwords via psql's `\getenv` rather than shell-interpolating them into SQL. Migrations moved out of
+the API into the `migrator` service (`Database:MigrateOnStartup` is `false` everywhere, development
+included; `api` waits on `migrator`'s `service_completed_successfully`), and
+`TenantIsolationValidator`'s connected-role check is now unconditional rather than gated on some entity
+implementing `ITenantScoped`. **Re-measured at this close-out, run individually to completion:**
+`dotnet build GymOS.Backend.slnx` — 0 warnings, 0 errors. `dotnet format --verify-no-changes
+GymOS.Backend.slnx` — exit 0. `dotnet test tests/GymOS.IntegrationTests` — **311 passed**. Whole
+solution — `SharedKernel` 131 · `Platform.Domain.UnitTests` 434 · `Platform.Application.UnitTests` 247
+· `BuildingBlocks.UnitTests` 66 · `Platform.Infrastructure.UnitTests` 67 · `ArchitectureTests` **153** ·
+`IntegrationTests` **311** — **1409 passed, 0 failed**. `docker compose down -v && docker compose up -d`
+brought up a working stack from an empty volume: `migrator` applied migrations and exited `0`, `postgres`
+and `api` reported healthy, and `SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE
+'gymos%'` showed exactly the three roles with the attributes above. ~~The platform connects to
+PostgreSQL as a superuser, which makes `FORCE ROW LEVEL SECURITY` toothless against it~~ — **closed.**
+Two things remain open, recorded under "Known open items" below and in
+`docs/BusinessRules/TenantIsolation.md`: there is still no way to issue a gym-scoped grant through the
+API at all, and `TenantScope` (the design's `using`-shaped per-gym helper) is still owed, not built. See
+"R14 as built" for the mechanism and the new "Database roles (R14 close-out) as built" section below
+for this increment. Committed locally on `development`, not yet pushed.
+
+**Previously (2026-08-15, R14's mechanism):** **R14 (tenant isolation) has a subject and a passing
+validation for the first time.** `ITenantContext`, the connection-level session interceptor, the startup
 `TenantIsolationValidator`, and route-based `TenantResolutionMiddleware` are built and tested —
 **303 integration / 1401 total tests green**, 0 build warnings, `dotnet format` clean. **No production
 table is tenant-scoped by it; `members` is next and will be the first.** Two things this increment
 found rather than fixed: the platform connects to PostgreSQL as a superuser, which makes
 `FORCE ROW LEVEL SECURITY` toothless against it, and there is still no way to issue a gym-scoped grant
-through the API at all. Both are open decisions, recorded in `docs/BusinessRules/TenantIsolation.md`
-and under "Known open items" below. See "R14 as built" for the rest. Committed locally on
-`development`, not yet pushed.
+through the API at all — the first of those two is what the close-out above fixes. See "R14 as built"
+for the rest.
 
 **Previously (2026-08-14):** **Every owed review has now run, and 23 of their 44 findings are
 fixed.** The five that were outstanding — M4.1's multi-agent gate, M5's, F3's, the activation
@@ -191,7 +216,8 @@ before resuming work on any machine.
 | **Administrator activation & password-reset email** (`ADR-53`) — the `IEmailSender` seam + SMTP transport, `user_activation_tokens`, invite/re-send/reset endpoints, anonymous `GET`+`POST /auth/set-password`, console `/set-password` | ✅ **merged to `main`** (`c487012`) and to GymOS-Platform (`d27e32a`) — **1354 tests green**, verified live end to end through Mailpit *and* in a browser through to signing in as the invited administrator · design: `docs/superpowers/specs/2026-08-12-admin-activation-email-design.md` · ⬅ **review owed — this is a security surface and has had no adversarial pass** |
 | **Audit action filter — case and wildcards** | ✅ **merged** (`40b2bb3`) — `Gym.` used to match nothing and a typed `%` acted as a wildcard; now `ILIKE` with `SearchPatterns.StartsWith`. Proved in both directions (`user.` → 3 entries, `User.` → 0 on the old code) |
 | **Solution view + F5** | ✅ **merged** (`053f4d6`, `0d56184`) — Solution Explorer regrouped by role (Host/Platform/Shared/Tests, docker-compose at the root); F5 now starts postgres + api + **mailpit** with email wired, so the invitation flow works with nothing started by hand. No project renamed, moved, or re-referenced |
-| **R14 — tenant isolation mechanism** (`ITenantContext`/`ITenantContextSetter`, `TenantSessionInterceptor`, `TenantIsolationValidator`, route-based `TenantResolutionMiddleware`) | ✅ **mechanism built and tested, committed locally on `development`** (not yet pushed to `origin` — pushing is the maintainer's call) — **303 integration / 1401 total tests green**, 0 build warnings, `dotnet format` clean · rules: **`docs/BusinessRules/TenantIsolation.md`** · design: `docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md` · **R14 has a subject and a passing validation for the first time, and no production table is tenant-scoped yet** — Members is next and will be the first · three open items, all below under "Known open items": the deployment connects to PostgreSQL as a superuser (voids `FORCE`), no gym-scoped grant can be issued through the API yet, and `TenantScope` is owed rather than built |
+| **R14 — tenant isolation mechanism** (`ITenantContext`/`ITenantContextSetter`, `TenantSessionInterceptor`, `TenantIsolationValidator`, route-based `TenantResolutionMiddleware`) | ✅ **mechanism built and tested, committed locally on `development`** (not yet pushed to `origin` — pushing is the maintainer's call) — **303 integration / 1401 total tests green**, 0 build warnings, `dotnet format` clean · rules: **`docs/BusinessRules/TenantIsolation.md`** · design: `docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md` · **R14 has a subject and a passing validation for the first time, and no production table is tenant-scoped yet** — Members is next and will be the first · three open items originally recorded under "Known open items" — ~~the deployment connects to PostgreSQL as a superuser (voids `FORCE`)~~ **closed by the next row**, no gym-scoped grant can be issued through the API yet, and `TenantScope` is owed rather than built |
+| **Database roles (R14 close-out)** — three roles replacing the single superuser (`gymos_admin`/`gymos_migrator`/`gymos_app`), `docker/postgres/initdb/10-roles.sql`, a one-shot `migrator` compose service, `TenantIsolationValidator`'s role check made unconditional | ✅ **built and tested, committed locally on `development`** (not yet pushed) — **311 integration / 1409 total tests green**, `ArchitectureTests` **153**, 0 build warnings, `dotnet format` clean · `docker compose down -v && docker compose up -d` proven to bring up a working stack from an empty volume, migrator exits `0`, three roles present with the correct attributes · design: `docs/superpowers/specs/2026-08-15-database-roles-design.md` · rules: **`docs/BusinessRules/TenantIsolation.md`** · runbook: **`docs/runbooks/managed-postgres-roles.md`** (Azure, not yet provisioned against) · **the superuser open item is closed**; the gym-scoped-grant and `TenantScope` open items are unchanged by this increment |
 | M6+ — per approved roadmap (monitoring, settings) | next |
 
 ## M1.2 as built
@@ -630,13 +656,12 @@ no migration command, ending in a working sign-in as `admin@gymos.local` / `gymo
 - **~~Write the RLS startup validation (R14) with the first tenant-scoped entity.~~ Built and tested —
   see "R14 as built" below and `docs/BusinessRules/TenantIsolation.md`.** The startup validation that
   never existed now does, proven against a test-only table (301 integration tests green, all six
-  isolation/resolution tests among them). **No production table is tenant-scoped yet.** Two things are
-  still open before Members can actually rely on it: the deployment connects to PostgreSQL as a
-  superuser, which voids `FORCE ROW LEVEL SECURITY` entirely (the validator's role check will refuse to
-  boot the day a real tenant-scoped table lands, but changing which role the API connects as is the
-  maintainer's call, not something this increment did); and no gym-scoped grant can be issued through
-  the API yet, so `TenantResolutionMiddleware`'s grant check has never had a real grant to check
-  against.
+  isolation/resolution tests among them). **No production table is tenant-scoped yet.** ~~Two things
+  were still open before Members could actually rely on it: the deployment connects to PostgreSQL as a
+  superuser, which voids `FORCE ROW LEVEL SECURITY` entirely~~ — **closed by the database-roles
+  close-out; see "Database roles (R14 close-out) as built" below.** One thing remains: no gym-scoped
+  grant can be issued through the API yet, so `TenantResolutionMiddleware`'s grant check has never had a
+  real grant to check against.
 - **The Members domain is frozen** (`docs/Domain/MEMBERS-DOMAIN-DESIGN.md`). Implementation follows it
   exactly; a change needs a decision recorded in its §20 register first. Note the guardrails in its
   §19 — seventeen things an implementation must not quietly undo, chief among them: Membership Type and
@@ -1573,15 +1598,18 @@ passed**. Whole solution (`SharedKernel` 131 · `Platform.Domain.UnitTests` 434 
 
 ### Three open items this increment produced rather than closed
 
-All three are in "Known open items" below and in `docs/BusinessRules/TenantIsolation.md`; none is fixed
-here. (The third was added by the increment's final review on 2026-08-15, which found it undocumented
-rather than newly created.)
+All three were in "Known open items" below and in `docs/BusinessRules/TenantIsolation.md`; none was
+fixed by R14's own mechanism increment. (The third was added by the increment's final review on
+2026-08-15, which found it undocumented rather than newly created.) **The first of the three is now
+closed — see "Database roles (R14 close-out) as built", directly below.**
 
-- **The deployment connects to PostgreSQL as a superuser**, which voids `FORCE ROW LEVEL SECURITY`
+- ~~**The deployment connects to PostgreSQL as a superuser**, which voids `FORCE ROW LEVEL SECURITY`
   entirely — a superuser bypasses row-level security unconditionally, `FORCE` or not. The validator's
   new role check is the guard, and it has never fired because no entity implements `ITenantScoped` yet;
   it will fire, loudly, the day `members` does. Changing which role the API connects as is an open
-  decision for the maintainer.
+  decision for the maintainer.~~ **Closed.** The API now connects as `gymos_app`
+  (`NOSUPERUSER NOBYPASSRLS`, owns nothing); the validator's role check is unconditional and runs on
+  every boot rather than waiting on `ITenantScoped`.
 - **A gym-scoped grant cannot currently be assigned through the API at all.**
   `SetUserRolesCommandHandler` rejects any non-platform-scoped role and only ever writes
   `UserRole.TenantId = null`. Every grant any role holds today is platform-wide, which is the real
@@ -1602,6 +1630,81 @@ through R17 are all worded identically regardless of build status, because the d
 architecture specification, not a build-status tracker. Marking only R14 "enforced" would invent a
 field the other sixteen rows do not have. Left as written; the fact that the mechanism now exists lives
 in this file and in `docs/BusinessRules/TenantIsolation.md` instead.
+
+## Database roles (R14 close-out) as built
+
+**Committed locally on `development`, not yet pushed — pushing is the maintainer's call.** Design:
+`docs/superpowers/specs/2026-08-15-database-roles-design.md`. This is the deployment half of R14: the
+mechanism above was proven correct and then shipped against a connection that made it irrelevant — the
+application connected as `gymos`, the bootstrap superuser the `postgres` image creates, and PostgreSQL
+exempts a superuser from row-level security entirely, `FORCE` included. This increment is what makes
+R14 actually filter a row in the Docker deployment.
+
+1. **Three roles**, replacing the single superuser. `gymos_admin` — superuser, now `POSTGRES_USER`, for
+   humans and maintenance only. `gymos_migrator` — `NOSUPERUSER NOBYPASSRLS`, owns the database, its
+   schemas, and every table; runs DDL; used only by the `migrator` service below. `gymos_app` —
+   `NOSUPERUSER NOBYPASSRLS`, owns nothing; used by the API at runtime. Created by
+   `docker/postgres/initdb/10-roles.sql`, which reads both passwords through psql's `\getenv` rather
+   than shell-interpolating them into SQL — verified directly against `postgres:17-alpine` that a
+   password containing a single quote cannot break the statement or inject anything.
+2. **D1 — the migrator owns; the app owns nothing.** An owner can execute
+   `ALTER TABLE … NO FORCE ROW LEVEL SECURITY` and switch its own isolation off in one statement — well
+   within reach of the SQL injection row-level security mostly exists to contain. `gymos_app` owns
+   nothing and holds no DDL rights, so the identical statement is refused outright. Proved directly,
+   not merely asserted: the statement is refused (SQLSTATE 42501) on the `gymos_app` connection and
+   succeeds on the `gymos_migrator` connection running the same statement as the control.
+3. **D2 — default privileges, not per-table grants**, declared with no `IN SCHEMA` clause so every
+   future schema and table is covered automatically, since `platform` itself is created by a migration
+   and an `IN SCHEMA platform` form could only run after the fact. **The constraint this creates:**
+   default privileges attach only to objects created *by* `gymos_migrator` — anything that ever creates
+   a table as another role produces a table `gymos_app` cannot read. Holds by construction today,
+   because only the migrator holds DDL rights; recorded in `docs/BusinessRules/TenantIsolation.md` so it
+   does not stop holding quietly.
+4. **Migrations moved out of the API into a one-shot `migrator` compose service**, running the same
+   image with a new `Database:MigrateOnly` host mode: apply migrations, exit, never start the web
+   server. `Database:MigrateOnStartup` is now `false` everywhere, development included, and `api`
+   declares `depends_on: { migrator: { condition: service_completed_successfully } }`. Seeders and
+   `TenantIsolationValidator` stay in the API's own startup path as `gymos_app` — the role whose
+   isolation is worth validating, and seeding is DML, not DDL.
+5. **`TenantIsolationValidator`'s connected-role check is now unconditional.** It used to run only once
+   some entity implemented `ITenantScoped`, which was also the hole through which an entity that forgot
+   the marker switched the whole control off; it now runs, and can refuse the boot, on every start. It
+   also asserts the connected role does not *own* the tenant-scoped tables it checks, via
+   `pg_has_role(current_user, c.relowner, 'USAGE')` rather than a name comparison — deliberately, so a
+   future rename of either role does not silently disable the check.
+6. **The integration harness moved off the superuser.** Making the role check unconditional meant it
+   now runs in every integration test host, and Testcontainers' bootstrap role is a superuser — left
+   alone, the whole suite would fail to boot. `PostgresFixture` now provisions a non-superuser role per
+   test database; most hosts get a single role that owns its own database (cheap, and enough to satisfy
+   the check), and the tenancy suite specifically gets the full two-role shape, because it is the one
+   asserting the ownership separation the rest of the suite does not touch.
+
+**Gate numbers, re-measured at this close-out, run individually to completion:** `dotnet build
+GymOS.Backend.slnx` — **0 warnings, 0 errors**. `dotnet format --verify-no-changes GymOS.Backend.slnx`
+— **exit 0**. `dotnet test tests/GymOS.IntegrationTests` — **311 passed**. Whole solution
+(`SharedKernel` 131 · `Platform.Domain.UnitTests` 434 · `Platform.Application.UnitTests` 247 ·
+`BuildingBlocks.UnitTests` 66 · `Platform.Infrastructure.UnitTests` 67 · `ArchitectureTests` 153 ·
+`IntegrationTests` 311) — **1409 passed, 0 failed**. `docker compose down -v` (destroying the existing
+volume) followed by `docker compose up -d` brought up postgres, mailpit, and api healthy and migrator
+exited `0` on the fresh volume; `docker compose ps -a` showed all four as expected, and
+`SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'gymos%'` against the freshly
+initialised database returned exactly `gymos_admin` (`t`/`t`), `gymos_migrator` (`f`/`f`), and
+`gymos_app` (`f`/`f`) — the three roles with the attributes the design calls for.
+
+**Documentation:** `docs/BusinessRules/TenantIsolation.md` now carries the roles table, D1's and D2's
+reasoning, and closes the superuser open item (the gym-scoped-grant and `TenantScope` items are
+untouched by this increment). `docs/runbooks/managed-postgres-roles.md` is new — the same three roles
+on a managed instance with no `/docker-entrypoint-initdb.d`, opening with the operator checking their
+own `rolsuper`/`rolbypassrls` rather than assuming Azure's administrator is safe by default, and
+including the ownership-transfer procedure (`REASSIGN OWNED`, database/schema ownership, default
+privileges, and the explicit `GRANT … ON ALL TABLES IN SCHEMA platform` that default privileges cannot
+reach for objects that already exist). Not provisioned against anything — there is no Azure deployment
+yet. `docs/Infrastructure/DOCKER.md` and `.env.example` are brought back in line with the new roles,
+having been deliberately left alone by the R14 mechanism increment as out of its scope.
+
+**What this increment did not touch, on purpose:** no RLS policy changed — only *who connects* changed;
+`SetUserRolesCommandHandler` still cannot issue a gym-scoped grant; and `TenantScope` is still owed, not
+built. All recorded, unchanged, under "Known open items" below.
 
 ## Standing rules (non-negotiable, enforced)
 
@@ -1634,23 +1737,49 @@ Just to run it — nothing but Docker required:
 ```
 git clone https://github.com/GymOS-Management/GymOS-Backend
 cd GymOS-Backend
-docker compose up -d               # PostgreSQL + API, migrated and seeded, :5080
+docker compose up -d               # PostgreSQL + migrator + API + mailpit, :5080
+                                   # migrator applies migrations and exits 0, then api starts
                                    # sign in: admin@gymos.local / gymos-dev-admin-password
 ```
+
+**On an existing clone, `docker compose down -v` is required first, and it destroys the data.**
+`docker/postgres/initdb/10-roles.sql` — which creates `gymos_migrator` and `gymos_app` — is an initdb
+script, and initdb scripts run exactly once, only against an empty data directory. A volume created
+before this increment has no such roles in it, so the API's `gymos_app` connection (or the migrator's
+`gymos_migrator` one) fails outright rather than falling back to anything. There is no in-place upgrade
+path for this; wiping the volume is the fix, and it is exactly as destructive as it sounds — confirm you
+do not need whatever is in it first.
+
+**A stale `.env` carrying the old `POSTGRES_USER=gymos` produces a confusing first-boot failure.**
+`docker-compose.yml`'s postgres healthcheck runs `pg_isready -U ${POSTGRES_USER:-gymos_admin} …`, so an
+old `.env` that still sets `POSTGRES_USER=gymos` makes the healthcheck probe a role that
+`10-roles.sql` never creates (the roles it creates are `gymos_migrator` and `gymos_app`; `gymos_admin`
+comes from `POSTGRES_USER` itself) — postgres reports unhealthy, `api` and `migrator` never leave
+`Created` waiting on `depends_on: service_healthy`, and nothing in the logs says ".env" anywhere. Delete
+or update any pre-existing `.env` that still names `gymos` before bringing the stack up.
 
 To work on it — API on the host, database in a container:
 
 ```
 dotnet tool restore                # pinned dotnet-ef
-docker compose up -d postgres      # PostgreSQL 17 only
-dotnet test GymOS.Backend.slnx     # expect 1302 green (needs Docker) — see the test-host warning below
+docker compose up -d postgres      # PostgreSQL 17 only — creates gymos_migrator/gymos_app too
+dotnet test GymOS.Backend.slnx     # expect 1409 green (needs Docker) — see the test-host warning below
+
+# Migrations no longer apply on API start-up in any environment (Database:MigrateOnStartup is false
+# everywhere) — run them once by hand, as the migrator role, before the first `dotnet run`:
+dotnet ef database update --connection "Host=localhost;Port=5432;Database=gymos;Username=gymos_migrator;Password=gymos_dev_migrator_password" \
+    --project src/Platform/GymOS.Platform.Infrastructure --startup-project src/Host/GymOS.WebApi
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
 dotnet user-secrets set "Seed:SuperAdmin:Email" "you@example.com"    --project src/Host/GymOS.WebApi
 dotnet user-secrets set "Seed:SuperAdmin:Password" "<12+ chars>"     --project src/Host/GymOS.WebApi
 
-dotnet run --project src/Host/GymOS.WebApi   # migrates + seeds in Development; :5080/health/ready
+dotnet run --project src/Host/GymOS.WebApi   # seeds only now; migrations already applied above; :5080/health/ready
 ```
+
+`appsettings.Development.json` connects the host-run API as `gymos_app`, matching the container's own
+connection string — a bare `dotnet run` against the local sidecar exercises the same non-owner role the
+Docker deployment does, not a superuser.
 
 The JWT signing key has a **development-only** value in `appsettings.Development.json`
 (public, in version control, loaded only when `ASPNETCORE_ENVIRONMENT=Development`) —
@@ -1658,8 +1787,8 @@ the same treatment the dev database password already gets. Every other environme
 supply `Security:Jwt:SigningKey`; startup fails fast if it is missing or under 32 bytes.
 
 **Port 5432 collision:** if a native PostgreSQL is installed locally it competes with the
-container for 5432 and wins, producing `password authentication failed for user "gymos"`.
-Set `POSTGRES_PORT=5433` in `.env` (the containerised API is unaffected — it reaches the
+container for 5432 and wins, producing a password authentication failure for whichever role tried to
+connect. Set `POSTGRES_PORT=5433` in `.env` (the containerised API is unaffected — it reaches the
 database over the compose network), or stop the local service.
 
 Environment facts: .NET 10 SDK pinned via `global.json` (ADR-50); solution is
@@ -1824,32 +1953,26 @@ own deferrals (override expiry, the four-subquery plan projection, tracked catal
 log-count conflation) are recorded in `docs/BusinessRules/Features.md`'s deferred-list section and
 above, not repeated here.
 
-**R14's mechanism is now built and tested, closing that particular debt** — see "R14 as built" above
-and `docs/BusinessRules/TenantIsolation.md`. **No production table is tenant-scoped by it; `members`
-is the first, and it is next.** Nothing structural blocks starting Members, but two things want the
-owner's attention rather than surprising whoever builds it: the platform connects to PostgreSQL as a
-superuser, which makes `FORCE ROW LEVEL SECURITY` toothless against it (a decision only the maintainer
-can make — it touches three compose files, `appsettings`, CI, and every developer's existing database
-volume); and there is still no way to issue a **gym-scoped** grant through the API at all, which sits
+**R14's mechanism is now built and tested, and the database-roles close-out means it actually
+filters** — see "R14 as built" and "Database roles (R14 close-out) as built" above, and
+`docs/BusinessRules/TenantIsolation.md`. **No production table is tenant-scoped by it; `members` is the
+first, and it is next.** Nothing structural blocks starting Members. One thing that used to sit in this
+paragraph is now closed — the platform no longer connects as a superuser, it connects as `gymos_app`,
+which owns nothing — and one thing still wants the owner's attention rather than surprising whoever
+builds Members: there is still no way to issue a **gym-scoped** grant through the API at all, which sits
 squarely inside Members' own scope and is the real reason the tenant-resolution middleware has never
 been exercised against a real grant.
 
 ## Known open items / honest notes
 
-- **The platform's PostgreSQL connection is a superuser, which voids `FORCE ROW LEVEL SECURITY`
-  entirely (R14 close-out).** `docker-compose.yml`'s `POSTGRES_USER: gymos`, both compose overlays, and
-  `appsettings.Development.json` all connect as `gymos`, and `docker/postgres/initdb/README.md`
-  documents that role's scripts as running "as the superuser (`POSTGRES_USER`)". `FORCE` stops a
-  table's **owner** from bypassing its own row-level security policies; it does nothing against a
-  superuser, and PostgreSQL gives no way to make it — row security is never applied to a superuser or a
-  `BYPASSRLS` role, `FORCE` or not. `TenantIsolationValidator` now refuses to boot against a connected
-  role reporting `rolsuper`/`rolbypassrls`, but that check has never fired: it only runs once at least
-  one entity implements `ITenantScoped`, and none does yet, so no stack breaks today. It will fire,
-  loudly, the day `members` lands as the first one. **Fixing it is an open decision for the
-  maintainer, not done here** — it means changing which role the API connects as, which touches three
-  compose files, `appsettings`, CI, and needs either `REASSIGN OWNED` or a volume destroy against every
-  developer's existing database, since the initdb scripts that create the role do not re-run against a
-  volume that already exists. Reasoning in `docs/BusinessRules/TenantIsolation.md`.
+- ~~**The platform's PostgreSQL connection is a superuser, which voids `FORCE ROW LEVEL SECURITY`
+  entirely.**~~ **Closed by the database-roles increment (2026-08-15) — see "Database roles (R14
+  close-out) as built", above.** The API now connects as `gymos_app` (`NOSUPERUSER NOBYPASSRLS`, owns
+  nothing) and the migrator connects as `gymos_migrator` (same attributes, owns everything and runs
+  DDL); neither is `gymos_admin`, the renamed superuser (`POSTGRES_USER`) reserved for humans and
+  maintenance. `TenantIsolationValidator`'s role check is now unconditional rather than gated on
+  `ITenantScoped`, so it runs — and would refuse the boot — on every start, not only the day `members`
+  lands. Reasoning in `docs/BusinessRules/TenantIsolation.md`.
 
 - **A gym-scoped grant cannot be issued through the API at all (R14 close-out).**
   `SetUserRolesCommandHandler` rejects any attempt at a non-platform-scoped role and only ever writes
