@@ -92,19 +92,36 @@ and reading the tenant is a separate capability (`ITenantContext`) from setting 
 (`ITenantContextSetter`), so a handler cannot re-point its own scope even by accident.
 
 A job that needs tenant data receives no tenant from any request; it loops gyms and sets the context
-once per iteration, one gym at a time, through the same seam a request uses. Concretely, and as of
-today, that means **a fresh DI scope per gym** — `_scopeFactory.CreateAsyncScope()` inside the loop,
-then `ITenantContextSetter.SetTenant(gymId)` on that scope — which is the shape `FeatureOverrideSweepJob`
-already has for unrelated reasons (one scope and one transaction per gym, so one gym's failure does not
-abandon the sweep). `ITenantContext` is scoped and refuses to be re-pointed, so the fresh scope is what
-makes the next iteration's tenant settable at all.
+once per iteration, one gym at a time, through the same seam a request uses. Concretely that means
+**a fresh DI scope per gym** — `ITenantContext` is scoped and refuses to be re-pointed, so the fresh
+scope is what makes the next iteration's tenant settable at all. `FeatureOverrideSweepJob` already has
+that shape for unrelated reasons (one scope and one transaction per gym, so one gym's failure does not
+abandon the sweep), though it sets no tenant: its tables are platform-scope.
 
-> **`TenantScope` does not exist.** The design lists a `using`-shaped helper (`TenantScope`) that wraps
-> the scope-per-gym dance, and earlier revisions of this document referred to it as though it were
-> built. It is **owed, not present** — nothing in `src/` or `tests/` defines it. It was not built with
-> the R14 mechanism because there is no consumer yet: no production table is tenant-scoped, so no job
-> loops tenants for tenant data, and an API guessed ahead of its first caller would be guessed wrong.
-> Until it lands, write the scope-per-gym loop out longhand as above. Tracked in `docs/STATUS.md`.
+**`TenantScope` (BuildingBlocks.Application) wraps that dance**, so the loop reads:
+
+```csharp
+await using TenantScope scope = TenantScope.For(gymId, _scopeFactory);
+var members = scope.ServiceProvider.GetRequiredService<IMemberRepository>();
+```
+
+Resolve the iteration's services from `scope.ServiceProvider`. A service the job holds from its own
+scope carries the job's tenant, not the iteration's, and nothing can detect that from inside —
+it is the one part of this the type cannot enforce.
+
+> **It owns a scope; it does not clear a context — a correction to the design's §4.** That section
+> describes `TenantScope` as setting the tenant and *clearing it on dispose*. Clearing is impossible
+> against the context this design specifies, and deliberately so: `SetTenant` refuses a re-point and
+> offers no reset, because a second set would mean any query that already ran did so under the
+> previous value. A clear would reopen precisely that hole. The second half of the pair is instead
+> delivered by the scope holding the tenant ceasing to exist — the same guarantee, with no reset path
+> to misuse. The design spec is left as the historical record; this document is the current one.
+
+> **No production caller yet, and that is expected.** It is built ahead of Members, which brings the
+> first `ITenantScoped` entity and so the first job with tenant data to loop. What is proved today is
+> the scoping contract — six unit tests in `GymOS.BuildingBlocks.UnitTests`, including the two that
+> fail if anyone reintroduces the set-and-clear shape. The end-to-end proof that RLS actually filters
+> through a `TenantScope` needs a tenant-scoped table and belongs to that increment.
 
 The setting then has to survive the trip to PostgreSQL. `TenantSessionInterceptor` writes
 `app.tenant_id` on **every** connection open — never merely reset — including an empty value for
@@ -195,7 +212,7 @@ rows, never every row.
 
 This is the single most important property in the whole mechanism. A code path that forgets to set the
 tenant — a handler wired to the wrong route, a job that reuses one scope across every gym instead of
-taking a fresh one per gym (the seam `TenantScope` is owed for), a future maintainer who
+taking a fresh one per gym (the mistake `TenantScope` exists to make hard), a future maintainer who
 "simplifies" the middleware ordering — does not therefore read every tenant's data. It reads **none of
 it**. That failure is loud and immediate: an empty screen, a support ticket within minutes, a test that
 fails the moment anyone looks. The alternative failure mode — reading everyone's data because nobody set
@@ -240,8 +257,10 @@ above.
   check has never had a gym-scoped grant to check against — the existing test suite is entirely
   platform-scope callers. The Members increment needs a way to create a gym-scoped grant; it does not
   exist yet.
-- **`TenantScope` is owed.** The design names a `using`-shaped helper that sets the tenant for one gym
-  and clears it on dispose, so a job looping gyms cannot forget the second half. It was not built —
-  there is no consumer for it yet, and an API guessed ahead of its first caller is guessed wrong — and
-  until it exists, jobs must take a fresh DI scope per gym by hand (see "Where the tenant comes from",
-  above). The Members increment, or the first job that reads tenant data, is where it earns its shape.
+- ~~**`TenantScope` is owed.**~~ **Built 2026-08-15** (`BuildingBlocks.Application/Tenancy`), six unit
+  tests. It owns a DI scope per gym rather than clearing an ambient context — see "Where the tenant
+  comes from", above, for why the design's "clear on dispose" could not be built as written. **It has
+  no production caller yet**, which is the deliberate part: Members brings the first `ITenantScoped`
+  entity and therefore the first job with tenant data to loop, and that increment is where the
+  end-to-end proof (RLS filtering through a `TenantScope` against a real tenant-scoped table) belongs.
+  What is proved now is the scoping contract, not the isolation it will carry.

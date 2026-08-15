@@ -16,8 +16,11 @@ has to move to the migrator/app shape for the whole suite.~~ **That prerequisite
 final review parked, taken 2026-08-15 at the start of the next piece of work: the readiness check's
 remark overstated what it changed, and the managed-Postgres runbook verified `datdba` but never
 `proowner` on the two `SECURITY DEFINER` functions. Both are recorded under "Known open items".
-**What Members still needs before it can rely on R14 is unchanged, and none of it is the harness:**
-no gym-scoped grant can be issued through the API at all, and `TenantScope` is owed rather than built.
+**`TenantScope` is now built** (2026-08-15, six unit tests, no production caller yet) — and building it
+found that the design's §4 wording could not be honoured: it says "clear on dispose", but
+`TenantContext.SetTenant` refuses a re-point and offers no reset by design, so the helper owns a DI
+scope per gym instead and lets the scope's death do the clearing. **What Members still needs is one
+thing, not two:** no gym-scoped grant can be issued through the API at all.
 
 **Previously (2026-08-15, the roles themselves):** **R14's isolation now actually filters — the superuser gap is closed.**
 The deployment-half increment (`docs/superpowers/specs/2026-08-15-database-roles-design.md`) replaced
@@ -41,7 +44,8 @@ and `api` reported healthy, and `SELECT rolname, rolsuper, rolbypassrls FROM pg_
 PostgreSQL as a superuser, which makes `FORCE ROW LEVEL SECURITY` toothless against it~~ — **closed.**
 Two things remain open, recorded under "Known open items" below and in
 `docs/BusinessRules/TenantIsolation.md`: there is still no way to issue a gym-scoped grant through the
-API at all, and `TenantScope` (the design's `using`-shaped per-gym helper) is still owed, not built. See
+API at all, and ~~`TenantScope` (the design's `using`-shaped per-gym helper) is still owed, not
+built~~ — **`TenantScope` was built later the same day; see its entry under "Known open items".** See
 "R14 as built" for the mechanism and the new "Database roles (R14 close-out) as built" section below
 for this increment. Committed locally on `development`, not yet pushed.
 
@@ -2124,19 +2128,34 @@ been exercised against a real grant.
   way to create a gym-scoped grant; it does not exist yet. Reasoning in
   `docs/BusinessRules/TenantIsolation.md`.
 
-- **`TenantScope` is owed, not built (R14 close-out).** The R14 design's §4 component table lists
-  `TenantScope` (BuildingBlocks.Application) — a `using`-shaped helper that sets the tenant for one gym
-  and clears it on dispose, so a job looping gyms cannot forget the second half — and
-  `docs/BusinessRules/TenantIsolation.md` referred to it as an existing seam. It does not exist:
-  `grep -rn "TenantScope" src tests` finds only `ITenantScoped` and a private
-  `TenantIsolationValidator.TenantScopedTables()`. **Deliberately not built in this increment**, and
-  the omission was simply never recorded (found in the increment's final review, 2026-08-15): there is
-  no consumer for it — no production table is tenant-scoped, so no job loops tenants for tenant data —
-  and an API guessed ahead of its first caller is guessed wrong. Until it lands, a job takes a fresh DI
-  scope per gym by hand and calls `ITenantContextSetter.SetTenant` on it, which is the shape
-  `FeatureOverrideSweepJob` already has. The business-rules doc now says "owed" rather than "present";
-  the design spec is left as the historical record. The Members increment, or the first job that reads
-  tenant data, is where its shape gets decided.
+- ~~**`TenantScope` is owed, not built (R14 close-out).**~~ **Built 2026-08-15**, TDD, six unit tests in
+  `GymOS.BuildingBlocks.UnitTests`; build 0 warnings, `dotnet format` exit 0.
+  `BuildingBlocks.Application/Tenancy/TenantScope.cs`.
+  **Measured, every project run individually to completion with no `Aborted`:** SharedKernel 131 ·
+  BuildingBlocks **72** (was 66 — the six new tests) · Domain 434 · Application 247 · Infrastructure 67
+  · Architecture 153 = **1104**. **The 312 integration tests were not run** — Docker Desktop was not
+  running on this machine — so the full-suite figure is not re-measured here; nothing in this increment
+  touches a path they cover, but that is reasoning, not evidence.
+  **The design's §4 could not be built as written, and that is the finding worth keeping.** §4 says the
+  helper "sets the tenant for one gym and clears it on dispose". There is nothing to clear with:
+  `TenantContext.SetTenant` refuses a re-point and exposes no reset, deliberately — a second set would
+  mean any query that already ran did so under the previous value, which the caller cannot see and the
+  database will not report. A clear would reopen exactly that hole. So `TenantScope` **owns an
+  `AsyncServiceScope` per gym** — `For(gymId, scopeFactory)` creates the scope, sets the tenant on
+  *that* scope's fresh `TenantContext`, exposes `ServiceProvider`, and disposes the scope on dispose.
+  "Clear on dispose" becomes "the scope holding the tenant ceases to exist": same guarantee, no reset
+  path. `TenantIsolation.md` carries the correction; the design spec stays as the historical record.
+  **It has no production caller, on purpose.** `FeatureOverrideSweepJob` has the scope-per-gym shape but
+  sets no tenant — its tables are platform-scope — so routing it through this would be wrong, not a
+  cleanup. Members brings the first `ITenantScoped` entity and the first job with tenant data to loop.
+  **So what is proved is the scoping contract, not isolation**: the end-to-end test that RLS filters
+  through a `TenantScope` needs a tenant-scoped table and belongs to that increment. Two of the six
+  tests are regression guards that pass on arrival and fail if anyone reintroduces the set-and-clear
+  shape; the successive-gyms guard was proved able to fail by making `For` reuse one cached scope —
+  the exact mistake `TenantIsolation.md` names — and watching it break.
+  **Residual risk, stated rather than solved:** a job that resolves services from its *own* scope
+  instead of `scope.ServiceProvider` silently carries the job's tenant, and nothing in the type can
+  detect it. `ServiceProvider` being the only way to reach anything is the whole mitigation.
 
 - **⚠️ THE CHURN COUNT IS FIXED IN CODE (2026-08-14) — SAME STORED-HISTORY CAVEAT AS MRR BELOW.**
   `canceled_gyms` and `expired_gyms` counted `GymSubscription` **rows**, not gyms, so a gym that
