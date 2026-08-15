@@ -2052,6 +2052,23 @@ been exercised against a real grant.
 
 ## Known open items / honest notes
 
+- **Two documentation items parked at the end of the database-roles increment**, both raised by its
+  final re-review, both correctness-neutral and neither fixed because the increment's fix budget was
+  spent. Worth taking at the start of the next piece of work, since one is the stale-rationale class
+  this project keeps burning itself on:
+  - `DatabaseReadinessHealthCheck.cs:29-33` says a host pointed at a **nonexistent** database "would
+    have reported ready". It would not have — the old `AddDbContextCheck` called `CanConnectAsync`,
+    which opens a connection, throws `3D000` and is caught into `false`, so that case already reported
+    Unhealthy. What the new check actually adds is the database that **exists but is empty or behind**.
+    The remark overstates what changed, in new code, which is precisely how a future reader gets a
+    wrong mental model of a control.
+  - `docs/runbooks/managed-postgres-roles.md:189-198` verifies `datdba` but not `proowner`. On a
+    managed instance where an admin superuser applied the migration out of order, the two
+    `SECURITY DEFINER` functions would be owned by that superuser and `gymos_app` would execute them
+    with superuser rights. Blast radius is bounded — both take only an `integer`/`date` and escape
+    every interpolation with `%I`/`%L`, so no arbitrary DDL is reachable — but the runbook should have
+    the operator check `pg_get_userbyid(proowner)` for both functions.
+
 - **BLOCKS MEMBERS, AND MUST BE ITS FIRST TASK: `PostgresFixture` has to move to the
   migrator/app shape for the whole integration suite, *before* the first production `ITenantScoped`
   entity exists — not alongside it.** `TenantIsolationValidator` builds its table list from
