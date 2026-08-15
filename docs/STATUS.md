@@ -10,9 +10,14 @@ now `SECURITY DEFINER` with a pinned `search_path` and `EXECUTE` revoked from `P
 instead of green. **Verified through the API against a freshly wiped stack: HTTP 500 / `42501` before,
 HTTP 200 and invoice `2026-000001` after.** Gates: build **0 warnings**, `dotnet format` **exit 0**,
 **1410 tests passed** (integration **312**). Details in "Database roles — final-review fixes as built".
-**One thing Members must do first** is now the top entry under "Known open items": `PostgresFixture`
-has to move to the migrator/app shape for the whole suite *before* the first production
-`ITenantScoped` entity exists, because the validator's table list is model-driven, not usage-driven.
+~~**One thing Members must do first** is now the top entry under "Known open items": `PostgresFixture`
+has to move to the migrator/app shape for the whole suite.~~ **That prerequisite is closed** —
+`7a75dc5` moved the whole suite, green at 313 — and so are the **two documentation items** the same
+final review parked, taken 2026-08-15 at the start of the next piece of work: the readiness check's
+remark overstated what it changed, and the managed-Postgres runbook verified `datdba` but never
+`proowner` on the two `SECURITY DEFINER` functions. Both are recorded under "Known open items".
+**What Members still needs before it can rely on R14 is unchanged, and none of it is the harness:**
+no gym-scoped grant can be issued through the API at all, and `TenantScope` is owed rather than built.
 
 **Previously (2026-08-15, the roles themselves):** **R14's isolation now actually filters — the superuser gap is closed.**
 The deployment-half increment (`docs/superpowers/specs/2026-08-15-database-roles-design.md`) replaced
@@ -2052,22 +2057,27 @@ been exercised against a real grant.
 
 ## Known open items / honest notes
 
-- **Two documentation items parked at the end of the database-roles increment**, both raised by its
+- ~~**Two documentation items parked at the end of the database-roles increment**, both raised by its
   final re-review, both correctness-neutral and neither fixed because the increment's fix budget was
-  spent. Worth taking at the start of the next piece of work, since one is the stale-rationale class
-  this project keeps burning itself on:
-  - `DatabaseReadinessHealthCheck.cs:29-33` says a host pointed at a **nonexistent** database "would
+  spent.~~ **Both taken 2026-08-15, at the start of the next piece of work as this entry asked.**
+  Build 0 warnings, `dotnet format` exit 0; neither change touches executable code.
+  - `DatabaseReadinessHealthCheck`'s remark said a host pointed at a **nonexistent** database "would
     have reported ready". It would not have — the old `AddDbContextCheck` called `CanConnectAsync`,
-    which opens a connection, throws `3D000` and is caught into `false`, so that case already reported
-    Unhealthy. What the new check actually adds is the database that **exists but is empty or behind**.
-    The remark overstates what changed, in new code, which is precisely how a future reader gets a
-    wrong mental model of a control.
-  - `docs/runbooks/managed-postgres-roles.md:189-198` verifies `datdba` but not `proowner`. On a
-    managed instance where an admin superuser applied the migration out of order, the two
-    `SECURITY DEFINER` functions would be owned by that superuser and `gymos_app` would execute them
-    with superuser rights. Blast radius is bounded — both take only an `integer`/`date` and escape
-    every interpolation with `%I`/`%L`, so no arbitrary DDL is reachable — but the runbook should have
-    the operator check `pg_get_userbyid(proowner)` for both functions.
+    which opens a connection, so `3D000` arrived as a failed open that EF's `RelationalDatabaseCreator`
+    catches into `false`, and that case already reported Unhealthy. The remark now says what the check
+    actually adds — the database that **exists but is empty or behind** — keeps the measured
+    nonexistent-database experiment as its own paragraph, and records the correction in place rather
+    than quietly deleting the wrong sentence. **Read off EF's implementation, not re-observed**, and
+    the remark says so: Docker was not running and standing the stack up to re-measure a comment was
+    not judged proportionate. Anyone who does observe it should strike that caveat.
+  - `docs/runbooks/managed-postgres-roles.md` verified `datdba` but not `proowner`. "Verifying before
+    you trust it" now checks `pg_get_userbyid(proowner)` and `prosecdef` for both `SECURITY DEFINER`
+    functions, gives the `ALTER FUNCTION … OWNER TO gymos_migrator` repair, and names the ordering that
+    causes it: Step 2's `REASSIGN OWNED` covers functions that already exist, so the exposure is an
+    administrator applying the migration **after** the ownership transfer. Blast radius stated as
+    bounded, and re-checked against `SecureRuntimeDdlFunctions` rather than taken from the review —
+    both functions take only an `integer`/`date` and escape every interpolation with `%I`/`%L`, so no
+    arbitrary DDL is reachable; what is reachable is the fixed DDL they already issue, as a superuser.
 
 - ~~**BLOCKS MEMBERS, AND MUST BE ITS FIRST TASK: `PostgresFixture` has to move to the
   migrator/app shape for the whole integration suite.**~~ **Done 2026-08-15 (`7a75dc5`), suite green at

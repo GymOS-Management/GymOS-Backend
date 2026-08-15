@@ -198,6 +198,36 @@ WHERE datname = 'gymos';
 -- expect: owner = gymos_migrator
 ```
 
+**Check the two `SECURITY DEFINER` functions' owner as well, not just the database's.** They execute
+as whoever owns them, so their owner is a privilege boundary in a way an ordinary function's is not.
+Step 2's `REASSIGN OWNED` covers functions that already existed when you ran it — the case this
+catches is the other order: an administrator superuser applying the migration *after* the ownership
+transfer, which creates both functions owned by that superuser and leaves them there. `gymos_app`
+would then run them with superuser rights on every invoice of a new year and every partition sweep:
+
+```sql
+SELECT p.proname, pg_get_userbyid(p.proowner) AS owner, p.prosecdef
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'platform'
+  AND p.proname IN ('next_invoice_number', 'ensure_audit_log_partitions');
+-- expect: both rows owner = gymos_migrator, prosecdef = true
+```
+
+If either owner comes back as the administrator, transfer it — the definitions are already correct,
+only the ownership is wrong:
+
+```sql
+ALTER FUNCTION platform.next_invoice_number(integer) OWNER TO gymos_migrator;
+ALTER FUNCTION platform.ensure_audit_log_partitions(date, integer) OWNER TO gymos_migrator;
+```
+
+The blast radius of getting this wrong is bounded rather than open-ended, which is why it is a
+verification step and not a Step 0 prerequisite: both functions take only an `integer` or a `date`,
+and both escape every interpolation into their `EXECUTE` with `%I`/`%L`, so no caller-supplied
+identifier or arbitrary DDL is reachable through them. What is reachable is the fixed DDL they
+already issue, running as a superuser instead of as the role that is supposed to own the schema.
+
 Then let the application prove the rest. Deploy the migrator first and confirm it exits `0`; deploy the
 API and confirm `TenantIsolationValidator` passes at boot rather than refusing it. A refusal at this
 point means Step 0 through Step 3 above were not followed exactly as written for this instance — go

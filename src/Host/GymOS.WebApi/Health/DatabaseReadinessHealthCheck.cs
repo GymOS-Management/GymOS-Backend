@@ -17,13 +17,22 @@ namespace GymOS.WebApi.Health;
 /// skip; both maintenance sweeps skip. Each writes a warning nobody is watching, and then
 /// <c>/health/ready</c> answered <b>200</b>. A bare <c>dotnet run</c> against the development
 /// configuration (<c>MigrateOnStartup: false</c>, no <c>MigrateOnly</c>) is exactly that shape.</para>
-/// <para><b>It is worse than "unmigrated", and that was measured.</b> Npgsql's database creator
-/// treats <c>3D000 invalid_catalog_name</c> as "the database does not exist" rather than as an
-/// error, so <c>GetPendingMigrationsAsync</c> against a database that <i>does not exist at all</i>
-/// returns every migration as pending instead of throwing. Removing the <c>Database:MigrateOnly</c>
-/// branch from <c>Program.cs</c> and booting a host at a nonexistent database produced no exception,
-/// six skip warnings, and a host that would have reported ready. A process that cannot serve correct
-/// data is not ready, so this is where that belongs.</para>
+/// <para><b>The gap is the database that exists but is empty or behind</b> — not the one that is
+/// missing entirely. An earlier version of this remark claimed a host pointed at a <i>nonexistent</i>
+/// database "would have reported ready", and that overstated what changed: <c>CanConnectAsync</c>
+/// opens a connection, so <c>3D000 invalid_catalog_name</c> arrived there as a failed open, which
+/// EF's <c>RelationalDatabaseCreator</c> catches into <c>false</c> — the old registration already
+/// reported Unhealthy for it. (Read off EF's implementation, not re-observed here.) Stating a
+/// control's scope wider than it is, in the comment a future reader trusts, is the same
+/// stale-rationale trap this repository keeps finding elsewhere.</para>
+/// <para><b>The nonexistent database stays covered here too, and that part was measured.</b> Npgsql's
+/// database creator treats <c>3D000</c> as "the database does not exist" rather than as an error, so
+/// <c>GetPendingMigrationsAsync</c> against a database that <i>does not exist at all</i> returns
+/// every migration as pending instead of throwing — this check reports Unhealthy with the list
+/// rather than failing on the way to the answer. Removing the <c>Database:MigrateOnly</c> branch
+/// from <c>Program.cs</c> and booting a host at a nonexistent database produced no exception and six
+/// skip warnings, every startup step declining in turn. A process that cannot serve correct data is
+/// not ready, so this is where that belongs.</para>
 /// <para><b>Reachability comes for free.</b> Asking for the pending list opens a connection, so an
 /// unreachable database throws here and the health-check pipeline reports the registration's failure
 /// status — <c>Unhealthy</c>. That is why this is one check rather than a connectivity check plus a
