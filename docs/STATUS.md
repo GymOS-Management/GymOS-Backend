@@ -1900,6 +1900,40 @@ still on disk but no longer mounted — see DOCKER.md troubleshooting.
 
 ## Next step (resume here)
 
+### As of 2026-08-15, end of session — read this first
+
+Three commits landed today and are **pushed** to `origin/development`: `c86a02c` (two parked
+documentation fixes), `25136f3` (`TenantScope`), `59c9e38` (the gym-scoped-grants design spec).
+Working tree clean, `development` in sync with `origin`.
+
+**Do this first when you come back:**
+
+1. **Review `docs/superpowers/specs/2026-08-15-gym-scoped-grants-design.md`.** It is an approved design
+   that nobody has re-read with fresh eyes. The two decisions most likely to be wrong are **D7** (per-gym
+   roles provisioned with the gym, seeded from a code-canonical list) and **D9** (the endpoint shape,
+   `PUT /gyms/{gymId}/users/{userId}/roles`). Until that review happens the spec is one person's opinion.
+2. **Confirm the one unverified claim in it** (§6): that `WebApplication` inserts `UseRouting` at the
+   head of the pipeline, so route values are populated at `UseAuthentication()` time. Taken from
+   framework documentation, **not observed**. The whole of D1 rests on it, and D1 is the spine of the
+   design. Cheapest check: log `HttpContext.Request.RouteValues` from a middleware placed there.
+3. **Then either** start Members (which carries the grant work as steps 1–5 of that spec) **or** land
+   spec steps 1–2 alone — the pipeline reorder and tenant-aware evaluation. Those two close the
+   privilege-escalation risk and leave the platform exactly as capable as it is today, so they are safe
+   to ship without the rest.
+
+**Not verified today, and worth knowing before trusting anything above:** Docker Desktop was not running
+on this machine, so **the 312 integration tests were not run all session**. Everything reported is the
+1104 non-Docker tests (SharedKernel 131 · BuildingBlocks 72 · Domain 434 · Application 247 ·
+Infrastructure 67 · Architecture 153), each project run individually to completion with no `Aborted`,
+plus build 0 warnings and `dotnet format` exit 0. **Run the integration suite before the next merge to
+`staging`.**
+
+**Also still true:** `development` is **58 commits ahead of `staging`** in this repo and Platform is 26
+ahead. Nothing has been promoted since 13 August (backend) / 12 August (platform). That is a decision
+nobody has taken, not an oversight.
+
+---
+
 **F4 is closed as of 2026-08-14** — built, reviewed, its three substantive findings fixed
 (`2ae0445`), and `F4-AS-BUILT.md` written. It does not appear in the owed-review list below.
 
