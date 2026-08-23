@@ -33,7 +33,7 @@ public interface IUserRepository
     /// bug optimistic concurrency exists to close.</para>
     /// </summary>
     /// <param name="expectedVersion">A token previously issued by the API for this resource.</param>
-    void ExpectVersion(User user, uint expectedVersion);
+    void ExpectVersion(User user, ulong expectedVersion);
 
     /// <summary>
     /// Marks the aggregate itself as changed, for a write that only touched its children.

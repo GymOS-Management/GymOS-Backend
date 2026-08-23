@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Domain.Gyms;
 using Microsoft.EntityFrameworkCore;
@@ -50,12 +51,12 @@ internal sealed class GymRepository : IGymRepository
     /// UPDATE's WHERE clause. If the row has moved on, the statement matches nothing and EF reports a
     /// concurrency failure — the same mechanism as <c>UserRepository</c>.
     /// </summary>
-    public void ExpectVersion(Gym gym, uint expectedVersion) =>
-        _dbContext.Entry(gym).Property<uint>("xmin").OriginalValue = expectedVersion;
+    public void ExpectVersion(Gym gym, ulong expectedVersion) =>
+        _dbContext.Entry(gym).Property<ulong>(ConcurrencyConventions.RowVersionProperty).OriginalValue = expectedVersion;
 
     /// <summary>
     /// Flags the audit timestamp as modified, which is enough for EF to issue an UPDATE against the gyms
-    /// row — and PostgreSQL advances <c>xmin</c> on any update.
+    /// row — and SQL Server advances <c>row_version</c> on any update.
     /// </summary>
     public void MarkAggregateChanged(Gym gym) =>
         _dbContext.Entry(gym).Property(entity => entity.UpdatedAtUtc).IsModified = true;

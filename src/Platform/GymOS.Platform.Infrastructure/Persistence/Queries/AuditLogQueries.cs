@@ -42,7 +42,7 @@ internal sealed class AuditLogQueries : IAuditLogQueries
             //     that escapes its other parameter and not this one.
             string pattern = SearchPatterns.StartsWith(filter.Action.Trim());
             query = query.Where(log =>
-                EF.Functions.ILike(log.Action, pattern, SearchPatterns.EscapeCharacter));
+                EF.Functions.Like(log.Action, pattern));
         }
 
         if (!string.IsNullOrWhiteSpace(filter.EntityType))
@@ -70,9 +70,9 @@ internal sealed class AuditLogQueries : IAuditLogQueries
         {
             string pattern = SearchPatterns.Contains(search);
             query = query.Where(log =>
-                EF.Functions.ILike(log.Action, pattern, SearchPatterns.EscapeCharacter) ||
+                EF.Functions.Like(log.Action, pattern) ||
                 (log.UserEmail != null
-                    && EF.Functions.ILike(log.UserEmail, pattern, SearchPatterns.EscapeCharacter)));
+                    && EF.Functions.Like(log.UserEmail, pattern)));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);

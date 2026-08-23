@@ -29,7 +29,7 @@ public sealed class DailyPlatformStatsConfiguration : IEntityTypeConfiguration<D
             .HasForeignKey(mrr => mrr.StatsId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // No xmin: one writer, serialised by IJobLock, and rows are never updated. See the aggregate.
+        // No row version: one writer, serialised by IJobLock, and rows are never updated. See the aggregate.
     }
 }
 

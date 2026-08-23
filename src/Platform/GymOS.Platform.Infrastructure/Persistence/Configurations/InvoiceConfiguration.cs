@@ -37,9 +37,9 @@ public sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
         builder.HasMoney(invoice => invoice.TaxAmount, "tax");
         builder.HasMoney(invoice => invoice.Total, "total");
 
-        // A fraction, not an amount (rule R4 exempts it by name): numeric(5,4) holds 0.0000–9.9999,
+        // A fraction, not an amount (rule R4 exempts it by name): decimal(5,4) holds 0.0000–9.9999,
         // which is 0%–999.99% — any real rate fits with room for the absurd, and nothing rounds.
-        builder.Property(invoice => invoice.TaxRate).HasColumnType("numeric(5,4)");
+        builder.Property(invoice => invoice.TaxRate).HasColumnType("decimal(5,4)");
 
         // Restrict, not Cascade, on both parents: an invoice is the billing record. A gym is
         // soft-deleted and its subscriptions are kept for the same reason; a purge that ever
@@ -69,7 +69,7 @@ public sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
         builder.HasIndex(invoice => invoice.SubscriptionId);
         builder.HasIndex(invoice => new { invoice.Status, invoice.DueAtUtc });
 
-        builder.Property<uint>("xmin").IsRowVersion();
+        builder.HasGymOSRowVersion();
     }
 }
 

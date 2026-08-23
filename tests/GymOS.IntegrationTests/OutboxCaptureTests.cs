@@ -16,7 +16,7 @@ namespace GymOS.IntegrationTests;
 /// writes outbox rows in the same transaction, rollback leaves nothing behind.
 /// Uses a test-only aggregate because no production aggregate exists until M1.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class OutboxCaptureTests : IAsyncLifetime
 {
     private sealed record TestGymRenamed(Guid GymId, string NewName) : DomainEvent
@@ -67,10 +67,10 @@ public sealed class OutboxCaptureTests : IAsyncLifetime
 
     private static readonly DateTimeOffset KnownInstant = new(2026, 8, 4, 15, 0, 0, TimeSpan.Zero);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private string _connectionString = string.Empty;
 
-    public OutboxCaptureTests(PostgresFixture postgres) => _postgres = postgres;
+    public OutboxCaptureTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
@@ -78,14 +78,14 @@ public sealed class OutboxCaptureTests : IAsyncLifetime
         // than using the application's, and EnsureCreated does nothing at all when the database already
         // contains tables — so against a migrated database it silently created no `integration_tests`
         // schema and every test failed later with `42P01: relation does not exist`.
-        _connectionString = await _postgres.CreateUnmigratedDatabaseAsync("outbox_tests");
+        _connectionString = await _sqlServer.CreateUnmigratedDatabaseAsync("outbox_tests");
 
         // EnsureCreated is DDL, so it runs as the migrator: the app role this suite's tests connect as
         // owns nothing and holds no CREATE. What it creates lands under the migrator, which is what
         // makes the ALTER DEFAULT PRIVILEGES grants apply to it — the same arrangement the deployment
         // uses, where migrations create and the API only reads and writes.
         await using (IntegrationDbContext migrator =
-            CreateContext(new CorrelationContext(), PostgresFixture.AsMigrator(_connectionString)))
+            CreateContext(new CorrelationContext(), SqlServerFixture.AsMigrator(_connectionString)))
         {
             await migrator.Database.EnsureCreatedAsync();
         }
@@ -100,7 +100,7 @@ public sealed class OutboxCaptureTests : IAsyncLifetime
         var interceptor = new OutboxSaveChangesInterceptor(
             new FakeClock(KnownInstant), correlationContext, new SystemUser());
         DbContextOptions<IntegrationDbContext> options = new DbContextOptionsBuilder<IntegrationDbContext>()
-            .UseNpgsql(connectionString ?? _connectionString)
+            .UseSqlServer(connectionString ?? _connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .AddInterceptors(interceptor)
             .Options;

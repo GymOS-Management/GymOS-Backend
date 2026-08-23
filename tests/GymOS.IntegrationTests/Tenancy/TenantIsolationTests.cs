@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Npgsql;
+using Microsoft.Data.SqlClient;
 using Xunit;
 
 namespace GymOS.IntegrationTests.Tenancy;
@@ -35,14 +35,14 @@ namespace GymOS.IntegrationTests.Tenancy;
 /// <see cref="TheAppRoleCannotDisableItsOwnIsolation"/> and
 /// <see cref="TheMigratorRoleCanDisableIt_WhichIsWhyTheAppRoleIsNotTheMigrator"/> exist to prove: one
 /// statement, refused for the role serving requests and accepted for the role that is not.</para>
-/// <para><b><c>Maximum Pool Size=1</c>.</b> Rebuilt here rather than in <c>PostgresFixture</c>, whose
+/// <para><b><c>Maximum Pool Size=1</c>.</b> Rebuilt here rather than in <c>SqlServerFixture</c>, whose
 /// five-connection cap is load-bearing for the rest of the suite. One connection is what makes
 /// <see cref="TheTenantDoesNotLeakIntoTheNextUseOfAPooledConnection"/> deterministic: the two scopes it
 /// opens are guaranteed the same physical connection, so a leaked setting would be observed rather
 /// than gambled on. Read that test's own comment before trusting it as a control — Npgsql's pooled
 /// connection reset, not the interceptor, is what it currently pins.</para>
 /// </remarks>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class TenantIsolationTests : IAsyncLifetime
 {
     private static readonly Guid TenantA = new("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
@@ -52,7 +52,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// The role that owns this suite's database, its schemas and its tables, and applies migrations —
     /// the local stand-in for <c>gymos_migrator</c>. Nothing connects as it to serve a request.
     /// </summary>
-    private const string MigratorRole = PostgresFixture.MigratorRole;
+    private const string MigratorRole = SqlServerFixture.MigratorPrincipal;
 
     /// <summary>
     /// The role the host, the validator and every isolation test connect as — the local stand-in for
@@ -60,16 +60,16 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// row-level security outright; and the owner of nothing, because an owner can turn <c>FORCE</c>
     /// off on its own tables in one statement.
     /// </summary>
-    private const string AppRole = PostgresFixture.AppRole;
+    private const string AppRole = SqlServerFixture.AppPrincipal;
 
     /// <summary>
-    /// The suite no longer builds its own roles, grants or migrations: <c>PostgresFixture</c> does all
+    /// The suite no longer builds its own roles, grants or migrations: <c>SqlServerFixture</c> does all
     /// three for every database it hands out, so what this suite used to construct for itself is now
     /// the harness-wide default. A second, differently-named pair here would actively break — the
     /// fixture migrates before returning the connection string, so the tables belong to its migrator
     /// and a local app role would hold no grants over them.
     /// </summary>
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private readonly List<IServiceScope> _scopes = [];
     private readonly List<AppDbContext> _rawContexts = [];
     private string _connectionString = null!;
@@ -89,7 +89,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     private string _bootstrapConnectionString = null!;
 
     /// <summary>
-    /// A database of its own, connected through whatever <see cref="PostgresFixture.CreateIsolatedDatabaseAsync"/>
+    /// A database of its own, connected through whatever <see cref="SqlServerFixture.CreateIsolatedDatabaseAsync"/>
     /// hands back — the harness role once Task 1 lands, still the bootstrap superuser until it does.
     /// Kept separate from <see cref="_bootstrapConnectionString"/>'s database so
     /// <see cref="TheHarnessRoleIsNotExemptFromRowLevelSecurity"/> proves something about the fixture's
@@ -100,22 +100,22 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
     private AuthenticationHost _host = null!;
 
-    public TenantIsolationTests(PostgresFixture postgres) => _postgres = postgres;
+    public TenantIsolationTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        _harnessRoleConnectionString = await _postgres.CreateIsolatedDatabaseAsync("harness_role");
+        _harnessRoleConnectionString = await _sqlServer.CreateIsolatedDatabaseAsync("harness_role");
 
-        // CreateIsolatedDatabaseAsync now hands back a connection as PostgresFixture's own harness
+        // CreateIsolatedDatabaseAsync now hands back a connection as SqlServerFixture's own harness
         // role (Task 1), which has no CREATEROLE — this suite genuinely needs a superuser to create
         // its two roles and hand the database to the migrator, so it takes
-        // PostgresFixture.BootstrapConnectionString and points it at the database
+        // SqlServerFixture.BootstrapConnectionString and points it at the database
         // CreateIsolatedDatabaseAsync just created, rather than reusing the (now non-superuser)
         // connection string that method returns.
-        string appConnectionString = await _postgres.CreateIsolatedDatabaseAsync("tenant_isolation");
-        string isolatedDatabaseName = new NpgsqlConnectionStringBuilder(appConnectionString).Database!;
+        string appConnectionString = await _sqlServer.CreateIsolatedDatabaseAsync("tenant_isolation");
+        string isolatedDatabaseName = new SqlConnectionStringBuilder(appConnectionString).Database!;
 
-        _bootstrapConnectionString = new NpgsqlConnectionStringBuilder(_postgres.BootstrapConnectionString)
+        _bootstrapConnectionString = new SqlConnectionStringBuilder(_sqlServer.BootstrapConnectionString)
         {
             Database = isolatedDatabaseName,
 
@@ -126,17 +126,17 @@ public sealed class TenantIsolationTests : IAsyncLifetime
             Pooling = false,
         }.ConnectionString;
 
-        // No role creation here any more. PostgresFixture builds the migrator/app pair once per
+        // No role creation here any more. SqlServerFixture builds the migrator/app pair once per
         // container, hands every database it creates to the migrator, applies the default privileges
         // and migrates as the migrator — the shape this suite used to construct for itself. Keeping a
         // second, differently-named pair would now actively break: the fixture migrates before handing
         // the string back, so the tables belong to *its* migrator and a local app role would hold no
         // grants over them.
-        _migratorConnectionString = new NpgsqlConnectionStringBuilder(
-            PostgresFixture.AsMigrator(appConnectionString))
+        _migratorConnectionString = new SqlConnectionStringBuilder(
+            SqlServerFixture.AsMigrator(appConnectionString))
         {
 
-            // Unpooled, for the reason PostgresFixture.Unpooled already gives: xUnit builds a fresh
+            // Unpooled, for the reason SqlServerFixture.Unpooled already gives: xUnit builds a fresh
             // instance of this class per test method, each against a uniquely named database, so this
             // connection string is never reused and a pool behind it only parks idle connections that
             // nothing will claim. The migrator is used a handful of times per test, so the handshake
@@ -151,7 +151,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
             Pooling = false,
         }.ConnectionString;
 
-        _connectionString = new NpgsqlConnectionStringBuilder(appConnectionString)
+        _connectionString = new SqlConnectionStringBuilder(appConnectionString)
         {
             // One physical connection, so connection reuse is certain rather than lucky (D6). Pooling
             // is asserted explicitly rather than inherited: the fixture's app string is pooled today,
@@ -173,7 +173,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         //
         // Everything created here inherits the ALTER DEFAULT PRIVILEGES grants above, which is the
         // only reason the app role can read __EFMigrationsHistory or touch the probe at all.
-        // Migrations and the runtime-function grants both moved into PostgresFixture, which now does
+        // Migrations and the runtime-function grants both moved into SqlServerFixture, which now does
         // them for every database it hands out rather than only for this suite. The reasons they had to
         // happen before the host boots are unchanged and still hold: they create the `platform` schema
         // the probe lives in, the app role owns nothing and could not create it, TenantIsolationValidator
@@ -353,15 +353,15 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         // boot, so the validator must say so rather than return a silent pass.
         //
         // Asked for by name. This used to say "which is what a fresh isolated database is", and that
-        // stopped being true the moment PostgresFixture began migrating each database it hands out —
+        // stopped being true the moment SqlServerFixture began migrating each database it hands out —
         // at which point this test quietly started exercising the *other* early return ("checked
         // nothing: no entity implements ITenantScoped") and asserting on its message. It failed
         // loudly, which is the only reason the drift was visible.
-        string unmigrated = await _postgres.CreateUnmigratedDatabaseAsync("tenant_isolation_pending");
+        string unmigrated = await _sqlServer.CreateUnmigratedDatabaseAsync("tenant_isolation_pending");
 
         await using var context = new AppDbContext(
             new DbContextOptionsBuilder<AppDbContext>()
-                .UseNpgsql(unmigrated, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+                .UseSqlServer(unmigrated, TestDatabase.Options)
                 .UseSnakeCaseNamingConvention()
                 .Options);
 
@@ -456,7 +456,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         }
         finally
         {
-            // Revoked in a finally, and the stakes went up when the roles moved into PostgresFixture:
+            // Revoked in a finally, and the stakes went up when the roles moved into SqlServerFixture:
             // they are created once per container and now serve EVERY suite, not just this one. A leaked
             // membership would not merely disarm TheAppRoleCannotDisableItsOwnIsolation — it would make
             // the app role an owner everywhere, so every host booted afterwards would fail
@@ -565,14 +565,14 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
         Assert.Equal(1, created);
 
-        await using var connection = new NpgsqlConnection(_migratorConnectionString);
+        await using var connection = new SqlConnection(_migratorConnectionString);
         await connection.OpenAsync();
 
         // 2. SECURITY DEFINER bought the app role the right to CALL them. It must not have handed it
         // ownership of what they produce, or the two-role split would be undone by the very fix that
         // made invoicing work — an owner can ALTER its own table's isolation off. The objects belong
         // to the definer, which is the migrator.
-        await using (NpgsqlCommand owner = connection.CreateCommand())
+        await using (SqlCommand owner = connection.CreateCommand())
         {
             owner.CommandText =
                 """
@@ -590,7 +590,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         // and have its own code run as the schema owner. EXECUTE left at the CREATE FUNCTION default
         // — PUBLIC — lends that same elevation to every role in the database. Either alone turns the
         // fix into a worse defect than the one it fixed.
-        await using NpgsqlCommand definers = connection.CreateCommand();
+        await using SqlCommand definers = connection.CreateCommand();
         definers.CommandText =
             """
             SELECT p.proname,
@@ -654,7 +654,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         // migrated fails that check on every one of them.
         //
         // This suite builds its own migrator/app pair, so it would keep passing on its own while the
-        // other three hundred hosts broke. That is why this test interrogates PostgresFixture's role
+        // other three hundred hosts broke. That is why this test interrogates SqlServerFixture's role
         // rather than this suite's: it is the one every other suite actually connects as.
         //
         // Two assertions, because "owns nothing" and "cannot execute DDL" are different claims and the
@@ -728,7 +728,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     private AppDbContext CreateMigrationContext()
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_migratorConnectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(_migratorConnectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
 
@@ -840,7 +840,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     private AppDbContext CreateRawContext(string connectionString, bool withTenantProbe)
     {
         DbContextOptionsBuilder<AppDbContext> builder = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention();
 
         if (withTenantProbe)
@@ -855,14 +855,14 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
     /// <summary>
     /// A plain <see cref="AppDbContext"/> over <see cref="_harnessRoleConnectionString"/> — whatever
-    /// <see cref="PostgresFixture.CreateIsolatedDatabaseAsync"/> hands back, deliberately neither of
+    /// <see cref="SqlServerFixture.CreateIsolatedDatabaseAsync"/> hands back, deliberately neither of
     /// this suite's own roles — so <see cref="TheHarnessRoleIsNotExemptFromRowLevelSecurity"/>
     /// checks the fixture's default connection rather than a role this suite built for itself.
     /// </summary>
     private AppDbContext CreateHarnessRoleContext()
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_harnessRoleConnectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(_harnessRoleConnectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
 
@@ -889,10 +889,10 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// </summary>
     private async Task<bool> TheMigratorOwnsTheProbeTableAsync()
     {
-        await using var connection = new NpgsqlConnection(_migratorConnectionString);
+        await using var connection = new SqlConnection(_migratorConnectionString);
         await connection.OpenAsync();
 
-        await using NpgsqlCommand command = connection.CreateCommand();
+        await using SqlCommand command = connection.CreateCommand();
         command.CommandText =
             """
             SELECT pg_get_userbyid(c.relowner) = current_user
@@ -909,10 +909,10 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// </summary>
     private async Task<bool> ProbeIsForcedAsync()
     {
-        await using var connection = new NpgsqlConnection(_migratorConnectionString);
+        await using var connection = new SqlConnection(_migratorConnectionString);
         await connection.OpenAsync();
 
-        await using NpgsqlCommand command = connection.CreateCommand();
+        await using SqlCommand command = connection.CreateCommand();
         command.CommandText =
             """
             SELECT c.relforcerowsecurity
@@ -929,10 +929,10 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// </summary>
     private async Task<long> ProbeRowsVisibleToTheOwnerAsync()
     {
-        await using var connection = new NpgsqlConnection(_migratorConnectionString);
+        await using var connection = new SqlConnection(_migratorConnectionString);
         await connection.OpenAsync();
 
-        await using NpgsqlCommand command = connection.CreateCommand();
+        await using SqlCommand command = connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM platform.tenant_probe";
 
         return (long)(await command.ExecuteScalarAsync())!;
@@ -941,10 +941,10 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// <summary>Runs a single-value query on the app-role connection and returns its result.</summary>
     private async Task<T> ScalarAsAppRoleAsync<T>(string sql)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
 
-        await using NpgsqlCommand command = connection.CreateCommand();
+        await using SqlCommand command = connection.CreateCommand();
         command.CommandText = sql;
 
         return (T)(await command.ExecuteScalarAsync())!;
@@ -952,10 +952,10 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
     private static async Task ExecuteAsync(string connectionString, string sql)
     {
-        await using var connection = new NpgsqlConnection(connectionString);
+        await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync();
 
-        await using NpgsqlCommand command = connection.CreateCommand();
+        await using SqlCommand command = connection.CreateCommand();
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync();
     }

@@ -3,18 +3,18 @@ using Xunit;
 
 namespace GymOS.IntegrationTests;
 
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class IdempotencyHostTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public IdempotencyHostTests(PostgresFixture postgres) => _postgres = postgres;
+    public IdempotencyHostTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("idempotency_host");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("idempotency_host");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
     }

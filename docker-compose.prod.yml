@@ -22,38 +22,53 @@
 # directly onto readiness and liveness probes.
 
 services:
-  postgres:
+  mssql:
     environment:
-      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for production}'
-      # Read by docker/postgres/initdb/10-roles.sql at first boot, to create the two roles the
-      # application actually connects as. Guarded the same way: a missing secret is a five-second
-      # failure at deploy time, not a role created with no password.
-      GYMOS_MIGRATOR_PASSWORD: '${GYMOS_MIGRATOR_PASSWORD:?GYMOS_MIGRATOR_PASSWORD must be set for production}'
-      GYMOS_APP_PASSWORD: '${GYMOS_APP_PASSWORD:?GYMOS_APP_PASSWORD must be set for production}'
+      MSSQL_SA_PASSWORD: '${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD must be set for production}'
+
+      # Developer is free for non-production use only. A deployment serving real users must set
+      # this to the edition it is licensed for — Standard, Enterprise, or an Express instance
+      # accepting the 10 GB cap. Unset it and the container would run Developer edition in
+      # production, which is a licence violation rather than a technical fault, so it is guarded
+      # like a secret.
+      MSSQL_PID: '${MSSQL_PID:?MSSQL_PID must be set for production (Standard, Enterprise, or Express)}'
 
     # Deliberately empty: it overrides the override file's published port, so the database is
     # reachable only from the compose network. Nothing on the host, and nothing else on the host's
-    # network, can open a connection to it. Administer it with `docker compose exec postgres psql`
-    # or over an SSH tunnel.
+    # network, can open a connection to it. Administer it with
+    # `docker compose exec mssql /opt/mssql-tools18/bin/sqlcmd` or over an SSH tunnel.
     ports: []
 
-    # A managed database (Azure Database for PostgreSQL Flexible Server, AD-11) is the better
-    # answer for anything with real users: backups, point-in-time restore, patching, and failover
-    # stop being someone's weekend. When that happens, delete this service, point
-    # ConnectionStrings__Database at the managed instance, and nothing else in this file changes.
+    # A managed database (Azure SQL Database, AD-11) is the better answer for anything with real
+    # users: backups, point-in-time restore, patching, and failover stop being someone's weekend.
+    # When that happens, delete this service and db-init, point ConnectionStrings__Database at the
+    # managed instance, and apply docs/runbooks/managed-sqlserver-roles.md once. Nothing else in
+    # this file changes.
     #
-    # shm_size matters for a container that will actually be queried: PostgreSQL uses shared memory
-    # for parallel query workers and hash joins, and Docker's 64 MB default silently caps them.
-    shm_size: 256mb
+    # No shm_size. PostgreSQL needed it raised because it uses System V shared memory for parallel
+    # workers and hash joins, and Docker's 64 MB default silently capped them; SQL Server manages
+    # its own buffer pool inside the process and is bounded by the memory limit below instead.
 
     deploy:
       resources:
         limits:
           # A bound, so a runaway query cannot starve the API on the same host. Raise it for real
           # workloads — this is sized for a small deployment, not chosen by measurement.
-          memory: ${POSTGRES_MEMORY_LIMIT:-2g}
+          #
+          # SQL Server refuses to start with less than 2 GB available, so unlike the PostgreSQL
+          # service this replaces, this limit has a hard floor rather than only a sensible one.
+          memory: ${MSSQL_MEMORY_LIMIT:-4g}
         reservations:
-          memory: 512m
+          memory: 2g
+
+  db-init:
+    environment:
+      MSSQL_SA_PASSWORD: '${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD must be set for production}'
+      # Read by docker/sqlserver/initdb/10-principals.sql, to create the two principals the
+      # application actually connects as. Guarded the same way: a missing secret is a five-second
+      # failure at deploy time, not a login created with no password.
+      GYMOS_MIGRATOR_PASSWORD: '${GYMOS_MIGRATOR_PASSWORD:?GYMOS_MIGRATOR_PASSWORD must be set for production}'
+      GYMOS_APP_PASSWORD: '${GYMOS_APP_PASSWORD:?GYMOS_APP_PASSWORD must be set for production}'
 
   api:
     # Pinned rather than built. Production should run the artefact CI produced and tested, not one
@@ -64,13 +79,22 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
 
-      # gymos_app, not the postgres superuser: it owns nothing and holds no DDL rights, so it
-      # cannot switch a table's row-level security off even given an SQL injection. See
-      # docker/postgres/initdb/10-roles.sql.
+      # gymos_app, not sa: it owns nothing and holds no DDL or security-administration rights, so it
+      # cannot disable a security policy even given an SQL injection. See
+      # docker/sqlserver/initdb/10-principals.sql. TenantIsolationValidator refuses to boot if this
+      # connection turns out to be privileged, so a misconfiguration here is a failed deploy rather
+      # than a silent loss of tenant isolation.
       GYMOS_APP_PASSWORD: '${GYMOS_APP_PASSWORD:?GYMOS_APP_PASSWORD must be set for production}'
+
+      # Encrypt=True and NO TrustServerCertificate: the certificate is verified for real. That is
+      # the one difference from the development connection string, and it is the difference between
+      # an encrypted channel and an authenticated one. Against Azure SQL the certificate chains to a
+      # public CA and this simply works; against a self-hosted instance, install a real certificate
+      # rather than reaching for TrustServerCertificate here.
       ConnectionStrings__Database: >-
-        Host=${POSTGRES_HOST:-postgres};Port=${POSTGRES_PORT_INTERNAL:-5432};Database=${POSTGRES_DB:-gymos};Username=gymos_app;Password=${GYMOS_APP_PASSWORD};Include
-        Error Detail=false;SSL Mode=${POSTGRES_SSL_MODE:-Prefer}
+        Server=${MSSQL_HOST:-mssql},${MSSQL_PORT_INTERNAL:-1433};Database=${GYMOS_DB:-gymos};User
+        Id=gymos_app;Password=${GYMOS_APP_PASSWORD};Encrypt=True;TrustServerCertificate=False;Current
+        Language=us_english
 
       # Startup validates this is at least 32 bytes and refuses to boot otherwise, so a weak value
       # fails immediately rather than issuing forgeable tokens.
@@ -105,7 +129,7 @@ services:
         reservations:
           memory: 256m
 
-    # No development tooling reaches production: pgadmin and mailpit exist only in
+    # No development tooling reaches production: mailpit exists only in
     # docker-compose.override.yml, which is not applied here. That is why they live there.
 
   migrator:
@@ -120,12 +144,14 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
 
-      # gymos_migrator owns the database and everything migrations create — see
-      # docker/postgres/initdb/10-roles.sql. Guarded the same way as every other production secret.
+      # gymos_migrator owns the schemas and everything migrations create — see
+      # docker/sqlserver/initdb/10-principals.sql. Guarded the same way as every other production
+      # secret.
       GYMOS_MIGRATOR_PASSWORD: '${GYMOS_MIGRATOR_PASSWORD:?GYMOS_MIGRATOR_PASSWORD must be set for production}'
       ConnectionStrings__Database: >-
-        Host=${POSTGRES_HOST:-postgres};Port=${POSTGRES_PORT_INTERNAL:-5432};Database=${POSTGRES_DB:-gymos};Username=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD};Include
-        Error Detail=false;SSL Mode=${POSTGRES_SSL_MODE:-Prefer}
+        Server=${MSSQL_HOST:-mssql},${MSSQL_PORT_INTERNAL:-1433};Database=${GYMOS_DB:-gymos};User
+        Id=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD};Encrypt=True;TrustServerCertificate=False;Current
+        Language=us_english
 
       # Machine-readable, matching api: these lines are read by a collector, not a person.
       Serilog__ConsoleFormat: json

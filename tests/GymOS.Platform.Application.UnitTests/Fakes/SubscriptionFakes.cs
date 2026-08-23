@@ -13,12 +13,12 @@ internal sealed class FakePlanRepository : IPlanRepository
 
     public IReadOnlyList<SubscriptionPlan> Plans => _plans;
 
-    public Dictionary<Guid, uint> ExpectedVersions { get; } = [];
+    public Dictionary<Guid, ulong> ExpectedVersions { get; } = [];
 
     public HashSet<Guid> AggregateChanges { get; } = [];
 
     /// <summary>Set to make <see cref="ExpectVersion"/> behave as a stale-version write.</summary>
-    public uint? ConflictingVersion { get; set; }
+    public ulong? ConflictingVersion { get; set; }
 
     public void Seed(SubscriptionPlan plan) => _plans.Add(plan);
 
@@ -37,7 +37,7 @@ internal sealed class FakePlanRepository : IPlanRepository
 
     public void Add(SubscriptionPlan plan) => _plans.Add(plan);
 
-    public void ExpectVersion(SubscriptionPlan plan, uint expectedVersion)
+    public void ExpectVersion(SubscriptionPlan plan, ulong expectedVersion)
     {
         ExpectedVersions[plan.Id] = expectedVersion;
 
@@ -60,7 +60,7 @@ internal sealed class FakePlanQueries : IPlanQueries
 
     public FakePlanQueries(FakePlanRepository plans) => _plans = plans;
 
-    public uint RowVersion { get; set; } = 1;
+    public ulong RowVersion { get; set; } = 1;
 
     /// <summary>
     /// Attach the catalogue fake to have plan features project their real keys. Optional, because
@@ -168,10 +168,10 @@ internal sealed class FakeSubscriptionRepository : ISubscriptionRepository
 
     public IReadOnlyList<GymSubscription> Subscriptions => _subscriptions;
 
-    public Dictionary<Guid, uint> ExpectedVersions { get; } = [];
+    public Dictionary<Guid, ulong> ExpectedVersions { get; } = [];
 
     /// <summary>Set to make <see cref="ExpectVersion"/> behave as a stale-version write.</summary>
-    public uint? ConflictingVersion { get; set; }
+    public ulong? ConflictingVersion { get; set; }
 
     public void Seed(GymSubscription subscription) => _subscriptions.Add(subscription);
 
@@ -194,7 +194,7 @@ internal sealed class FakeSubscriptionRepository : ISubscriptionRepository
 
     public void Add(GymSubscription subscription) => _subscriptions.Add(subscription);
 
-    public void ExpectVersion(GymSubscription subscription, uint expectedVersion)
+    public void ExpectVersion(GymSubscription subscription, ulong expectedVersion)
     {
         ExpectedVersions[subscription.Id] = expectedVersion;
 
@@ -220,7 +220,7 @@ internal sealed class FakeSubscriptionQueries : ISubscriptionQueries
         _plans = plans;
     }
 
-    public uint RowVersion { get; set; } = 1;
+    public ulong RowVersion { get; set; } = 1;
 
     public Task<SubscriptionDetail?> GetLiveForGymAsync(Guid gymId, CancellationToken cancellationToken)
     {

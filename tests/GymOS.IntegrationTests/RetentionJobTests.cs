@@ -16,20 +16,20 @@ namespace GymOS.IntegrationTests;
 /// idempotency records go, and audit partitions exist ahead of need. Real wall clock, like the
 /// other idempotency tests — the rows compare against database time.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class RetentionJobTests : IAsyncLifetime
 {
     private static readonly SystemClock Clock = new();
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public RetentionJobTests(PostgresFixture postgres) => _postgres = postgres;
+    public RetentionJobTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        _connectionString = await _postgres.CreateIsolatedDatabaseAsync("retention_job");
-        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("retention_job");
+        // Migrations moved into SqlServerFixture, which applies them as the migrator before handing
         // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
@@ -38,7 +38,7 @@ public sealed class RetentionJobTests : IAsyncLifetime
     private AppDbContext CreateContext()
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(_connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new AppDbContext(options);

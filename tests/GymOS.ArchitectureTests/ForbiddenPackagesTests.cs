@@ -28,9 +28,13 @@ public sealed class ForbiddenPackagesTests
         "xunit.runner.visualstudio",
 
         // Pre-approved, enter with their milestone
-        "Npgsql",
-        "Npgsql.EntityFrameworkCore.PostgreSQL",
-        "Npgsql.OpenTelemetry",
+        //
+        // Microsoft.Data.SqlClient is the ADO.NET driver under the EF Core SQL Server provider.
+        // Listed by exact id rather than covered by a prefix: "Microsoft.Data." would also admit
+        // every other Microsoft.Data.* package sight unseen, and the approved list is meant to be
+        // a decision per package rather than per namespace. The provider itself
+        // (Microsoft.EntityFrameworkCore.SqlServer) is covered by the EF prefix below.
+        "Microsoft.Data.SqlClient",
         "EFCore.NamingConventions",
         "FluentValidation",
         "FluentValidation.DependencyInjectionExtensions",
@@ -79,7 +83,7 @@ public sealed class ForbiddenPackagesTests
     private static readonly string[] ProviderSdkPrefixes =
     [
         "Microsoft.EntityFrameworkCore",
-        "Npgsql",
+        "Microsoft.Data.SqlClient",
         "EFCore.",
         "Azure.",
         "AWSSDK.",

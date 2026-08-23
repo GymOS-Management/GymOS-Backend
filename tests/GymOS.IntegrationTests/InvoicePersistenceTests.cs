@@ -10,7 +10,7 @@ using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.SharedKernel;
 using GymOS.SharedKernel.Currencies;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
+using Microsoft.Data.SqlClient;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -20,21 +20,21 @@ namespace GymOS.IntegrationTests;
 /// distinct numbers under concurrency, an <see cref="Invoice"/> and its lines survive the round trip,
 /// and the single-currency CHECK holds what the aggregate promises.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class InvoicePersistenceTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 10, 12, 0, 0, TimeSpan.Zero);
     private static readonly Currency Eur = Currency.Euro;
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public InvoicePersistenceTests(PostgresFixture postgres) => _postgres = postgres;
+    public InvoicePersistenceTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        _connectionString = await _postgres.CreateIsolatedDatabaseAsync("invoice_persistence");
-        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("invoice_persistence");
+        // Migrations moved into SqlServerFixture, which applies them as the migrator before handing
         // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
@@ -43,7 +43,7 @@ public sealed class InvoicePersistenceTests : IAsyncLifetime
     private AppDbContext CreateContext()
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(_connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new AppDbContext(options);

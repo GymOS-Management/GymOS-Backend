@@ -21,7 +21,7 @@ namespace GymOS.IntegrationTests;
 /// grants it, and keep the now-redundant row — reporting <c>source: Override</c> and a stale reason
 /// for a capability it started paying for, then keeping it for free on a later downgrade.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class GymFeatureLifecycleTests : IAsyncLifetime
 {
     private const string TrialReason = "3-month goodwill trial.";
@@ -31,15 +31,15 @@ public sealed class GymFeatureLifecycleTests : IAsyncLifetime
     // step at it.
     private static readonly SystemClock Clock = new();
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public GymFeatureLifecycleTests(PostgresFixture postgres) => _postgres = postgres;
+    public GymFeatureLifecycleTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("gym_features_lifecycle");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("gym_features_lifecycle");
         // Jobs off. This suite asserts on stored gym_feature_overrides rows, and
         // FeatureOverrideSweepJob runs daily at 03:50 UTC — a CI run alive across that
         // minute would have the sweep withdraw the very exceptions these assertions

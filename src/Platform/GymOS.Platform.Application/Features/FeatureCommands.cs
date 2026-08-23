@@ -173,7 +173,7 @@ internal static class FeatureWrites
             return versionRequired ? Result.Failure(FeatureErrors.VersionRequired) : Result.Success();
         }
 
-        if (!RowVersion.TryParse(expectedVersion, out uint parsed))
+        if (!RowVersion.TryParse(expectedVersion, out ulong parsed))
         {
             return Result.Failure(FeatureErrors.MalformedVersion);
         }

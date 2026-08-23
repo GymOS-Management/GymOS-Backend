@@ -1,17 +1,17 @@
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
+using Microsoft.Data.SqlClient;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
 
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class MigrateOnlyTests
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
 
-    public MigrateOnlyTests(PostgresFixture postgres) => _postgres = postgres;
+    public MigrateOnlyTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     [Fact]
     public async Task MigrateOnlyAppliesMigrationsAndDoesNotSeed()
@@ -24,9 +24,9 @@ public sealed class MigrateOnlyTests
         // against a database nothing has touched; handing it the app role's connection string would
         // fail on `permission denied for schema public` long before it could seed anything, and a
         // pre-migrated database would leave it with nothing to do.
-        string connectionString = await _postgres.CreateUnmigratedDatabaseAsync("migrate_only");
+        string connectionString = await _sqlServer.CreateUnmigratedDatabaseAsync("migrate_only");
 
-        await MigrateOnlyAsync(PostgresFixture.AsMigrator(connectionString));
+        await MigrateOnlyAsync(SqlServerFixture.AsMigrator(connectionString));
 
         // Read back as the app role, which is what the API would connect as afterwards.
         await using AppDbContext context = CreateContext(connectionString);
@@ -44,10 +44,10 @@ public sealed class MigrateOnlyTests
     public async Task MigrateOnlyAgainstAnUnreachableDatabase_DoesNotExitZero()
     {
         // A database name nobody has created and this test never creates. EF Core's migrator
-        // tries to create it on the fly, and the test role — non-superuser, per PostgresFixture —
+        // tries to create it on the fly, and the test role — non-superuser, per SqlServerFixture —
         // has no CREATEDB privilege, so the very first statement fails:
         // Npgsql.PostgresException 42501, "permission denied to create database".
-        var builder = new NpgsqlConnectionStringBuilder(_postgres.ConnectionString)
+        var builder = new SqlConnectionStringBuilder(_sqlServer.ConnectionString)
         {
             Database = "gymos_database_that_was_never_created",
         };
@@ -107,7 +107,7 @@ public sealed class MigrateOnlyTests
     private static AppDbContext CreateContext(string connectionString)
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
 

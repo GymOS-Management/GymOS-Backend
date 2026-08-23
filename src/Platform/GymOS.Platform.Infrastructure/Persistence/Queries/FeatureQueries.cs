@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Domain.Features;
 using GymOS.Platform.Domain.Gyms;
@@ -148,7 +149,7 @@ internal sealed class FeatureQueries : IFeatureQueries
                 Category = feature.Category,
                 DefaultEnabled = feature.DefaultEnabled,
                 IsPremium = feature.IsPremium,
-                RowVersion = EF.Property<uint>(feature, "xmin"),
+                RowVersion = EF.Property<ulong>(feature, ConcurrencyConventions.RowVersionProperty),
 
                 // Counted from the same gym population as adoption below, and written the same way
                 // so that the shared `Status != Deleted` filter is visible rather than remembered:
@@ -205,7 +206,7 @@ internal sealed class FeatureQueries : IFeatureQueries
                 Category = feature.Category,
                 DefaultEnabled = feature.DefaultEnabled,
                 IsPremium = feature.IsPremium,
-                RowVersion = EF.Property<uint>(feature, "xmin"),
+                RowVersion = EF.Property<ulong>(feature, ConcurrencyConventions.RowVersionProperty),
                 OverrideCount = null,
                 AdoptionCount = null,
             });
@@ -253,6 +254,6 @@ internal sealed class FeatureQueries : IFeatureQueries
 
         public int? OverrideCount { get; init; }
 
-        public uint RowVersion { get; init; }
+        public ulong RowVersion { get; init; }
     }
 }

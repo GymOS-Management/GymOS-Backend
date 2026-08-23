@@ -39,8 +39,8 @@ internal sealed class PlanQueries : IPlanQueries
         {
             string pattern = SearchPatterns.Contains(search);
             query = query.Where(plan =>
-                EF.Functions.ILike(plan.Name, pattern, SearchPatterns.EscapeCharacter) ||
-                EF.Functions.ILike(plan.Code, pattern, SearchPatterns.EscapeCharacter));
+                EF.Functions.Like(plan.Name, pattern) ||
+                EF.Functions.Like(plan.Code, pattern));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);
@@ -106,7 +106,7 @@ internal sealed class PlanQueries : IPlanQueries
                 plan.IsPublic,
                 plan.SortOrder,
                 plan.CreatedAtUtc,
-                RowVersion = EF.Property<uint>(plan, "xmin"),
+                RowVersion = EF.Property<ulong>(plan, ConcurrencyConventions.RowVersionProperty),
 
                 // Gyms on a live subscription to this plan â€” the number that decides whether
                 // withdrawing it is safe.

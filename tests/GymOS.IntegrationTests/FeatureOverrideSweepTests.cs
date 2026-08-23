@@ -21,18 +21,18 @@ namespace GymOS.IntegrationTests;
 /// hand, from a scope, exactly as <c>RetentionJobTests</c>/<c>PlatformStatsJobTests</c> drive
 /// theirs.</para>
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class FeatureOverrideSweepTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public FeatureOverrideSweepTests(PostgresFixture postgres) => _postgres = postgres;
+    public FeatureOverrideSweepTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("feature_override_sweep");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("feature_override_sweep");
 
         // The job's own daily timer stays off: this suite drives FeatureOverrideSweepJob by hand,
         // the same way PlatformStatsJobTests drives DailyStatsCompiler.

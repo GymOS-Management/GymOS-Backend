@@ -16,7 +16,7 @@ namespace GymOS.IntegrationTests;
 /// which is the point: an unprotected or undocumented endpoint should be impossible to ship
 /// by omission.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class EndpointConventionTests : IAsyncLifetime
 {
     /// <summary>
@@ -45,15 +45,15 @@ public sealed class EndpointConventionTests : IAsyncLifetime
         "/api/v{version:apiVersion}/auth/change-password",
     };
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public EndpointConventionTests(PostgresFixture postgres) => _postgres = postgres;
+    public EndpointConventionTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateDatabaseAsync("endpoint_convention_tests");
+        string connectionString = await _sqlServer.CreateDatabaseAsync("endpoint_convention_tests");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

@@ -11,8 +11,9 @@
 #
 # ── This file is not a runnable stack on its own ───────────────────────────────────────────────
 # It intentionally carries no credentials, so `docker compose -f docker-compose.yml up` alone would
-# start PostgreSQL with an empty password. Always pair it with an overlay — the development one is
-# applied automatically, so in practice this only matters if you pass -f by hand.
+# start SQL Server with an empty sa password, which the image refuses to boot with at all. Always
+# pair it with an overlay — the development one is applied automatically, so in practice this only
+# matters if you pass -f by hand.
 #
 # Full reference, including the reasoning behind each security setting:
 #   docs/Infrastructure/DOCKER.md
@@ -47,72 +48,143 @@ x-hardening: &default-hardening
 
 services:
   # ════════════════════════════════════════════════════════════════════════════════════════════
-  # PostgreSQL 17 — the only stateful service
+  # SQL Server 2022 — the only stateful service
   # ════════════════════════════════════════════════════════════════════════════════════════════
-  postgres:
-    image: postgres:17-alpine
-    container_name: gymos-postgres
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: gymos-mssql
     restart: unless-stopped
     logging: *default-logging
 
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-gymos}
-      # gymos_admin, not gymos: this is POSTGRES_USER, the bootstrap superuser the image creates and
-      # runs docker/postgres/initdb/*.sql as. The application never connects as it — PostgreSQL
-      # exempts a superuser from row-level security entirely, FORCE included, so R14's policies
-      # would filter nothing for a connection using this role. See 10-roles.sql for the two roles
-      # the application actually uses.
-      POSTGRES_USER: ${POSTGRES_USER:-gymos_admin}
+      ACCEPT_EULA: 'Y'
+      # sa is the bootstrap login the image creates, and it exists here for exactly two things:
+      # db-init runs the initialisation scripts as it, and a human can use it to debug the
+      # container. The application never connects as it — sysadmin and db_owner both hold
+      # ALTER ANY SECURITY POLICY, so a connection using either could switch R14's tenant isolation
+      # off in one statement, and TenantIsolationValidator refuses to boot such a host. See
+      # docker/sqlserver/initdb/10-principals.sql for the two principals actually used.
+      #
       # Empty default, and the requirement lives in the overlays rather than here. Compose
       # interpolates each file *independently* before merging them, so a `${VAR:?}` marker in this
       # file cannot be satisfied by an override supplying the value — it aborts the whole command
       # even when the merged result would be correct. So: dev supplies a known-public value,
-      # docker-compose.prod.yml uses `${POSTGRES_PASSWORD:?}` and refuses to start without a real
-      # one, and this file stays merge-safe. GYMOS_MIGRATOR_PASSWORD and GYMOS_APP_PASSWORD, read by
-      # 10-roles.sql when the roles are created, follow the identical pattern.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      # docker-compose.prod.yml uses `${MSSQL_SA_PASSWORD:?}` and refuses to start without a real
+      # one, and this file stays merge-safe. GYMOS_MIGRATOR_PASSWORD and GYMOS_APP_PASSWORD, read
+      # by 10-principals.sql, follow the identical pattern.
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-}
+
+      # Developer edition: free for non-production use and feature-identical to Enterprise, which
+      # matters here because table partitioning and row-level security must behave in development
+      # exactly as they do on the Azure SQL production target. Express would silently cap the
+      # database at 10 GB. The production overlay sets this to the licensed edition.
+      MSSQL_PID: ${MSSQL_PID:-Developer}
+
+      # UTC, matching AD-40: the application stores UTC and converts at the edges, so a database in
+      # any other zone would only create a second, disagreeing opinion about "now". The clock
+      # SqlServerDatabaseClock reads is SYSUTCDATETIME(), which is UTC whatever this says — this
+      # keeps the engine's own logs and any SYSDATETIME() a human types agreeing with it.
+      TZ: UTC
+
+      # The collation the *instance* is created with. Databases override it explicitly
+      # (00-database.sql), so this only governs tempdb and system databases — but a mismatch
+      # between tempdb and a user database makes every temp-table join throw a collation-conflict
+      # error, so they are kept the same on purpose.
+      MSSQL_COLLATION: Latin1_General_100_CI_AS
+
+    volumes:
+      # /var/opt/mssql holds the data files, the transaction log, and the error log. The image
+      # declares it owned by the unprivileged `mssql` user (uid 10001), so a fresh named volume
+      # inherits that ownership and nothing has to chown it at boot — which is what lets this
+      # service keep `cap_drop: ALL` with no capabilities added back, unlike the PostgreSQL service
+      # it replaces.
+      - mssql-data:/var/opt/mssql
+
+      # No init-script mount: the SQL Server image has no /docker-entrypoint-initdb.d equivalent.
+      # Initialisation is the db-init service below. See docker/sqlserver/initdb/README.md.
+
+    healthcheck:
+      # A real query, not a port probe. The engine accepts TCP connections seconds before it will
+      # answer a query, and the whole point of this check is that db-init and the migrator wait for
+      # a *usable* server — the same reason the PostgreSQL check passed -U and -d rather than
+      # calling bare pg_isready.
+      #
+      # -C trusts the self-signed certificate the container generates. -b makes sqlcmd exit
+      # non-zero on error, without which the check would report healthy on a failed query.
+      test:
+        [
+          'CMD-SHELL',
+          '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -b -Q "SELECT 1" > /dev/null',
+        ]
+      interval: 10s
+      timeout: 5s
+      # SQL Server is slower to first-answer than PostgreSQL — first boot creates the system
+      # databases — so the window is wider than the 60s the PostgreSQL service allowed.
+      retries: 12
+      start_period: 45s
+
+    <<: *default-hardening
+    # No cap_add. The PostgreSQL entrypoint needed CHOWN/DAC_OVERRIDE/FOWNER/SETGID/SETUID to chown
+    # its data directory and drop from root; this image starts as mssql directly and needs none of
+    # them.
+    #
+    # Not read_only: the engine writes its data files, log, and several transient paths under
+    # /var/opt/mssql. The data directory is a volume; the rest are not, and tmpfs-ing them all to
+    # claim a read-only flag would be ceremony rather than security.
+
+    networks:
+      - gymos-data
+
+  # Creates the database, the two principals, and the schemas — then exits. `migrator` waits for it.
+  #
+  # This service exists because the SQL Server image runs no initialisation scripts of its own.
+  # PostgreSQL's image applies /docker-entrypoint-initdb.d once against an empty data directory;
+  # there is no equivalent here, no ordering hook, and no first-boot signal. So the step is
+  # explicit, and because it is explicit it also runs on every `up` — which is why every statement
+  # in those scripts is guarded and re-running them is a no-op.
+  #
+  # It uses the SQL Server image purely for the sqlcmd binary inside it; no engine is started.
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: gymos-db-init
+    # Not `unless-stopped`: this container is meant to exit, and restarting it would loop forever.
+    restart: 'no'
+    logging: *default-logging
+
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-}
+      GYMOS_DB: ${GYMOS_DB:-gymos}
       GYMOS_MIGRATOR_PASSWORD: ${GYMOS_MIGRATOR_PASSWORD:-}
       GYMOS_APP_PASSWORD: ${GYMOS_APP_PASSWORD:-}
 
-      # UTF-8 and a deterministic collation, fixed at initdb time because they cannot be changed
-      # afterwards without dumping and restoring the cluster. locale=C keeps sort order identical
-      # on every machine — an index built under one collation is not valid under another, which is
-      # a genuinely painful class of bug to discover after data exists.
-      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --lc-collate=C --lc-ctype=C'
-
-      # UTC everywhere, matching AD-40: the application stores UTC and converts at the edges, so a
-      # database in any other zone would only create a second, disagreeing opinion about "now".
-      TZ: UTC
-      PGTZ: UTC
-
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-      # One-time initialisation, applied only when the data directory is empty. Read-only: these
-      # scripts run as the superuser, so the container has no reason to be able to alter them.
-      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+      # Read-only: these scripts run as sa, so the container has no reason to be able to alter them.
+      - ./docker/sqlserver/initdb:/initdb:ro
 
-    healthcheck:
-      # -U/-d are explicit: bare pg_isready checks the server socket, which answers "healthy"
-      # during the brief window when the entrypoint has started a temporary server for the init
-      # scripts and the real database does not yet exist.
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-gymos_admin} -d ${POSTGRES_DB:-gymos} -q']
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 10s
+    # -b so sqlcmd exits non-zero on any error, which is what makes `service_completed_successfully`
+    # below mean "initialised" rather than "ran". The passwords reach the scripts as sqlcmd :setvar
+    # bindings via -v, so they are substituted inside sqlcmd's own parser rather than by a shell —
+    # a password containing a quote cannot terminate a string and have the rest read as SQL.
+    entrypoint: ['/bin/bash', '-c']
+    command:
+      - |
+        set -euo pipefail
+        for script in /initdb/*.sql; do
+          echo "db-init: applying $${script}"
+          /opt/mssql-tools18/bin/sqlcmd \
+            -S mssql -U sa -P "$$MSSQL_SA_PASSWORD" -C -b \
+            -v GYMOS_DB="$$GYMOS_DB" \
+            -v GYMOS_MIGRATOR_PASSWORD="$$GYMOS_MIGRATOR_PASSWORD" \
+            -v GYMOS_APP_PASSWORD="$$GYMOS_APP_PASSWORD" \
+            -i "$${script}"
+        done
+        echo "db-init: complete"
+
+    depends_on:
+      mssql:
+        condition: service_healthy
 
     <<: *default-hardening
-    cap_add:
-      # The entrypoint chowns the data directory and drops from root to postgres before starting
-      # the server. Without these it cannot do either, and the container exits on first boot.
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETGID
-      - SETUID
-    # Not read_only: PostgreSQL writes its data directory, WAL, and socket. The data directory is
-    # a volume, but the socket in /var/run/postgresql and several transient files are not, and
-    # tmpfs-ing them all to claim a read-only flag would be ceremony rather than security.
 
     networks:
       - gymos-data
@@ -137,12 +209,23 @@ services:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       ASPNETCORE_HTTP_PORTS: '8080'
 
-      # `postgres` is the compose service name, resolved by Docker's embedded DNS on the shared
+      # `mssql` is the compose service name, resolved by Docker's embedded DNS on the shared
       # network. Host-based addressing is what makes the same image run unchanged against a
-      # sidecar in dev and Azure Database for PostgreSQL in production.
+      # sidecar in dev and Azure SQL Database in production (AD-11).
+      #
+      # Encrypt=True is SqlClient's default and stays on everywhere. TrustServerCertificate is the
+      # development-only half: the sidecar presents a self-signed certificate, so the development
+      # overlay turns it on and docker-compose.prod.yml leaves it off — an encrypted connection
+      # that trusts any certificate is not an authenticated one.
+      #
+      # Current Language=us_english is not cosmetic. UnitOfWork recovers the constraint name from a
+      # unique-index violation by reading the server's error message, because SqlException exposes
+      # it nowhere else, and SQL Server localises that message per login language.
+      # SetGymFeaturesCommand retries on exactly one constraint name and must not retry on any
+      # other, so the message has to be in the language the parser expects.
       ConnectionStrings__Database: >-
-        Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=${POSTGRES_USER:-gymos};Password=${POSTGRES_PASSWORD:-};Include
-        Error Detail=${POSTGRES_INCLUDE_ERROR_DETAIL:-false}
+        Server=mssql,1433;Database=${GYMOS_DB:-gymos};User Id=gymos_app;Password=${GYMOS_APP_PASSWORD:-};Encrypt=True;TrustServerCertificate=${MSSQL_TRUST_SERVER_CERTIFICATE:-false};Current
+        Language=us_english
 
       # ── Deliberately ABSENT from this file: Security__Jwt__SigningKey ──────────────────────
       # An empty environment variable is not an unset one, and this is where that bites. Environment
@@ -212,9 +295,9 @@ services:
       start_period: 45s
 
     depends_on:
-      postgres:
+      mssql:
         # service_healthy, not service_started: the API migrates and seeds during start-up, so a
-        # database that is merely *running* is not enough — pg_isready has to pass first.
+        # database that is merely *running* is not enough — a real query has to succeed first.
         condition: service_healthy
       migrator:
         # Refuses to start the API against an unmigrated database. If the migrator ever exits 0
@@ -250,11 +333,16 @@ services:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       Database__MigrateOnly: 'true'
       ConnectionStrings__Database: >-
-        Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-}
+        Server=mssql,1433;Database=${GYMOS_DB:-gymos};User Id=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-};Encrypt=True;TrustServerCertificate=${MSSQL_TRUST_SERVER_CERTIFICATE:-false};Current
+        Language=us_english
 
     depends_on:
-      postgres:
+      mssql:
         condition: service_healthy
+      db-init:
+        # The database, the principals, and the two schemas all have to exist before a migration
+        # can run: gymos_migrator is created by db-init, and the migrator authenticates as it.
+        condition: service_completed_successfully
 
     <<: *default-hardening
 
@@ -383,7 +471,10 @@ services:
   # grafana        — dashboards over Prometheus.
   # mailpit        — SMTP sink; belongs in the override file only, since capturing mail in
   #                  production would mean not sending it.
-  # pgadmin        — likewise development-only; see docker-compose.override.yml.
+  #
+  # A database console is deliberately NOT on this list. pgAdmin used to be, behind the `tools`
+  # profile, and it cannot speak to SQL Server at all — so it is gone rather than swapped. See the
+  # note where it used to be defined, in docker-compose.override.yml, for what replaced it.
   #
   # Each of these is a service block plus a profile. None requires the networks, volumes, or
   # hardening defaults above to change, which is the point of defining them centrally.
@@ -396,8 +487,8 @@ services:
 # a Windows host into a Linux container has no useful notion of the container's uid), `docker compose down`
 # cannot delete them by accident, and they are the unit a backup actually operates on.
 volumes:
-  postgres-data:
-    name: gymos-postgres-data
+  mssql-data:
+    name: gymos-mssql-data
   api-dataprotection:
     name: gymos-api-dataprotection
   uploads:
@@ -430,7 +521,7 @@ volumes:
 #
 # ── Why not the default bridge ────────────────────────────────────────────────────────────────
 # Docker's default bridge has no embedded DNS: containers on it can only find each other by IP or
-# by the deprecated --link flag, so `Host=postgres` would not resolve. It is also shared by every
+# by the deprecated --link flag, so `Server=mssql` would not resolve. It is also shared by every
 # container on the host that did not choose otherwise, which means an unrelated container is one
 # `docker run` away from having a route to this database. A user-defined network gives DNS by
 # service name and an isolation boundary that is ours.

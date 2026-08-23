@@ -13,10 +13,10 @@ internal sealed class FakeInvoiceRepository : IInvoiceRepository
 
     public IReadOnlyList<Invoice> Invoices => _invoices;
 
-    public Dictionary<Guid, uint> ExpectedVersions { get; } = [];
+    public Dictionary<Guid, ulong> ExpectedVersions { get; } = [];
 
     /// <summary>Set to make <see cref="ExpectVersion"/> behave as a stale-version write.</summary>
-    public uint? ConflictingVersion { get; set; }
+    public ulong? ConflictingVersion { get; set; }
 
     public void Seed(Invoice invoice) => _invoices.Add(invoice);
 
@@ -36,7 +36,7 @@ internal sealed class FakeInvoiceRepository : IInvoiceRepository
 
     public void Add(Invoice invoice) => _invoices.Add(invoice);
 
-    public void ExpectVersion(Invoice invoice, uint expectedVersion)
+    public void ExpectVersion(Invoice invoice, ulong expectedVersion)
     {
         ExpectedVersions[invoice.Id] = expectedVersion;
 
@@ -80,7 +80,7 @@ internal sealed class FakeInvoiceQueries : IInvoiceQueries
         _clock = clock;
     }
 
-    public uint RowVersion { get; set; } = 1;
+    public ulong RowVersion { get; set; } = 1;
 
     public Task<PagedResult<InvoiceListItem>> ListAsync(
         InvoiceListFilter filter,

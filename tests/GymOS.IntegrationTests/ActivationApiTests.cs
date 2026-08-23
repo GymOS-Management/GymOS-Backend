@@ -25,7 +25,7 @@ namespace GymOS.IntegrationTests;
 /// of the sent message is not a shortcut — it is the only way to obtain one, because the database
 /// holds nothing but a SHA-256 and the API deliberately never returns it (asserted below).</para>
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class ActivationApiTests : IAsyncLifetime
 {
     private static readonly Uri Users = new("/api/v1/users", UriKind.Relative);
@@ -39,17 +39,17 @@ public sealed class ActivationApiTests : IAsyncLifetime
     /// </summary>
     private const string ConsoleBaseUrl = "https://console.gymos.test/admin";
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public ActivationApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public ActivationApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     private readonly CapturingEmailSender _mailbox = new();
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("activation");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("activation");
 
         // Email on, with the transport swapped for a capture: that exercises the real
         // ActivationLinks and the real templates — the URL, the lifetime wording, both bodies — and

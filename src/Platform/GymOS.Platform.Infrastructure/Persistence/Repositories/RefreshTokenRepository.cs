@@ -19,13 +19,13 @@ internal sealed class RefreshTokenRepository : IRefreshTokenRepository
         string tokenHash,
         CancellationToken cancellationToken)
     {
-        // Two statements, the SubscriptionRepository pattern: EF has no FOR UPDATE operator, so
+        // Two statements, the SubscriptionRepository pattern: EF has no pessimistic-locking operator, so
         // the lock is taken as a scalar statement (a row lock needs no entity) and the aggregate
         // then loads through the normal pipeline on the same connection and transaction, where
         // the lock is already held. Concurrent rotations of one token serialize here — which is
         // what lets the second one see a revoked token and detect the reuse.
         await _dbContext.Database.ExecuteSqlAsync(
-            $"SELECT 1 FROM platform.refresh_tokens WHERE token_hash = {tokenHash} FOR UPDATE",
+            $"SELECT 1 FROM platform.refresh_tokens WITH (UPDLOCK, ROWLOCK) WHERE token_hash = {tokenHash}",
             cancellationToken);
 
         return await FindByHashAsync(tokenHash, cancellationToken);

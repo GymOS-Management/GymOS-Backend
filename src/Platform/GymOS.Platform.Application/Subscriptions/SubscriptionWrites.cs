@@ -24,7 +24,7 @@ internal static class SubscriptionWrites
             return versionRequired ? Result.Failure(SubscriptionErrors.VersionRequired) : Result.Success();
         }
 
-        if (!RowVersion.TryParse(expectedVersion, out uint parsed))
+        if (!RowVersion.TryParse(expectedVersion, out ulong parsed))
         {
             return Result.Failure(SubscriptionErrors.MalformedVersion);
         }

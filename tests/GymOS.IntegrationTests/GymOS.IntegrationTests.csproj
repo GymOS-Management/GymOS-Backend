@@ -1,14 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    RESPONSIBILITY: End-to-end tests against real PostgreSQL (Testcontainers) and the
+    RESPONSIBILITY: End-to-end tests against real SQL Server (Testcontainers) and the
     real HTTP host (WebApplicationFactory): migrations, outbox capture semantics,
     health endpoints, correlation spine. Requires a running Docker daemon.
   -->
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="Npgsql" />
-    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="Testcontainers.MsSql" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
   </ItemGroup>

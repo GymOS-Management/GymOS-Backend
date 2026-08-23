@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
@@ -25,7 +26,7 @@ internal sealed class SubscriptionRepository : ISubscriptionRepository
         Guid gymId,
         CancellationToken cancellationToken)
     {
-        // Two statements, for the reason FindByIdForUpdateAsync gives below: EF has no FOR UPDATE
+        // Two statements, for the reason FindByIdForUpdateAsync gives below: EF has no pessimistic-locking
         // operator and cannot compose over raw SQL for an entity with mapped complex properties, so
         // the lock is a plain scalar statement and the aggregate then loads through the normal
         // pipeline on the same connection and transaction.
@@ -39,9 +40,8 @@ internal sealed class SubscriptionRepository : ISubscriptionRepository
         // Caller must hold an IUnitOfWork transaction, or the lock dies with the first statement.
         await _dbContext.Database.ExecuteSqlAsync(
             $"""
-            SELECT 1 FROM platform.gym_subscriptions
+            SELECT 1 FROM platform.gym_subscriptions WITH (UPDLOCK, ROWLOCK)
             WHERE gym_id = {gymId} AND status IN (1, 2, 3)
-            FOR UPDATE
             """,
             cancellationToken);
 
@@ -56,14 +56,14 @@ internal sealed class SubscriptionRepository : ISubscriptionRepository
         Guid subscriptionId,
         CancellationToken cancellationToken)
     {
-        // Two statements on purpose. EF has no FOR UPDATE operator, and FromSql cannot carry
+        // Two statements on purpose. EF has no pessimistic-locking operator, and FromSql cannot carry
         // this entity: EF composes over raw SQL whenever complex properties (Money) are mapped,
         // and the composed projection loses their column names. So the lock is taken as a plain
         // scalar statement — a row lock needs no entity — and the aggregate then loads through
         // the normal pipeline on the same connection and transaction, where the lock is already
         // held. Callers hold an IUnitOfWork transaction, or the lock would die with statement one.
         await _dbContext.Database.ExecuteSqlAsync(
-            $"SELECT 1 FROM platform.gym_subscriptions WHERE id = {subscriptionId} FOR UPDATE",
+            $"SELECT 1 FROM platform.gym_subscriptions WITH (UPDLOCK, ROWLOCK) WHERE id = {subscriptionId}",
             cancellationToken);
 
         return await FindByIdAsync(subscriptionId, cancellationToken);
@@ -72,6 +72,6 @@ internal sealed class SubscriptionRepository : ISubscriptionRepository
     public void Add(GymSubscription subscription) =>
         _dbContext.Set<GymSubscription>().Add(subscription);
 
-    public void ExpectVersion(GymSubscription subscription, uint expectedVersion) =>
-        _dbContext.Entry(subscription).Property<uint>("xmin").OriginalValue = expectedVersion;
+    public void ExpectVersion(GymSubscription subscription, ulong expectedVersion) =>
+        _dbContext.Entry(subscription).Property<ulong>(ConcurrencyConventions.RowVersionProperty).OriginalValue = expectedVersion;
 }

@@ -5,12 +5,12 @@ using Xunit;
 
 namespace GymOS.IntegrationTests;
 
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class MigrationTests
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
 
-    public MigrationTests(PostgresFixture postgres) => _postgres = postgres;
+    public MigrationTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     [Fact]
     public async Task Migrations_ApplyCleanly_AndAreIdempotent()
@@ -18,12 +18,10 @@ public sealed class MigrationTests
         // The one suite that must migrate for itself, because applying migrations *is* its subject.
         // It therefore asks for a database the fixture has deliberately left empty, and connects as the
         // migrator — the app role every other suite uses owns nothing and holds no DDL.
-        string appConnectionString = await _postgres.CreateUnmigratedDatabaseAsync("migration_tests");
+        string appConnectionString = await _sqlServer.CreateUnmigratedDatabaseAsync("migration_tests");
 
         DbContextOptions<AppDbContext> migratorOptions = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(
-                PostgresFixture.AsMigrator(appConnectionString),
-                npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(SqlServerFixture.AsMigrator(appConnectionString), TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
 
@@ -36,7 +34,7 @@ public sealed class MigrationTests
         // Read back as the app role: the tables must be reachable by the role that actually serves
         // requests, which is a stronger statement than the migrator being able to see what it created.
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(appConnectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(appConnectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
 

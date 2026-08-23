@@ -43,7 +43,7 @@ public interface IGymRepository
     /// between the check and the update, which is the bug optimistic concurrency exists to close.
     /// <see cref="ConcurrencyConflictException"/> is raised by <see cref="IUnitOfWork.SaveChangesAsync"/>.
     /// </summary>
-    void ExpectVersion(Gym gym, uint expectedVersion);
+    void ExpectVersion(Gym gym, ulong expectedVersion);
 
     /// <summary>
     /// Marks the gym itself as changed, for a write that only touched its branding. Without this the

@@ -35,7 +35,7 @@
     <!-- Transitive pin: Microsoft.AspNetCore.OpenApi 10.0.x resolves Microsoft.OpenApi 2.0.0,
          which carries GHSA-v5pm-xwqc-g5wc (high). Pinned to the patched 2.x line. -->
     <PackageVersion Include="Microsoft.OpenApi" Version="2.11.0" />
-    <!-- Transitive pin: Testcontainers.PostgreSql 4.13.0 resolves SSH.NET 2025.1.0, which carries
+    <!-- Transitive pin: Testcontainers.MsSql 4.13.0 resolves SSH.NET 2025.1.0, which carries
          GHSA-q939-rpr3-3284 (high). 4.13.0 is the latest Testcontainers, so there is no upstream
          version to move to yet — pinned here to the patched line instead. Test-only in practice
          (Testcontainers is a test dependency), but NuGet audit fails the whole restore on it, and
@@ -43,13 +43,22 @@
          Testcontainers ships a release that resolves a patched SSH.NET itself. -->
     <PackageVersion Include="SSH.NET" Version="2026.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
-    <PackageVersion Include="Npgsql" Version="10.0.3" />
-    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
-    <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.3" />
+    <!-- The SQL Server provider (AD-11). Version-locked to the rest of the EF Core family above:
+         the provider and the relational core ship as one release train, and a provider a patch
+         ahead of Microsoft.EntityFrameworkCore.Relational is the one combination EF does not
+         support. Microsoft.Data.SqlClient is referenced directly rather than left transitive
+         because adapter code names SqlException and SqlParameter — see the Infrastructure
+         csproj. -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="6.1.6" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
+    <!-- Replaces Npgsql.OpenTelemetry, which shipped its own ActivitySource inside the driver.
+         SqlClient emits its spans through DiagnosticSource instead, so the instrumentation is a
+         separate package on its own version line — it does not track the EF Core release train. -->
+    <PackageVersion Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.15.0" />
     <!-- Renders the OpenAPI document as an API reference UI (MIT). Host-only, and it
          *reads* the document rather than generating it — Microsoft.AspNetCore.OpenApi
          stays the single source of the contract, so the snapshot gate is unaffected. -->
@@ -59,7 +68,7 @@
   <ItemGroup Label="Testing">
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
-    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.13.0" />
+    <PackageVersion Include="Testcontainers.MsSql" Version="4.13.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
     <PackageVersion Include="xunit" Version="2.9.3" />

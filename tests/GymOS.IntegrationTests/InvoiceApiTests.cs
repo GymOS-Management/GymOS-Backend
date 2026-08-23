@@ -11,20 +11,20 @@ namespace GymOS.IntegrationTests;
 /// response byte for byte, a reused key with a different body is refused, and a deterministic failure
 /// replays as the same failure.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class InvoiceApiTests : IAsyncLifetime
 {
     private static readonly Uri Invoices = new("/api/v1/invoices", UriKind.Relative);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public InvoiceApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public InvoiceApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("invoices_api");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("invoices_api");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

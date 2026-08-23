@@ -66,7 +66,7 @@ public sealed class SubscriptionRenewalService
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        // The whole step is one explicit transaction over a FOR UPDATE read: a console edit
+        // The whole step is one explicit transaction over an UPDLOCK read: a console edit
         // racing the sweep waits its turn instead of winning at save time — by which point the
         // step has drawn a non-refundable invoice number, and every lost race burned one.
         await using IUnitOfWorkTransaction transaction =
@@ -185,7 +185,7 @@ public sealed class SubscriptionRenewalService
 
         // Withdrawn AFTER the billing transaction commits, and this ordering is load-bearing.
         //
-        // The withdrawal deletes gym_feature_overrides rows, which carry xmin tokens and sit under no
+        // The withdrawal deletes gym_feature_overrides rows, which carry row-version tokens and sit under no
         // lock, so an operator restating one underneath makes the delete match nothing and raises a
         // concurrency conflict. Staged inside the transaction above, that conflict rolled the whole
         // renewal back — including an invoice number IssueForPeriodAsync had already drawn from a

@@ -35,7 +35,7 @@ namespace GymOS.ArchitectureTests;
 public sealed class TenantScopedEntityTests
 {
     /// <summary>
-    /// The production model, built without touching a database. <c>UseNpgsql</c> with a connection
+    /// The production model, built without touching a database. <c>UseSqlServer</c> with a connection
     /// string nothing dials is enough: EF needs a relational provider to resolve table names and
     /// schemas, and building the model opens no connection. The naming convention is applied exactly as
     /// <c>Program.cs</c> applies it, so column names here are the ones the validator will query for.
@@ -43,7 +43,7 @@ public sealed class TenantScopedEntityTests
     private static IModel ProductionModel()
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql("Host=architecture-tests-never-connect;Database=none")
+            .UseSqlServer("Server=architecture-tests-never-connect;Database=none")
             .UseSnakeCaseNamingConvention()
             .Options;
 

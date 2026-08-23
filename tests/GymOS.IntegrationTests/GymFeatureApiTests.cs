@@ -14,20 +14,20 @@ namespace GymOS.IntegrationTests;
 /// end to end, including the part that has no unit-test equivalent: that a withdrawn override really
 /// leaves the table, so the next plan change reaches the gym.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class GymFeatureApiTests : IAsyncLifetime
 {
     private const string Reason = "Contractually promised during migration.";
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public GymFeatureApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public GymFeatureApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("gym_features_api");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("gym_features_api");
         // Jobs off. This suite asserts on stored gym_feature_overrides rows, and
         // FeatureOverrideSweepJob runs daily at 03:50 UTC — a CI run alive across that
         // minute would have the sweep withdraw the very exceptions these assertions

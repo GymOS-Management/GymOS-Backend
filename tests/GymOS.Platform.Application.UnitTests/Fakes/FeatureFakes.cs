@@ -46,10 +46,10 @@ internal sealed class FakeFeatureRepository : IFeatureRepository
 
     public IReadOnlyList<GymFeatureOverride> Overrides => _overrides;
 
-    public Dictionary<Guid, uint> ExpectedVersions { get; } = [];
+    public Dictionary<Guid, ulong> ExpectedVersions { get; } = [];
 
     /// <summary>Set to make <see cref="ExpectVersion"/> behave as a stale-version write.</summary>
-    public uint? ConflictingVersion { get; set; }
+    public ulong? ConflictingVersion { get; set; }
 
     /// <summary>Seeds the declared catalogue, as the startup seeder would.</summary>
     public void SeedDeclaredCatalogue()
@@ -84,7 +84,7 @@ internal sealed class FakeFeatureRepository : IFeatureRepository
     public Task<IReadOnlyList<Feature>> ListAllAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<Feature>>(_features);
 
-    public void ExpectVersion(Feature feature, uint expectedVersion)
+    public void ExpectVersion(Feature feature, ulong expectedVersion)
     {
         ExpectedVersions[feature.Id] = expectedVersion;
 
@@ -126,7 +126,7 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
         _subscriptions = subscriptions;
     }
 
-    public uint RowVersion { get; set; } = 1;
+    public ulong RowVersion { get; set; } = 1;
 
     public Task<IReadOnlyList<FeatureListItem>> ListCatalogueAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<FeatureListItem>>(

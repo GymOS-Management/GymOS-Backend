@@ -3,7 +3,7 @@ namespace GymOS.BuildingBlocks.Infrastructure.Outbox;
 /// <summary>
 /// Per-handler delivery state for one outbox message (AD-13): each subscribed handler
 /// gets its own row, so one failing handler retries in isolation and never blocks the
-/// others. Rows are claimed with <c>FOR UPDATE SKIP LOCKED</c> by the processor
+/// others. Rows are claimed with <c>WITH (UPDLOCK, READPAST, ROWLOCK)</c> by the processor
 /// (lands with the background-runner milestone).
 /// </summary>
 public sealed class OutboxDelivery

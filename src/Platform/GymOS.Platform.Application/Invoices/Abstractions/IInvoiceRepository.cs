@@ -25,5 +25,5 @@ public interface IInvoiceRepository
     void Add(Invoice invoice);
 
     /// <summary>Declares the version the caller believes they are updating (ARCHITECTURE.md §3).</summary>
-    void ExpectVersion(Invoice invoice, uint expectedVersion);
+    void ExpectVersion(Invoice invoice, ulong expectedVersion);
 }

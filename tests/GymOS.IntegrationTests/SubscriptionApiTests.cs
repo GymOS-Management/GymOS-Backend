@@ -12,18 +12,18 @@ namespace GymOS.IntegrationTests;
 /// that the price snapshot survives a repricing of the plan, and that the partial unique index really
 /// allows only one live subscription per gym while keeping every ended one.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class SubscriptionApiTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public SubscriptionApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public SubscriptionApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("subscriptions");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("subscriptions");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 
@@ -163,10 +163,10 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
     {
         // The one-live-per-gym rule is only as strong as this index. Nothing else in the suite would
         // notice if the filter were dropped or its status list drifted from the enum.
-        await using var connection = new Npgsql.NpgsqlConnection(_host.ConnectionString);
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(_host.ConnectionString);
         await connection.OpenAsync();
 
-        await using Npgsql.NpgsqlCommand command = connection.CreateCommand();
+        await using Microsoft.Data.SqlClient.SqlCommand command = connection.CreateCommand();
         command.CommandText =
             """
             SELECT indexdef FROM pg_indexes

@@ -15,18 +15,18 @@ namespace GymOS.IntegrationTests;
 /// (<c>DailyPlatformStats.Record</c>): these endpoints read the read model, so seeding it directly
 /// is the honest unit of test here, not a round trip through the nightly job.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class AnalyticsApiTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public AnalyticsApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public AnalyticsApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("analytics_api");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("analytics_api");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

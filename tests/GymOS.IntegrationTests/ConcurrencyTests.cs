@@ -11,18 +11,18 @@ namespace GymOS.IntegrationTests;
 /// The scenario every case here comes back to: two administrators open the same account, both
 /// edit, both save. Exactly one must win, and the loser must be told — not silently overwritten.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class ConcurrencyTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public ConcurrencyTests(PostgresFixture postgres) => _postgres = postgres;
+    public ConcurrencyTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("concurrency");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("concurrency");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

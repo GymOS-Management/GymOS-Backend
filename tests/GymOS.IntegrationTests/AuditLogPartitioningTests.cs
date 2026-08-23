@@ -18,21 +18,21 @@ namespace GymOS.IntegrationTests;
 /// migration applied without error" does not prove a table is partitioned or that rows route
 /// to the month they belong to.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class AuditLogPartitioningTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
     /// <summary>Kept for the one statement in this suite that needs the migrator: DETACH PARTITION.</summary>
     private string _connectionString = null!;
 
-    public AuditLogPartitioningTests(PostgresFixture postgres) => _postgres = postgres;
+    public AuditLogPartitioningTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        _connectionString = await _postgres.CreateIsolatedDatabaseAsync("audit_partitions");
+        _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("audit_partitions");
         _host = AuthenticationHost.Create(_connectionString);
         _client = _host.CreateClient();
 
@@ -251,7 +251,7 @@ public sealed class AuditLogPartitioningTests : IAsyncLifetime
         // `42501: must be owner of table audit_logs`. That refusal is the arrangement working, not an
         // obstacle: in the deployment this statement belongs to the retention job's DDL path, never to
         // the role serving requests.
-        await using (var migrator = new Npgsql.NpgsqlConnection(PostgresFixture.AsMigrator(_connectionString)))
+        await using (var migrator = new Microsoft.Data.SqlClient.SqlConnection(SqlServerFixture.AsMigrator(_connectionString)))
         {
             await migrator.OpenAsync();
 

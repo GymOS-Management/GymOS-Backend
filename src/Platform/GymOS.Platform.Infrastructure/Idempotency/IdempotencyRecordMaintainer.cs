@@ -1,8 +1,8 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Infrastructure.Persistence;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Npgsql;
 
 namespace GymOS.Platform.Infrastructure.Idempotency;
 
@@ -59,7 +59,7 @@ public sealed partial class IdempotencyRecordMaintainer
 
             LogPurged(_logger, removed);
         }
-        catch (NpgsqlException exception) { LogPurgeFailed(_logger, exception); }
+        catch (SqlException exception) { LogPurgeFailed(_logger, exception); }
         catch (InvalidOperationException exception) { LogPurgeFailed(_logger, exception); }
     }
 }

@@ -333,7 +333,7 @@ internal static class InvoiceWrites
                 : Result.Success();
         }
 
-        if (!RowVersion.TryParse(expectedVersion, out uint parsed))
+        if (!RowVersion.TryParse(expectedVersion, out ulong parsed))
         {
             return Result.Failure(Error.Validation(
                 "concurrency.malformed_version",

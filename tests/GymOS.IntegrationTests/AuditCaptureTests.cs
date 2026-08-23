@@ -15,18 +15,18 @@ namespace GymOS.IntegrationTests;
 /// this covers the interceptor's behavior against a real change tracker — the diff shape, and the
 /// cases where it must produce nothing at all.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class AuditCaptureTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public AuditCaptureTests(PostgresFixture postgres) => _postgres = postgres;
+    public AuditCaptureTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("audit_capture");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("audit_capture");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

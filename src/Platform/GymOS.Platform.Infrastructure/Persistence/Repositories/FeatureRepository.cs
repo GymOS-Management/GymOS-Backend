@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Domain.Features;
 using Microsoft.EntityFrameworkCore;
@@ -29,8 +30,8 @@ internal sealed class FeatureRepository : IFeatureRepository
             .OrderBy(feature => feature.Key)
             .ToListAsync(cancellationToken);
 
-    public void ExpectVersion(Feature feature, uint expectedVersion) =>
-        _dbContext.Entry(feature).Property<uint>("xmin").OriginalValue = expectedVersion;
+    public void ExpectVersion(Feature feature, ulong expectedVersion) =>
+        _dbContext.Entry(feature).Property<ulong>(ConcurrencyConventions.RowVersionProperty).OriginalValue = expectedVersion;
 
     public async Task<IReadOnlyList<GymFeatureOverride>> ListOverridesForGymAsync(
         Guid gymId,

@@ -13,8 +13,8 @@
 
 # YAML anchors do not cross files — `*default-hardening` from docker-compose.yml is not visible
 # here, and a service defined only in this file silently gets Docker's default capability set
-# instead. That is exactly how pgAdmin and Mailpit ended up unhardened; the fix is to repeat the
-# anchor rather than to remember. Any service added below must reference it.
+# instead. That is exactly how the tooling services here ended up unhardened once; the fix is to
+# repeat the anchor rather than to remember. Any service added below must reference it.
 x-hardening: &default-hardening
   security_opt:
     - no-new-privileges:true
@@ -22,26 +22,40 @@ x-hardening: &default-hardening
     - ALL
 
 services:
-  postgres:
+  mssql:
     environment:
       # Development-only. Named for what it is so it cannot be mistaken for a real secret if it
       # ever appears in a log or a screenshot.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gymos_dev_password}
-      # Read by docker/postgres/initdb/10-roles.sql at first boot, when it creates gymos_migrator
-      # and gymos_app. Must match the defaults api and migrator authenticate with below — the base
-      # file's empty default here is what left both roles with an empty password the first time
-      # this was booted, so the migrator's own default password no longer matched anything.
-      GYMOS_MIGRATOR_PASSWORD: ${GYMOS_MIGRATOR_PASSWORD:-gymos_dev_migrator_password}
-      GYMOS_APP_PASSWORD: ${GYMOS_APP_PASSWORD:-gymos_dev_app_password}
+      #
+      # Longer and mixed-case than the PostgreSQL default it replaces, and not by preference: SQL
+      # Server refuses to start with an sa password that fails its complexity rule (8+ characters,
+      # three of upper/lower/digit/symbol), so `gymos_dev_password` would crash-loop the container
+      # before it printed anything useful.
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-Gymos_dev_sa_password1}
 
     ports:
-      # Published so psql, pgAdmin, EF Core migrations, and the Testcontainers-free local runs can
-      # all reach it from the host. Production publishes nothing — see docker-compose.prod.yml.
-      - '${POSTGRES_PORT:-5432}:5432'
+      # Published so sqlcmd, Azure Data Studio, SSMS, EF Core migrations, and container-free local
+      # runs can all reach it from the host. Production publishes nothing — see
+      # docker-compose.prod.yml.
+      - '${MSSQL_PORT:-1433}:1433'
 
-    # Development machines often already run PostgreSQL on 5432; if the port is taken, set
-    # POSTGRES_PORT=5433 in .env rather than stopping the local service. The API is unaffected —
-    # it reaches the database over the compose network, not the published port.
+    # Development machines sometimes already run SQL Server (or LocalDB) on 1433; if the port is
+    # taken, set MSSQL_PORT=1434 in .env rather than stopping the local service. The API is
+    # unaffected — it reaches the database over the compose network, not the published port.
+
+  db-init:
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-Gymos_dev_sa_password1}
+      # Read by docker/sqlserver/initdb/10-principals.sql when it creates gymos_migrator and
+      # gymos_app. Must match the defaults api and migrator authenticate with below — the base
+      # file's empty default here is what would otherwise create both logins with no password.
+      #
+      # These also satisfy CHECK_POLICY = ON, which the init script sets deliberately rather than
+      # switching complexity off for development: a login created with a weak password in
+      # development and a strong one in production is two different setups, and only one of them
+      # gets tested.
+      GYMOS_MIGRATOR_PASSWORD: ${GYMOS_MIGRATOR_PASSWORD:-Gymos_dev_migrator_password1}
+      GYMOS_APP_PASSWORD: ${GYMOS_APP_PASSWORD:-Gymos_dev_app_password1}
 
   api:
     environment:
@@ -56,14 +70,17 @@ services:
       #Security__Jwt__SigningKey: ${GYMOS_JWT_SIGNING_KEY}
       ASPNETCORE_ENVIRONMENT: Development
 
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gymos_dev_password}
       # Set GYMOS_DB_CONNECTION in .env to point the API at an external shared database (e.g. a
-      # team dev instance) instead of the local sidecar. Unset, it falls back to the container,
-      # connecting as gymos_app — which owns nothing and cannot alter a table's row-level security,
-      # unlike the gymos_admin bootstrap superuser this used to connect as.
+      # team dev instance, or an Azure SQL development database) instead of the local sidecar.
+      # Unset, it falls back to the container, connecting as gymos_app — which owns nothing and
+      # cannot disable a security policy, unlike the sa login.
+      #
+      # TrustServerCertificate=True here and nowhere else: the sidecar generates a self-signed
+      # certificate on first boot, so verification cannot succeed against it. Production leaves it
+      # off and verifies for real.
       ConnectionStrings__Database: >-
-        ${GYMOS_DB_CONNECTION:-Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=gymos_app;Password=${GYMOS_APP_PASSWORD:-gymos_dev_app_password};Include
-        Error Detail=true}
+        ${GYMOS_DB_CONNECTION:-Server=mssql,1433;Database=${GYMOS_DB:-gymos};User Id=gymos_app;Password=${GYMOS_APP_PASSWORD:-Gymos_dev_app_password1};Encrypt=True;TrustServerCertificate=True;Current
+        Language=us_english}
 
       # Off, here too: migrations are the migrator service's job now (see its definition below),
       # so "one command" (`docker compose up -d`) still brings up a fresh clone fully migrated —
@@ -121,69 +138,44 @@ services:
   migrator:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      # Public development password, matching how api's gymos_app default above works. gymos_admin
-      # (POSTGRES_USER) never appears here — the migrator owns the schema as gymos_migrator, created
-      # by docker/postgres/initdb/10-roles.sql on first boot.
+      # Public development password, matching how api's gymos_app default above works. sa never
+      # appears here — the migrator owns the schemas as gymos_migrator, created by
+      # docker/sqlserver/initdb/10-principals.sql before this service runs.
       ConnectionStrings__Database: >-
-        Host=postgres;Port=5432;Database=${POSTGRES_DB:-gymos};Username=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-gymos_dev_migrator_password}
+        Server=mssql,1433;Database=${GYMOS_DB:-gymos};User Id=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-Gymos_dev_migrator_password1};Encrypt=True;TrustServerCertificate=True;Current
+        Language=us_english
 
   # ══════════════════════════════════════════════════════════════════════════════════════════════
   # Development-only tooling
   # ══════════════════════════════════════════════════════════════════════════════════════════════
   #
-  # pgAdmin is behind the `tools` profile — nothing depends on it, so it starts only when asked:
-  #     docker compose --profile tools up -d
+  # Mailpit: the API sends mail as part of creating a usable administrator (ADR-53), so it is part
+  # of the development baseline rather than optional tooling behind a profile. It is defined here
+  # rather than in the base file because it does not belong in production — its purpose is to
+  # *capture* mail instead of delivering it.
   #
-  # Mailpit is not: the API sends mail as part of creating a usable administrator (ADR-53), so it is
-  # part of the development baseline rather than optional tooling. `docker compose up -d` is three
-  # containers.
+  # ── There is no database console container, and that is a removal, not an omission ────────────
+  # pgAdmin used to sit here behind the `tools` profile. It speaks the PostgreSQL wire protocol and
+  # nothing else, so the migration to SQL Server left nothing to point it at. It was dropped rather
+  # than swapped for the nearest equivalent, on the same dependency-policy grounds the rest of this
+  # repository applies: the obvious replacements are either GPL-licensed or another always-on HTTP
+  # service holding database credentials, and neither earns its place for a job three tools already
+  # do better.
   #
-  # Both are defined here rather than in the base file because neither belongs in production:
-  # pgAdmin is a database console reachable over HTTP, and Mailpit's purpose is to *capture* mail
-  # instead of delivering it.
-
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: gymos-pgadmin
-    profiles: ['tools']
-    restart: unless-stopped
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@gymos.local}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-gymos-dev-pgadmin}
-      # No master password prompt on every start, and no phone-home.
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
-      PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED: 'False'
-      # pgAdmin validates its login address and rejects RFC 6761 special-use domains, so
-      # admin@gymos.local — the same address the API seeds — crash-loops the container on start.
-      # Allowing `local` keeps one credential for both rather than inventing a second one that
-      # happens to look deliverable. These values are parsed as Python literals.
-      PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: "['local']"
-      # Explicit, because with cap_drop: ALL pgAdmin cannot bind its default port 80 and silently
-      # falls back to 8080 ("Restricted security context detected") — leaving the published port and
-      # the health check pointing at a port nothing listens on. Stating it keeps all three in
-      # agreement instead of granting NET_BIND_SERVICE for a port number.
-      PGADMIN_LISTEN_PORT: '8080'
-    ports:
-      - '${PGADMIN_PORT:-5050}:8080'
-    volumes:
-      - pgadmin-data:/var/lib/pgadmin
-    healthcheck:
-      test: ['CMD-SHELL', 'wget --quiet --tries=1 --spider http://localhost:8080/misc/ping || exit 1']
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    depends_on:
-      postgres:
-        condition: service_healthy
-    <<: *default-hardening
-    networks:
-      - gymos-data
+  # The database is published on ${MSSQL_PORT:-1433}, so connect to it directly with whichever of
+  # these is already installed:
+  #
+  #     sqlcmd            docker compose exec mssql /opt/mssql-tools18/bin/sqlcmd \
+  #                           -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -d gymos
+  #     Azure Data Studio / SSMS / JetBrains DataGrip / VS Code mssql extension
+  #                       localhost,1433 — sa / Gymos_dev_sa_password1 — Trust server certificate
+  #
+  # PGADMIN_* variables are gone from .env.example for the same reason.
 
   mailpit:
     image: axllent/mailpit:latest
     container_name: gymos-mailpit
-    # No profile, unlike pgAdmin: since ADR-53 the API sends mail on the one path that creates a
+    # No profile: since ADR-53 the API sends mail on the one path that creates a
     # usable administrator, so a stack without somewhere to send it is a broken stack rather than a
     # leaner one. It is also what makes F5 self-sufficient — the whole flow, including the
     # invitation, works with nothing else started by hand.
@@ -238,7 +230,3 @@ services:
     ports:
       - '${MINIO_API_PORT:-9000}:9000' # S3 API
       - '${MINIO_CONSOLE_PORT:-9001}:9001' # web console
-
-volumes:
-  pgadmin-data:
-    name: gymos-pgadmin-data

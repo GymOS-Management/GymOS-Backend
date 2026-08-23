@@ -27,6 +27,31 @@ namespace GymOS.Platform.Infrastructure.DependencyInjection;
 /// </summary>
 public static class PlatformInfrastructureServiceCollectionExtensions
 {
+    /// <summary>
+    /// Schema the platform module owns, and where its migration history table lives. Shared with
+    /// <see cref="Persistence.AppDbContextDesignTimeFactory"/> and the integration harness, which
+    /// must place the history table identically or `dotnet ef` and the running host would disagree
+    /// about which migrations are applied.
+    /// </summary>
+    public const string PlatformSchema = "platform";
+
+    /// <summary>EF Core's default history table name, restated because the schema is not the default.</summary>
+    public const string HistoryTableName = "__EFMigrationsHistory";
+
+    /// <remarks>
+    /// <para><b><c>EnableRetryOnFailure</c> is deliberately not set</b>, despite Azure SQL being the
+    /// production target and transient-fault retry being the standard advice for it. Turning it on
+    /// installs <c>SqlServerRetryingExecutionStrategy</c>, and that strategy refuses a user-initiated
+    /// transaction outright — "the configured execution strategy does not support user-initiated
+    /// transactions". <c>IUnitOfWork.BeginTransactionAsync</c> is exactly that, and both
+    /// <c>PlatformIdentitySeeder</c> and <c>FeatureCatalogSeeder</c> take one on every boot, so
+    /// switching this on here fails startup rather than hardening it.</para>
+    /// <para>Adopting it means wrapping every <c>BeginTransactionAsync</c> call site in
+    /// <c>Database.CreateExecutionStrategy().ExecuteAsync(…)</c>, which changes transaction semantics —
+    /// the delegate has to become replayable. That is a behavioural change, so this migration does not
+    /// make it; it is written up as the first follow-up in
+    /// <c>docs/runbooks/managed-sqlserver-roles.md</c>.</para>
+    /// </remarks>
     public static IServiceCollection AddPlatformPersistence(this IServiceCollection services, IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -77,12 +102,12 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         // Cross-instance job coordination rides the same database as everything else (M3.4) —
         // and so does the clock the sweeps decide with: durable verdicts (Overdue, Expired, a
         // billed renewal) must not depend on any one host's idea of the time.
-        services.TryAddScoped<IJobLock, PostgresJobLock>();
-        services.TryAddScoped<IDatabaseClock, PostgresDatabaseClock>();
+        services.TryAddScoped<IJobLock, SqlServerJobLock>();
+        services.TryAddScoped<IDatabaseClock, SqlServerDatabaseClock>();
 
         // Serializes constraints over a SET of rows, which optimistic tokens cannot express —
         // the last-active-SuperAdmin rule is the first consumer.
-        services.TryAddScoped<IAdvisoryLock, PostgresAdvisoryLock>();
+        services.TryAddScoped<IAdvisoryLock, SqlServerAdvisoryLock>();
 
         // Refresh tokens accumulate one row per refresh; the retention job deletes the unusable
         // ones (the purge IRefreshTokenRepository has always documented).
@@ -100,7 +125,13 @@ public static class PlatformInfrastructureServiceCollectionExtensions
             provider.GetRequiredService<ICorrelationContext>()));
 
         services.AddDbContext<AppDbContext>((provider, options) => options
-            .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(connectionString, sqlServer => sqlServer
+                .MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!)
+                // The history table lives beside the schema it describes rather than in dbo. A
+                // migrator principal that owns `platform` and `outbox` and nothing else can then
+                // write it, which is what the two-principal split depends on — see
+                // TenantIsolationValidator.
+                .MigrationsHistoryTable(HistoryTableName, PlatformSchema))
             .UseSnakeCaseNamingConvention()
             // Order matters: timestamps are stamped before the audit interceptor reads
             // values, so created_at/updated_at appear in the captured diff.

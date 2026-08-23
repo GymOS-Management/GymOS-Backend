@@ -1,8 +1,8 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Infrastructure.Persistence;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Npgsql;
 
 namespace GymOS.Platform.Infrastructure.Identity;
 
@@ -60,7 +60,7 @@ internal sealed partial class ActivationTokenMaintainer
 
             LogPurged(_logger, removed, RetentionDays);
         }
-        catch (NpgsqlException exception)
+        catch (SqlException exception)
         {
             // Non-fatal, like every other maintenance half: housekeeping must not take the job down.
             LogPurgeFailed(_logger, exception);

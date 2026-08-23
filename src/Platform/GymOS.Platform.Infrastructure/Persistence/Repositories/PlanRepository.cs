@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
@@ -35,7 +36,7 @@ internal sealed class PlanRepository : IPlanRepository
         // pipeline on the same connection and transaction, where the lock is already held. Callers
         // hold an IUnitOfWork transaction, or the lock would die with statement one.
         await _dbContext.Database.ExecuteSqlAsync(
-            $"SELECT 1 FROM platform.subscription_plans WHERE id = {planId} FOR UPDATE",
+            $"SELECT 1 FROM platform.subscription_plans WITH (UPDLOCK, ROWLOCK) WHERE id = {planId}",
             cancellationToken);
 
         return await FindByIdAsync(planId, cancellationToken);
@@ -45,21 +46,30 @@ internal sealed class PlanRepository : IPlanRepository
         Guid planId,
         CancellationToken cancellationToken)
     {
-        // FOR SHARE, not FOR UPDATE — the difference is the whole point of this method existing.
+        // A SHARED lock, not an update lock — the difference is the whole point of this method
+        // existing.
         //
         // A caller that only needs the plan to hold still while it decides something does not need to
-        // exclude other such callers, only writers. FOR SHARE conflicts with UPDATE / FOR UPDATE /
-        // FOR NO KEY UPDATE, so a concurrent PUT /plans/{id}/features still blocks; it is compatible
-        // with other FOR SHARE, so gym-feature writes for different gyms on the SAME plan now proceed
-        // in parallel instead of one at a time.
+        // exclude other such callers, only writers. REPEATABLEREAD takes a shared row lock and holds
+        // it to the end of the transaction, so a concurrent PUT /plans/{id}/features still blocks; it
+        // is compatible with other shared readers, so gym-feature writes for different gyms on the
+        // SAME plan proceed in parallel instead of one at a time.
         //
-        // They were serialised before, because this read took FOR UPDATE keyed on the plan while the
-        // rows being written were per-gym overrides — disjoint. Rolling a feature out to 500 gyms on
-        // one plan executed strictly sequentially for a lock none of them needed to hold exclusively.
+        // They were serialised before, because this read took an exclusive lock keyed on the plan
+        // while the rows being written were per-gym overrides — disjoint. Rolling a feature out to
+        // 500 gyms on one plan executed strictly sequentially for a lock none of them needed to hold
+        // exclusively.
+        //
+        // REPEATABLEREAD is the hint that reproduces PostgreSQL's FOR SHARE. The plain default is not
+        // equivalent and would silently drop this method's whole guarantee: under READ COMMITTED SQL
+        // Server releases a shared lock as soon as the row has been read, so the plan would be free
+        // to change the instant after this statement returned. HOLDLOCK was the other candidate and
+        // is stronger than asked for — it is SERIALIZABLE, so it adds key-range locks that would
+        // block inserts of unrelated plans and reintroduce contention through a different door.
         //
         // Two-statement shape and the caller-holds-a-transaction precondition are as above.
         await _dbContext.Database.ExecuteSqlAsync(
-            $"SELECT 1 FROM platform.subscription_plans WHERE id = {planId} FOR SHARE",
+            $"SELECT 1 FROM platform.subscription_plans WITH (REPEATABLEREAD, ROWLOCK) WHERE id = {planId}",
             cancellationToken);
 
         return await FindByIdAsync(planId, cancellationToken);
@@ -77,8 +87,8 @@ internal sealed class PlanRepository : IPlanRepository
 
     public void Add(SubscriptionPlan plan) => _dbContext.Set<SubscriptionPlan>().Add(plan);
 
-    public void ExpectVersion(SubscriptionPlan plan, uint expectedVersion) =>
-        _dbContext.Entry(plan).Property<uint>("xmin").OriginalValue = expectedVersion;
+    public void ExpectVersion(SubscriptionPlan plan, ulong expectedVersion) =>
+        _dbContext.Entry(plan).Property<ulong>(ConcurrencyConventions.RowVersionProperty).OriginalValue = expectedVersion;
 
     public void MarkAggregateChanged(SubscriptionPlan plan) =>
         _dbContext.Entry(plan).Property(entity => entity.UpdatedAtUtc).IsModified = true;

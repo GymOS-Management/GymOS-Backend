@@ -161,16 +161,16 @@ public sealed class ConcurrencyModelTests
     {
         string token = RowVersion.ToToken(4294967295);
 
-        Assert.True(RowVersion.TryParse(token, out uint parsed));
+        Assert.True(RowVersion.TryParse(token, out ulong parsed));
         Assert.Equal(4294967295u, parsed);
     }
 
     [Theory]
     [InlineData("\"42\"", 42u)]      // the quoted form a client echoes from an ETag
     [InlineData("42", 42u)]          // and the bare value
-    public void AnEtagIsAcceptedQuotedOrBare(string header, uint expected)
+    public void AnEtagIsAcceptedQuotedOrBare(string header, ulong expected)
     {
-        Assert.True(RowVersion.TryParse(header, out uint parsed));
+        Assert.True(RowVersion.TryParse(header, out ulong parsed));
         Assert.Equal(expected, parsed);
     }
 
@@ -194,7 +194,7 @@ public sealed class ConcurrencyModelTests
         // No connection is opened: EF builds the model from configuration, and the connection
         // string only has to be syntactically valid.
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql("Host=model-only;Database=model-only;Username=none;Password=none")
+            .UseSqlServer("Server=model-only;Database=model-only")
             .UseSnakeCaseNamingConvention()
             .Options;
 

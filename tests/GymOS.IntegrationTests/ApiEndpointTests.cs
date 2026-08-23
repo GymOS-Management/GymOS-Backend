@@ -8,22 +8,22 @@ namespace GymOS.IntegrationTests;
 /// The real HTTP host (WebApplicationFactory) against the real database: health
 /// endpoints, correlation spine, OpenAPI document.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class ApiEndpointTests : IAsyncLifetime
 {
     private const string CorrelationHeader = "X-Correlation-Id";
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
 
-    public ApiEndpointTests(PostgresFixture postgres) => _postgres = postgres;
+    public ApiEndpointTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public Task InitializeAsync()
     {
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.UseSetting("ConnectionStrings:Database", _postgres.ConnectionString);
+            builder.UseSetting("ConnectionStrings:Database", _sqlServer.ConnectionString);
 
             // No `Database:MigrateOnStartup` here, deliberately, and this used to say the opposite.
             //
@@ -38,7 +38,7 @@ public sealed class ApiEndpointTests : IAsyncLifetime
             // execution order — so this host was made to migrate itself.
             //
             // It no longer can: the role every host connects as owns nothing and holds no DDL.
-            // PostgresFixture migrates the default database in InitializeAsync instead, so the
+            // SqlServerFixture migrates the default database in InitializeAsync instead, so the
             // guarantee this comment has always been about — a real, migrated database, not a borrowed
             // one — now holds for every suite rather than for this one because it asked.
         });

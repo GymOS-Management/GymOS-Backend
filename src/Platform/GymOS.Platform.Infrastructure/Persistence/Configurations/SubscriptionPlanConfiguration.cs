@@ -43,7 +43,7 @@ public sealed class SubscriptionPlanConfiguration : IEntityTypeConfiguration<Sub
         builder.Navigation(plan => plan.Features)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
-        builder.Property<uint>("xmin").IsRowVersion();
+        builder.HasGymOSRowVersion();
     }
 }
 
@@ -68,7 +68,7 @@ public sealed class PlanFeatureConfiguration : IEntityTypeConfiguration<PlanFeat
             .HasForeignKey(feature => feature.FeatureId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // No xmin: written only through the SubscriptionPlan aggregate, whose token guards it —
+        // No row version: written only through the SubscriptionPlan aggregate, whose token guards it —
         // the PlanPrice precedent, recorded in ConcurrencyModelTests' exemption list.
     }
 }

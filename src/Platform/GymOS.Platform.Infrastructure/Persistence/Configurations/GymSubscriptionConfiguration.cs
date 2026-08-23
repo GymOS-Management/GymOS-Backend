@@ -95,6 +95,6 @@ public sealed class GymSubscriptionConfiguration : IEntityTypeConfiguration<GymS
             .HasFilter("status = 5")
             .HasDatabaseName("ix_gym_subscriptions_expired_at_utc");
 
-        builder.Property<uint>("xmin").IsRowVersion();
+        builder.HasGymOSRowVersion();
     }
 }

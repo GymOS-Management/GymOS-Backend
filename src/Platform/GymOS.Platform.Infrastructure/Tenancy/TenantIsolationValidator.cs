@@ -1,3 +1,4 @@
+using System.Data.Common;
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -7,47 +8,63 @@ namespace GymOS.Platform.Infrastructure.Tenancy;
 
 /// <summary>
 /// R14's startup persistence validation: every tenant-scoped table carries <c>tenant_id</c> and is
-/// protected by a forced row-level security policy.
+/// protected by an enabled row-level security policy that the connected principal cannot switch off.
 /// </summary>
 /// <remarks>
 /// <para><b>Fails the boot.</b> A platform that will not start is a visible outage; a platform serving
 /// cross-tenant reads is an invisible breach. <c>Program.cs</c> logs a startup exception as Fatal and
 /// rethrows, so the host dies and the container restarts.</para>
 /// <para><b>It does not swallow.</b> <c>AuditLogPartitionMaintainer</c> and
-/// <c>IdempotencyRecordMaintainer</c> catch <c>NpgsqlException</c> so a schemaless database can boot;
+/// <c>IdempotencyRecordMaintainer</c> catch <c>SqlException</c> so a schemaless database can boot;
 /// this must not copy them. It skips only while migrations are genuinely pending — a real first-boot
 /// state, and the guard <c>SuperAdminSeeder</c> already has. Anything else is fatal, because a
 /// security control that swallows "the table isn't there" passes on an empty database and on every
 /// misconfiguration that resembles one.</para>
-/// <para><b>The connected role is checked unconditionally.</b> A role with <c>rolsuper</c> or
-/// <c>rolbypassrls</c> bypasses row-level security entirely, above whatever the table flags say —
-/// <c>FORCE</c> does not constrain it. This check used to be gated on something implementing
-/// <see cref="ITenantScoped"/>, purely because the deployment connected as a superuser
-/// (<c>docker-compose.yml</c>'s <c>POSTGRES_USER</c>) and an unconditional check would have failed
-/// every boot. The deployment now connects as <c>gymos_app</c>, so the gate is gone — and the gate
-/// was itself the hole: an entity that forgot the marker produced zero tenant-scoped tables and
-/// switched the whole control, role check included, silently off. The role a host connects as is a
-/// property of the deployment, not of the model, so nothing about the model may excuse checking it.</para>
-/// <para><b>And the connected role must not own what it is isolated from.</b> An owner can execute
-/// <c>ALTER TABLE ... NO FORCE ROW LEVEL SECURITY</c> and switch a table's own isolation off in one
-/// statement — well within reach of the SQL injection row-level security mostly exists to contain.
-/// Two roles is what removes that: <c>gymos_migrator</c> owns the schema and runs DDL,
-/// <c>gymos_app</c> owns nothing and serves requests. This asserts that separation rather than
-/// trusting the deployment to have kept it — and asks whether the connected role can <i>act as</i> the
-/// owner, not whether it is <i>named</i> the owner, because a granted membership in the owning role
-/// confers the same power while leaving <c>current_user</c> unchanged.</para>
+///
+/// <para><b>What changed moving from PostgreSQL, and what did not.</b> The control is the same, and
+/// one of its three parts turned out to be unnecessary rather than merely different:</para>
+/// <list type="bullet">
+/// <item><b><c>FORCE ROW LEVEL SECURITY</c> has no counterpart, and needs none.</b> PostgreSQL exempts
+/// a table's owner from its own policies unless <c>FORCE</c> is set, which is why the original checked
+/// <c>relforcerowsecurity</c> rather than <c>relrowsecurity</c> alone (D5). SQL Server has no owner
+/// exemption: a security policy filters every principal that queries the table, <c>dbo</c> and
+/// <c>sysadmin</c> included. The forced behaviour is the only behaviour, so there is no flag whose
+/// absence could quietly void a policy.</item>
+/// <item><b><c>BYPASSRLS</c> has no counterpart either</b>, for the same reason — SQL Server has no
+/// attribute that exempts a principal from a predicate at query time.</item>
+/// <item><b>The disable path is what remains, and it is what is checked.</b> A principal cannot read
+/// around a policy, but one holding <c>ALTER ANY SECURITY POLICY</c> (or <c>CONTROL</c> on the
+/// database, or membership in <c>db_owner</c>) can execute <c>ALTER SECURITY POLICY … WITH (STATE =
+/// OFF)</c> and switch the whole thing off in one statement — precisely the reach the PostgreSQL
+/// version worried about with <c>ALTER TABLE … NO FORCE</c>, arriving through a different door. And a
+/// principal holding <c>ALTER</c> on the table (through <c>db_ddladmin</c>, schema ownership, or a
+/// direct grant) can change the table out from under the policy. Two principals is what removes both:
+/// <c>gymos_migrator</c> owns the schemas and runs DDL, <c>gymos_app</c> owns nothing and serves
+/// requests.</item>
+/// </list>
+///
+/// <para><b>The connected principal is checked unconditionally</b>, before the per-table loop and
+/// regardless of it. The principal a host connects as is a property of the deployment, not of the EF
+/// model, so nothing about the model may excuse checking it — an entity that forgot the
+/// <see cref="ITenantScoped"/> marker produces zero tenant-scoped tables, and gating the principal
+/// check on that list being non-empty would switch the whole control silently off.</para>
+///
 /// <para><b>Its remaining skip path says so out loud.</b> The pending-migrations return switches this
 /// control off entirely, and a security control that turns itself off must not do it silently. A
 /// deployment with <c>MigrateOnStartup=false</c> and a migration left pending would otherwise disable
 /// R14 with nothing in the log to find afterwards. Having nothing tenant-scoped is no longer a skip —
-/// it logs and falls through, so the role checks still run — but it is warned about for the same
+/// it logs and falls through, so the principal checks still run — but it is warned about for the same
 /// reason: it is also what a forgotten <see cref="ITenantScoped"/> marker looks like from in here.</para>
+///
 /// <para><b>Public, not internal.</b> It is invoked from <c>Program.cs</c> in the
 /// <c>GymOS.WebApi</c> host, which has no <c>InternalsVisibleTo</c> grant onto this assembly — the
 /// same reason <c>FeatureExceptionMaintainer</c> is public rather than internal.</para>
 /// </remarks>
 public sealed partial class TenantIsolationValidator
 {
+    /// <summary>SQL Server's default schema, used when an entity declares none.</summary>
+    private const string DefaultSchema = "dbo";
+
     private readonly AppDbContext _dbContext;
     private readonly ILogger<TenantIsolationValidator> _logger;
 
@@ -61,7 +78,7 @@ public sealed partial class TenantIsolationValidator
     [LoggerMessage(Level = LogLevel.Warning,
         Message = "Tenant isolation validation (R14) checked no table: no entity in the EF model " +
             "implements ITenantScoped, so the per-table checks had nothing to run against. The " +
-            "connected-role checks still ran. Expected while no production table is tenant-scoped; " +
+            "connected-principal checks still ran. Expected while no production table is tenant-scoped; " +
             "once one is, an entity missing the ITenantScoped marker produces this same message.")]
     private static partial void LogNoTenantScopedEntities(ILogger logger);
 
@@ -82,10 +99,10 @@ public sealed partial class TenantIsolationValidator
             return;
         }
 
-        // Before the zero-entities branch, and collected regardless of it: the role a host connects as
-        // is a property of the deployment, not of the EF model, so an empty model must not be able to
-        // excuse checking it.
-        var problems = new List<string>(await InspectConnectedRoleAsync(cancellationToken));
+        // Before the zero-entities branch, and collected regardless of it: the principal a host
+        // connects as is a property of the deployment, not of the EF model, so an empty model must
+        // not be able to excuse checking it.
+        var problems = new List<string>(await InspectConnectedPrincipalAsync(cancellationToken));
 
         var tenantScopedTables = TenantScopedTables().ToList();
 
@@ -93,7 +110,7 @@ public sealed partial class TenantIsolationValidator
         {
             // Nothing tenant-scoped to inspect per table — but this is also what a forgotten
             // ITenantScoped marker looks like from in here, so it is logged rather than passed over.
-            // It falls through instead of returning: the role checks above still stand on their own.
+            // It falls through instead of returning: the principal checks above stand on their own.
             LogNoTenantScopedEntities(_logger);
         }
 
@@ -115,22 +132,58 @@ public sealed partial class TenantIsolationValidator
         _dbContext.Model.GetEntityTypes()
             .Where(entity => typeof(ITenantScoped).IsAssignableFrom(entity.ClrType))
             .Select(entity => (
-                Schema: entity.GetSchema() ?? "public",
+                Schema: entity.GetSchema() ?? DefaultSchema,
                 Table: entity.GetTableName() ?? entity.ClrType.Name))
             .Distinct();
 
     /// <summary>
-    /// Whether the connected role bypasses row-level security outright. PostgreSQL exempts a
-    /// superuser or a <c>BYPASSRLS</c> role from every policy unconditionally — <c>FORCE</c> included
-    /// — so this is checked before any table flag, because no table flag can compensate for it.
+    /// Every way the connected principal could disable row-level security rather than merely be
+    /// filtered by it, with the sentence each one produces. Ordinals index the SELECT in
+    /// <see cref="InspectConnectedPrincipalAsync"/>; changing one without the other silently
+    /// re-points a check.
     /// </summary>
-    private async Task<IReadOnlyList<string>> InspectConnectedRoleAsync(CancellationToken cancellationToken)
+    private static readonly (int Ordinal, string Capability)[] PrincipalDisablers =
+    [
+        (1, "is a member of the sysadmin server role"),
+        (2, "is a member of db_owner"),
+        (3, "is a member of db_ddladmin, so it can ALTER the tables the policies protect"),
+        (4, "is a member of db_securityadmin"),
+        (5, "holds ALTER ANY SECURITY POLICY"),
+        (6, "holds CONTROL on the database"),
+    ];
+
+    /// <summary>
+    /// Whether the connected principal can disable row-level security rather than merely be filtered
+    /// by it. SQL Server has no read-time bypass, so this is the whole of the "can it get around the
+    /// policies" question — and it is asked before any per-table check, because no per-table state can
+    /// compensate for a principal that can turn the policy off.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> InspectConnectedPrincipalAsync(CancellationToken cancellationToken)
     {
         var problems = new List<string>();
 
         await using var command = _dbContext.Database.GetDbConnection().CreateCommand();
+
+        // Every membership and permission function is wrapped in ISNULL. They return NULL rather than
+        // 0 for "not applicable" — IS_SRVROLEMEMBER does so on Azure SQL Database, where server roles
+        // do not exist for a contained user — and a NULL read as a boolean throws here rather than
+        // reporting. Azure SQL's nearest equivalent to sysadmin for a database principal is db_owner,
+        // which is checked on its own line, so treating an unavailable server-role answer as "no"
+        // loses nothing there. HAS_PERMS_BY_NAME(NULL, NULL, …) asks about the current database.
+        //
+        // Positional: every GetString and GetBoolean below indexes this SELECT by ordinal, and
+        // PrincipalDisablers hard-codes those ordinals.
         command.CommandText =
-            "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user";
+            """
+            SELECT
+                USER_NAME()                                                                         AS principal_name,
+                CONVERT(bit, ISNULL(IS_SRVROLEMEMBER('sysadmin'), 0))                               AS is_sysadmin,
+                CONVERT(bit, ISNULL(IS_ROLEMEMBER('db_owner'), 0))                                  AS is_db_owner,
+                CONVERT(bit, ISNULL(IS_ROLEMEMBER('db_ddladmin'), 0))                               AS is_db_ddladmin,
+                CONVERT(bit, ISNULL(IS_ROLEMEMBER('db_securityadmin'), 0))                          AS is_db_securityadmin,
+                CONVERT(bit, ISNULL(HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER ANY SECURITY POLICY'), 0)) AS can_alter_security_policy,
+                CONVERT(bit, ISNULL(HAS_PERMS_BY_NAME(NULL, NULL, 'CONTROL'), 0))                   AS has_database_control
+            """;
 
         await _dbContext.Database.OpenConnectionAsync(cancellationToken);
 
@@ -138,25 +191,32 @@ public sealed partial class TenantIsolationValidator
         {
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
-            // A missing row is a problem, not a pass. `current_user` should always match a `pg_roles`
-            // row, so there is no benign reading of its absence — and the alternative is a security
-            // check with a branch that fails open, which is the one shape it must never have.
-            // `InspectAsync` treats a missing row the same way, for the same reason.
+            // A missing row is a problem, not a pass. This SELECT has no FROM clause, so it always
+            // returns exactly one row — there is no benign reading of its absence, and the
+            // alternative is a security check with a branch that fails open, which is the one shape
+            // it must never have. InspectAsync treats a missing row the same way, for the same reason.
             if (!await reader.ReadAsync(cancellationToken))
             {
                 problems.Add(
-                    "  the connected role could not be found in pg_roles, so whether it bypasses " +
+                    "  the connected principal could not be identified, so whether it can disable " +
                     "row-level security could not be established.");
 
                 return problems;
             }
 
-            if (reader.GetBoolean(1) || reader.GetBoolean(2))
+            string principal = reader.GetString(0);
+
+            foreach ((int ordinal, string capability) in PrincipalDisablers)
             {
-                problems.Add(
-                    $"  the connected role \"{reader.GetString(0)}\" has BYPASSRLS (or is a " +
-                    "superuser), so row-level security does not apply to it and every policy below " +
-                    "is void.");
+                if (reader.GetBoolean(ordinal))
+                {
+                    problems.Add(
+                        $"  the connected principal \"{principal}\" {capability}, so it can execute " +
+                        "ALTER SECURITY POLICY ... WITH (STATE = OFF) and switch tenant isolation off " +
+                        "in one statement. Migrations must run as a principal that is not the one " +
+                        "serving requests, and the principal serving requests must hold no DDL or " +
+                        "security-administration rights.");
+                }
             }
         }
         finally
@@ -174,49 +234,61 @@ public sealed partial class TenantIsolationValidator
     {
         var problems = new List<string>();
 
-        // One round trip per table, straight from pg_catalog. `relforcerowsecurity` is the one that
-        // matters most: PostgreSQL exempts a table's owner from its own policies, so checking
-        // `relrowsecurity` alone passes on a table whose policies never filter a single row for the
-        // owner (D5) — and `gymos_migrator` does own every table here.
+        // One round trip per table, straight from the catalog views.
         //
-        // `owned_by_connected_role` goes LAST on purpose: every GetBoolean/GetInt64 below indexes this
+        // enabled_filter_predicates is the one that matters most, and it is deliberately not merely
+        // "a predicate exists": a security policy can be created and then disabled
+        // (ALTER SECURITY POLICY ... WITH (STATE = OFF)), which leaves every row in
+        // sys.security_predicates exactly where it was while filtering nothing. Counting predicates
+        // alone would pass on a table whose isolation is switched off — the SQL Server analogue of
+        // the relrowsecurity-without-relforcerowsecurity hole the PostgreSQL version closed (D5).
+        //
+        // FILTER and BLOCK are counted separately because they are the two halves of the PostgreSQL
+        // policy's USING and WITH CHECK: FILTER silently hides other tenants' rows from reads,
+        // updates and deletes; BLOCK refuses a write that would create a row in, or move one into,
+        // another tenant. A table carrying only the first reads safely and writes across tenants.
+        //
+        // can_alter_table goes LAST on purpose: every GetInt32 and GetBoolean below indexes this
         // SELECT positionally, so inserting anywhere else would silently re-point four existing checks.
         //
-        // It asks `pg_has_role`, not `pg_get_userbyid(c.relowner) = current_user`. The name comparison
-        // reads correctly and is wrong: `GRANT gymos_migrator TO gymos_app` — a plausible way to make a
-        // permission error go away, and nothing forbids it — hands the app role the owner's rights
-        // through inherited membership while `current_user` still reads `gymos_app`. The connected role
-        // could then execute ALTER TABLE ... NO FORCE and this check would report clean. `pg_has_role`
-        // with USAGE is true both when the role IS the owner and when it has been granted membership in
-        // it, which is the question actually worth asking: not "is it named the owner" but "can it act
-        // as the owner". Confirmed by test, not by reading the docs — see
-        // GrantingTheAppRoleMembershipInTheMigratorFailsTheBoot.
+        // It asks HAS_PERMS_BY_NAME rather than comparing the schema's principal_id to the connected
+        // user. The name comparison reads correctly and is wrong: ALTER on the table can arrive
+        // through membership in db_ddladmin, through ownership of the schema, or through a direct
+        // GRANT — each a plausible way to make a permission error go away, and nothing forbids them —
+        // while the table's owner still reads as someone else. HAS_PERMS_BY_NAME answers the question
+        // actually worth asking: not "is it named the owner" but "can it act as one".
         await using var command = _dbContext.Database.GetDbConnection().CreateCommand();
         command.CommandText =
             """
             SELECT
-                c.relrowsecurity,
-                c.relforcerowsecurity,
-                (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid) AS policies,
-                (SELECT count(*) FROM information_schema.columns col
-                 WHERE col.table_schema = n.nspname
-                   AND col.table_name = c.relname
-                   AND col.column_name = 'tenant_id') AS has_tenant_id,
-                pg_has_role(current_user, c.relowner, 'USAGE') AS owned_by_connected_role
-            FROM pg_class c
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = @schema AND c.relname = @table
+                (SELECT COUNT(*)
+                   FROM sys.columns c
+                  WHERE c.object_id = t.object_id
+                    AND c.name = 'tenant_id')                      AS has_tenant_id,
+                (SELECT COUNT(*)
+                   FROM sys.security_predicates sp
+                  WHERE sp.target_object_id = t.object_id)         AS predicates,
+                (SELECT COUNT(*)
+                   FROM sys.security_predicates sp
+                   JOIN sys.security_policies pol ON pol.object_id = sp.object_id
+                  WHERE sp.target_object_id = t.object_id
+                    AND sp.predicate_type_desc = 'FILTER'
+                    AND pol.is_enabled = 1)                        AS enabled_filter_predicates,
+                (SELECT COUNT(*)
+                   FROM sys.security_predicates sp
+                   JOIN sys.security_policies pol ON pol.object_id = sp.object_id
+                  WHERE sp.target_object_id = t.object_id
+                    AND sp.predicate_type_desc = 'BLOCK'
+                    AND pol.is_enabled = 1)                        AS enabled_block_predicates,
+                CONVERT(bit, ISNULL(HAS_PERMS_BY_NAME(
+                    QUOTENAME(s.name) + '.' + QUOTENAME(t.name), 'OBJECT', 'ALTER'), 0)) AS can_alter_table
+            FROM sys.tables t
+            JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE s.name = @schema AND t.name = @table
             """;
 
-        var schemaParameter = command.CreateParameter();
-        schemaParameter.ParameterName = "schema";
-        schemaParameter.Value = schema;
-        command.Parameters.Add(schemaParameter);
-
-        var tableParameter = command.CreateParameter();
-        tableParameter.ParameterName = "table";
-        tableParameter.Value = table;
-        command.Parameters.Add(tableParameter);
+        AddParameter(command, "@schema", schema);
+        AddParameter(command, "@table", table);
 
         await _dbContext.Database.OpenConnectionAsync(cancellationToken);
 
@@ -230,41 +302,43 @@ public sealed partial class TenantIsolationValidator
                 return problems;
             }
 
-            // 3: has_tenant_id
-            if (reader.GetInt64(3) == 0)
+            // 0: has_tenant_id
+            if (reader.GetInt32(0) == 0)
             {
                 problems.Add($"  {schema}.{table}: no tenant_id column.");
             }
 
-            // 0: relrowsecurity
-            if (!reader.GetBoolean(0))
+            // 1: predicates
+            if (reader.GetInt32(1) == 0)
             {
-                problems.Add($"  {schema}.{table}: row-level security is not enabled.");
+                problems.Add($"  {schema}.{table}: no row-level security predicate.");
             }
 
-            // 1: relforcerowsecurity
-            if (!reader.GetBoolean(1))
+            // 2: enabled_filter_predicates
+            if (reader.GetInt32(2) == 0)
             {
                 problems.Add(
-                    $"  {schema}.{table}: row-level security is not FORCED, so the table owner — " +
-                    "the role migrations run as — bypasses every policy on it.");
+                    $"  {schema}.{table}: no ENABLED filter predicate, so reads are not restricted " +
+                    "to the acting tenant. A disabled security policy leaves its predicates listed " +
+                    "in the catalog while filtering nothing.");
             }
 
-            // 2: policies
-            if (reader.GetInt64(2) == 0)
+            // 3: enabled_block_predicates
+            if (reader.GetInt32(3) == 0)
             {
-                problems.Add($"  {schema}.{table}: no row-level security policy.");
+                problems.Add(
+                    $"  {schema}.{table}: no ENABLED block predicate, so a write can still create a " +
+                    "row in, or move one into, another tenant even though reads are filtered.");
             }
 
-            // 4: owned_by_connected_role
+            // 4: can_alter_table
             if (reader.GetBoolean(4))
             {
                 problems.Add(
-                    $"  {schema}.{table}: the connected role owns this table — directly, or through " +
-                    "membership in the role that does — so it can execute ALTER TABLE ... NO FORCE " +
-                    "ROW LEVEL SECURITY and switch the table's own isolation off. Migrations must " +
-                    "run as a role that is not the one serving requests, and the role serving " +
-                    "requests must not be a member of it.");
+                    $"  {schema}.{table}: the connected principal can ALTER this table — directly, " +
+                    "through schema ownership, or through db_ddladmin — so it can change the table " +
+                    "out from under the policy that protects it. Migrations must run as a principal " +
+                    "that is not the one serving requests.");
             }
         }
         finally
@@ -273,5 +347,13 @@ public sealed partial class TenantIsolationValidator
         }
 
         return problems;
+    }
+
+    private static void AddParameter(DbCommand command, string name, string value)
+    {
+        DbParameter parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value;
+        command.Parameters.Add(parameter);
     }
 }

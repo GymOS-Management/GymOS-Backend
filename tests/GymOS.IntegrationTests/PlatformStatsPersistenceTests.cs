@@ -7,20 +7,20 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>The daily read model round-tripping through PostgreSQL, including the write-once rule.</summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class PlatformStatsPersistenceTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private PlatformStatsHost _host = null!;
 
-    public PlatformStatsPersistenceTests(PostgresFixture postgres) => _postgres = postgres;
+    public PlatformStatsPersistenceTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("platform_stats");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("platform_stats");
         _host = new PlatformStatsHost(connectionString);
 
-        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        // Migrations moved into SqlServerFixture, which applies them as the migrator before handing
         // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
@@ -78,7 +78,7 @@ public sealed class PlatformStatsPersistenceTests : IAsyncLifetime
         public AppDbContext CreateDbContext()
         {
             DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseNpgsql(_connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+                .UseSqlServer(_connectionString, TestDatabase.Options)
                 .UseSnakeCaseNamingConvention()
                 .Options;
 

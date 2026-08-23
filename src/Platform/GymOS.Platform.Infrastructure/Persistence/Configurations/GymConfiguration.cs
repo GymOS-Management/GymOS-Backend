@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Domain.Gyms;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -39,8 +40,8 @@ public sealed class GymConfiguration : IEntityTypeConfiguration<Gym>
         // deleted/not-deleted split, so this one index serves both.
         builder.HasIndex(gym => new { gym.Status, gym.CreatedAtUtc });
 
-        // Optimistic concurrency via PostgreSQL's xmin system column (ARCHITECTURE.md §3).
-        builder.Property<uint>("xmin").IsRowVersion();
+        // Optimistic concurrency via the server-maintained row_version column (ARCHITECTURE.md §3).
+        builder.HasGymOSRowVersion();
     }
 }
 
@@ -76,6 +77,6 @@ public sealed class GymBrandingConfiguration : IEntityTypeConfiguration<GymBrand
             .IsUnique()
             .HasFilter("custom_domain IS NOT NULL");
 
-        builder.Property<uint>("xmin").IsRowVersion();
+        builder.HasGymOSRowVersion();
     }
 }

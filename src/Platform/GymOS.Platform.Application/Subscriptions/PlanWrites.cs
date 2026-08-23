@@ -28,7 +28,7 @@ internal static class PlanWrites
             return versionRequired ? Result.Failure(PlanErrors.VersionRequired) : Result.Success();
         }
 
-        if (!RowVersion.TryParse(expectedVersion, out uint parsed))
+        if (!RowVersion.TryParse(expectedVersion, out ulong parsed))
         {
             return Result.Failure(PlanErrors.MalformedVersion);
         }

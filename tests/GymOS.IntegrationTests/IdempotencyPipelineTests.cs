@@ -13,7 +13,7 @@ using Xunit;
 
 namespace GymOS.IntegrationTests;
 
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class IdempotencyPipelineTests : IAsyncLifetime
 {
     public sealed record PaymentDto(Guid CommandId, int ExecutionNumber);
@@ -41,7 +41,7 @@ public sealed class IdempotencyPipelineTests : IAsyncLifetime
         }
     }
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
     private readonly ExecutionCounter _counter = new();
 
@@ -53,12 +53,12 @@ public sealed class IdempotencyPipelineTests : IAsyncLifetime
     // replayed — these tests failed on every checkout, three days after the pinned date.
     private readonly SystemClock _clock = new();
 
-    public IdempotencyPipelineTests(PostgresFixture postgres) => _postgres = postgres;
+    public IdempotencyPipelineTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        _connectionString = await _postgres.CreateIsolatedDatabaseAsync("idempotency_pipeline");
-        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("idempotency_pipeline");
+        // Migrations moved into SqlServerFixture, which applies them as the migrator before handing
         // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
@@ -71,7 +71,7 @@ public sealed class IdempotencyPipelineTests : IAsyncLifetime
         // Mirrors IdempotencyStoreTests.CreateContext's exact AppDbContext configuration
         // (MigrationsAssembly + snake_case convention), adapted to AddDbContext for DI.
         services.AddDbContext<AppDbContext>(options => options
-            .UseNpgsql(_connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(_connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention());
         services.AddCqrsDispatcher();
         services.AddIdempotencyBehavior();

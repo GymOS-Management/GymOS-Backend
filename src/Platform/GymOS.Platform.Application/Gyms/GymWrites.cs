@@ -35,7 +35,7 @@ internal static class GymWrites
             return versionRequired ? Result.Failure(GymErrors.VersionRequired) : Result.Success();
         }
 
-        if (!RowVersion.TryParse(expectedVersion, out uint parsed))
+        if (!RowVersion.TryParse(expectedVersion, out ulong parsed))
         {
             return Result.Failure(GymErrors.MalformedVersion);
         }

@@ -30,18 +30,18 @@ namespace GymOS.IntegrationTests.Tenancy;
 /// suite's inertness stops being free — the gym-grant branch of the middleware becomes reachable
 /// through the API for the first time.</para>
 /// </remarks>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class TenantResolutionTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public TenantResolutionTests(PostgresFixture postgres) => _postgres = postgres;
+    public TenantResolutionTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("tenant_resolution");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("tenant_resolution");
         _host = AuthenticationHost.Create(
             connectionString,
             configureServices: services =>

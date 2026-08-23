@@ -17,14 +17,14 @@ namespace GymOS.BuildingBlocks.Infrastructure.Persistence;
 public static class MoneyConventions
 {
     /// <summary>
-    /// <c>numeric(14,4)</c> — up to 10 digits before the decimal point and four after.
+    /// <c>decimal(14,4)</c> — up to 10 digits before the decimal point and four after.
     ///
     /// <para>Four decimal places, not two, for the headroom the spec asks for: exchange results and
     /// per-unit prices carry intermediate precision, and a column that truncates them would silently
     /// change the number. Every currency ISO 4217 defines settles in four places or fewer
     /// (<see cref="Currency.MaximumMinorUnits"/>), so nothing is lost at settlement either.</para>
     /// </summary>
-    public const string AmountColumnType = "numeric(14,4)";
+    public const string AmountColumnType = "decimal(14,4)";
 
     /// <summary>ISO 4217 alphabetic codes are exactly three characters.</summary>
     public const int CurrencyCodeLength = 3;

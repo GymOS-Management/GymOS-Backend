@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Domain.Features;
 using GymOS.Platform.Domain.Features.Rules;
 using GymOS.Platform.Domain.Gyms;
@@ -33,7 +34,7 @@ public sealed class FeatureConfiguration : IEntityTypeConfiguration<Feature>
         // stable ordering rather than for speed.
         builder.HasIndex(feature => new { feature.Category, feature.Name });
 
-        builder.Property<uint>("xmin").IsRowVersion();
+        builder.HasGymOSRowVersion();
     }
 }
 
@@ -79,6 +80,6 @@ public sealed class GymFeatureOverrideConfiguration : IEntityTypeConfiguration<G
         // The gym detail view reads every override of one gym.
         builder.HasIndex(over => over.GymId);
 
-        builder.Property<uint>("xmin").IsRowVersion();
+        builder.HasGymOSRowVersion();
     }
 }

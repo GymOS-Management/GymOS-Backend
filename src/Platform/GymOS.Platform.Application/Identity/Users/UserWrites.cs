@@ -37,7 +37,7 @@ internal static class UserWrites
                 : Result.Success();
         }
 
-        if (!RowVersion.TryParse(expectedVersion, out uint parsed))
+        if (!RowVersion.TryParse(expectedVersion, out ulong parsed))
         {
             // Malformed input, not a conflict: answering 409 here would tell the caller to retry a
             // request that can never succeed.

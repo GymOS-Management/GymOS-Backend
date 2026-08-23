@@ -24,20 +24,20 @@ namespace GymOS.IntegrationTests;
 /// git diff contracts/openapi-v1.json
 /// </code>
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class OpenApiContractTests : IAsyncLifetime
 {
     private const string SnapshotEnvironmentVariable = "UPDATE_OPENAPI_SNAPSHOT";
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public OpenApiContractTests(PostgresFixture postgres) => _postgres = postgres;
+    public OpenApiContractTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateDatabaseAsync("openapi_contract_tests");
+        string connectionString = await _sqlServer.CreateDatabaseAsync("openapi_contract_tests");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

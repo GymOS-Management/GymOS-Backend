@@ -68,9 +68,9 @@ internal sealed class GymQueries : IGymQueries
             // support ticket has the URL or the email the owner wrote from.
             string pattern = SearchPatterns.Contains(search);
             query = query.Where(gym =>
-                EF.Functions.ILike(gym.Name, pattern, SearchPatterns.EscapeCharacter) ||
-                EF.Functions.ILike(gym.Slug, pattern, SearchPatterns.EscapeCharacter) ||
-                EF.Functions.ILike(gym.OwnerEmail, pattern, SearchPatterns.EscapeCharacter));
+                EF.Functions.Like(gym.Name, pattern) ||
+                EF.Functions.Like(gym.Slug, pattern) ||
+                EF.Functions.Like(gym.OwnerEmail, pattern));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);
@@ -134,7 +134,7 @@ internal sealed class GymQueries : IGymQueries
 
                 // PostgreSQL's own row version, mapped as a shadow concurrency token. Read here rather
                 // than maintained by hand, so it cannot drift from what the store enforces.
-                RowVersion = EF.Property<uint>(gym, "xmin"),
+                RowVersion = EF.Property<ulong>(gym, ConcurrencyConventions.RowVersionProperty),
                 Branding = _dbContext.Set<GymBranding>()
                     .Where(branding => branding.GymId == gym.Id)
                     .Select(branding => new

@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -30,9 +31,9 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Navigation(user => user.Roles)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
-        // Optimistic concurrency via PostgreSQL's xmin system column (spec §2/§3):
-        // a uint row-version shadow property maps to xmin under Npgsql.
-        builder.Property<uint>("xmin").IsRowVersion();
+        // Optimistic concurrency via the server-maintained row_version column (spec §2/§3):
+        // a ulong row-version shadow property maps to a SQL Server rowversion column.
+        builder.HasGymOSRowVersion();
     }
 }
 
@@ -50,10 +51,15 @@ public sealed class UserRoleConfiguration : IEntityTypeConfiguration<UserRole>
             .HasForeignKey(userRole => userRole.RoleId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // One assignment per (user, role, tenant); null tenant participates in
-        // uniqueness (PostgreSQL 15+ NULLS NOT DISTINCT).
+        // One assignment per (user, role, tenant); a null tenant participates in uniqueness, so a
+        // platform-scope assignment cannot be duplicated. SQL Server unique indexes treat NULLs as
+        // equal, which is what that requires — see RoleConfiguration for why the PostgreSQL version
+        // had to ask for it explicitly with NULLS NOT DISTINCT and this one must not.
+        // `.HasFilter(null)` for the reason RoleConfiguration spells out: EF's SQL Server provider
+        // would otherwise add `WHERE [tenant_id] IS NOT NULL` on its own and quietly exempt every
+        // platform-scope assignment from this constraint.
         builder.HasIndex(userRole => new { userRole.UserId, userRole.RoleId, userRole.TenantId })
             .IsUnique()
-            .AreNullsDistinct(false);
+            .HasFilter(null);
     }
 }

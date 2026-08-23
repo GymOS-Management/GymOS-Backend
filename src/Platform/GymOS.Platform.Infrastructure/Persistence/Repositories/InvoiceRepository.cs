@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Invoices.Abstractions;
 using GymOS.Platform.Domain.Invoices;
 using Microsoft.EntityFrameworkCore;
@@ -35,6 +36,6 @@ internal sealed class InvoiceRepository : IInvoiceRepository
 
     public void Add(Invoice invoice) => _dbContext.Set<Invoice>().Add(invoice);
 
-    public void ExpectVersion(Invoice invoice, uint expectedVersion) =>
-        _dbContext.Entry(invoice).Property<uint>("xmin").OriginalValue = expectedVersion;
+    public void ExpectVersion(Invoice invoice, ulong expectedVersion) =>
+        _dbContext.Entry(invoice).Property<ulong>(ConcurrencyConventions.RowVersionProperty).OriginalValue = expectedVersion;
 }

@@ -44,7 +44,7 @@ public interface IPlanRepository
     void Add(SubscriptionPlan plan);
 
     /// <summary>Declares the version the caller believes they are updating (ARCHITECTURE.md §3).</summary>
-    void ExpectVersion(SubscriptionPlan plan, uint expectedVersion);
+    void ExpectVersion(SubscriptionPlan plan, ulong expectedVersion);
 
     /// <summary>
     /// Marks the plan itself changed, for a write that only touched a price row — without it the plan's

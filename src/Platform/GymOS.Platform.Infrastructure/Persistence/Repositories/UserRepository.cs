@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Identity.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -32,15 +33,15 @@ internal sealed class UserRepository : IUserRepository
     /// UPDATE's WHERE clause. If the row has moved on, the statement matches nothing and EF
     /// reports a concurrency failure.
     ///
-    /// `xmin` is PostgreSQL's own row version, mapped as a shadow concurrency token
+    /// `row_version` is a SQL Server rowversion, mapped as a shadow concurrency token
     /// (see UserConfiguration) — nothing has to be stored or incremented by hand.
     /// </summary>
-    public void ExpectVersion(User user, uint expectedVersion) =>
-        _dbContext.Entry(user).Property<uint>("xmin").OriginalValue = expectedVersion;
+    public void ExpectVersion(User user, ulong expectedVersion) =>
+        _dbContext.Entry(user).Property<ulong>(ConcurrencyConventions.RowVersionProperty).OriginalValue = expectedVersion;
 
     /// <summary>
     /// Flags the audit timestamp as modified, which is enough to make EF issue an UPDATE against
-    /// the users row — and PostgreSQL advances `xmin` on any update. The timestamps interceptor
+    /// the users row — and SQL Server advances `row_version` on any update. The timestamps interceptor
     /// then fills in the value, so the row's version and its updated_at stay consistent with each
     /// other.
     /// </summary>

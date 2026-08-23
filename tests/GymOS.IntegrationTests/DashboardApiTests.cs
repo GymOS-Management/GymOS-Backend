@@ -9,22 +9,22 @@ namespace GymOS.IntegrationTests;
 /// The dashboard over real HTTP: the live summary, and the permission boundary that gates
 /// <c>analytics.read</c> and <c>audit.read</c> in opposite directions (ARCHITECTURE.md §3.2).
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class DashboardApiTests : IAsyncLifetime
 {
     private static readonly Uri Summary = new("/api/v1/dashboard/summary", UriKind.Relative);
     private static readonly Uri Health = new("/api/v1/dashboard/health", UriKind.Relative);
     private static readonly Uri Activity = new("/api/v1/dashboard/activity", UriKind.Relative);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public DashboardApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public DashboardApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("dashboard_api");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("dashboard_api");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

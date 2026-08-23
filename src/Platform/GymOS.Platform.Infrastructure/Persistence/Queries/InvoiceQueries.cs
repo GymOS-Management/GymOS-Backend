@@ -60,7 +60,7 @@ internal sealed class InvoiceQueries : IInvoiceQueries
             // text instead of turning the search into a wildcard over the whole table.
             string pattern = SearchPatterns.Contains(search);
             query = query.Where(invoice =>
-                EF.Functions.ILike(invoice.InvoiceNumber, pattern, SearchPatterns.EscapeCharacter));
+                EF.Functions.Like(invoice.InvoiceNumber, pattern));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);
@@ -128,7 +128,7 @@ internal sealed class InvoiceQueries : IInvoiceQueries
                 invoice.PaidAtUtc,
                 invoice.PaymentReference,
                 invoice.CreatedAtUtc,
-                RowVersion = EF.Property<uint>(invoice, "xmin"),
+                RowVersion = EF.Property<ulong>(invoice, ConcurrencyConventions.RowVersionProperty),
                 GymName = _dbContext.Set<Gym>()
                     .Where(gym => gym.Id == invoice.GymId)
                     .Select(gym => gym.Name)

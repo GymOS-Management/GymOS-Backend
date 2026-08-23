@@ -7,7 +7,7 @@ namespace GymOS.BuildingBlocks.Application.Jobs;
 /// concurrently — not for correctness of the sweeps themselves, which are idempotent, but so a
 /// gym is never touched by two racing transactions doing the same renewal. The implementation is
 /// a PostgreSQL advisory lock: the database is the one thing every instance already shares, the
-/// same reasoning as the outbox's SKIP LOCKED claiming (AD-13).</para>
+/// same reasoning as the outbox's READPAST claiming (AD-13).</para>
 /// </summary>
 public interface IJobLock
 {

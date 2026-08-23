@@ -20,16 +20,16 @@ namespace GymOS.IntegrationTests;
 /// against a database other suites are asserting on would be pure interference — which is exactly
 /// what an earlier version of this file caused.</para>
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class OpenApiExposureTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public OpenApiExposureTests(PostgresFixture postgres) => _postgres = postgres;
+    public OpenApiExposureTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync() =>
-        _connectionString = await _postgres.CreateIsolatedDatabaseAsync("openapi_exposure");
+        _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("openapi_exposure");
 
     public Task DisposeAsync() => Task.CompletedTask;
 

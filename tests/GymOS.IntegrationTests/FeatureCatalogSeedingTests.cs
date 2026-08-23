@@ -11,18 +11,18 @@ namespace GymOS.IntegrationTests;
 /// The catalogue seeder against real PostgreSQL — and above all the property that makes it
 /// different from the permission seeder: <b>it never overwrites what an operator changed</b>.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class FeatureCatalogSeedingTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public FeatureCatalogSeedingTests(PostgresFixture postgres) => _postgres = postgres;
+    public FeatureCatalogSeedingTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        _connectionString = await _postgres.CreateIsolatedDatabaseAsync("feature_catalog");
-        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("feature_catalog");
+        // Migrations moved into SqlServerFixture, which applies them as the migrator before handing
         // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
@@ -31,14 +31,14 @@ public sealed class FeatureCatalogSeedingTests : IAsyncLifetime
     private AppDbContext CreateContext()
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(_connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new AppDbContext(options);
     }
 
     private static FeatureCatalogSeeder Seeder(AppDbContext context) =>
-        new(context, new UnitOfWork(context), new PostgresAdvisoryLock(context), NullLogger<FeatureCatalogSeeder>.Instance);
+        new(context, new UnitOfWork(context), new SqlServerAdvisoryLock(context), NullLogger<FeatureCatalogSeeder>.Instance);
 
     [Fact]
     public async Task The_first_run_inserts_every_declared_feature()

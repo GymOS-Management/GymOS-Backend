@@ -53,9 +53,9 @@ internal sealed class UserQueries : IUserQueries
         {
             string pattern = SearchPatterns.Contains(search);
             query = query.Where(user =>
-                EF.Functions.ILike(user.Email, pattern, SearchPatterns.EscapeCharacter) ||
-                EF.Functions.ILike(user.FirstName, pattern, SearchPatterns.EscapeCharacter) ||
-                EF.Functions.ILike(user.LastName, pattern, SearchPatterns.EscapeCharacter));
+                EF.Functions.Like(user.Email, pattern) ||
+                EF.Functions.Like(user.FirstName, pattern) ||
+                EF.Functions.Like(user.LastName, pattern));
         }
 
         int totalCount = await query.CountAsync(cancellationToken);
@@ -115,7 +115,7 @@ internal sealed class UserQueries : IUserQueries
 
                 // PostgreSQL's own row version, mapped as a shadow concurrency token. Read here
                 // rather than maintained by hand, so it cannot drift from what the store enforces.
-                RowVersion = EF.Property<uint>(user, "xmin"),
+                RowVersion = EF.Property<ulong>(user, ConcurrencyConventions.RowVersionProperty),
                 Roles = _dbContext.Set<UserRole>()
                     .Where(assignment => assignment.UserId == user.Id)
                     .Join(

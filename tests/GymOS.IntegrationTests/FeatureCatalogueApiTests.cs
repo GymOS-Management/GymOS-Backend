@@ -12,20 +12,20 @@ namespace GymOS.IntegrationTests;
 /// three resolution layers in SQL, and the precondition on the one write with a platform-wide blast
 /// radius.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class FeatureCatalogueApiTests : IAsyncLifetime
 {
     private static readonly Uri Features = new("/api/v1/features", UriKind.Relative);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public FeatureCatalogueApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public FeatureCatalogueApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("features_api");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("features_api");
         // Jobs off. This suite asserts on stored gym_feature_overrides rows, and
         // FeatureOverrideSweepJob runs daily at 03:50 UTC — a CI run alive across that
         // minute would have the sweep withdraw the very exceptions these assertions

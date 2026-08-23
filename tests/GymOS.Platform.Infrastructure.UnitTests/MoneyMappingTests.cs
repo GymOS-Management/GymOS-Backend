@@ -119,7 +119,7 @@ public sealed class MoneyMappingTests
             // A connection string is never opened: EF resolves the model from configuration alone, so
             // this runs in milliseconds and gates every build rather than only the ones with Docker.
             optionsBuilder
-                .UseNpgsql("Host=localhost;Database=unused")
+                .UseSqlServer("Server=localhost;Database=unused")
                 .UseSnakeCaseNamingConvention();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

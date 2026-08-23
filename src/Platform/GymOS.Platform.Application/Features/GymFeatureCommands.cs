@@ -159,11 +159,11 @@ internal sealed class SetGymFeaturesCommandHandler
         // Both races are caught, because the insert/insert one is not the only one — and not even the
         // reachable one in the common case.
         //
-        // A gym WITH a live plan is serialised by the FOR UPDATE below before its overrides are read,
+        // A gym WITH a live plan is serialised by the UPDLOCK read below before its overrides are read,
         // so a second concurrent request waits and then restates cleanly: no race. The unserialised
         // window is a gym with NO live subscription, where no lock is taken at all. On exactly that
         // path, if the gym already holds the override, two concurrent requests both load it with the
-        // same xmin and both restate; the loser's UPDATE matches nothing and surfaces as
+        // same row version and both restate; the loser's UPDATE matches nothing and surfaces as
         // ConcurrencyConflictException, never as a uniqueness violation. Clearing an override fails
         // the same way.
         //
@@ -232,7 +232,7 @@ internal sealed class SetGymFeaturesCommandHandler
             return Result.Failure<IReadOnlyList<ResolvedFeatureDetail>>(GymErrors.Deleted);
         }
 
-        // The whole decision-and-write is one explicit transaction over a FOR UPDATE read of the
+        // The whole decision-and-write is one explicit transaction over an UPDLOCK read of the
         // gym's live plan (inside PlanChangesAsync → LoadPlanFeaturesAsync): without the lock held
         // across both, a concurrent PUT /plans/{id}/features could change the plan's opinion between
         // the moment this request decides "needs an override" and the moment it saves, so the 200 it
@@ -291,7 +291,7 @@ internal sealed class SetGymFeaturesCommandHandler
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Read back before committing, not after. The FOR UPDATE lock above releases the instant
+        // Read back before committing, not after. The UPDLOCK above releases the instant
         // this transaction ends, and a plan write blocked on it is free to run the moment that
         // happens — if the resolve query ran after CommitAsync, that unblocked plan write could
         // land in the gap between the commit and the resolve, and the body returned to the caller

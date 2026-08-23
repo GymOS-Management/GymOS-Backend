@@ -10,24 +10,24 @@ namespace GymOS.IntegrationTests;
 /// and release makes the name acquirable again — the property that lets two API replicas run the
 /// job host without ever running the same sweep twice.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class JobLockTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public JobLockTests(PostgresFixture postgres) => _postgres = postgres;
+    public JobLockTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync() =>
         // No migration: advisory locks live in the server, not the schema.
-        _connectionString = await _postgres.CreateIsolatedDatabaseAsync("job_lock");
+        _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("job_lock");
 
     public Task DisposeAsync() => Task.CompletedTask;
 
     private AppDbContext CreateContext()
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_connectionString)
+            .UseSqlServer(_connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new AppDbContext(options);
@@ -38,8 +38,8 @@ public sealed class JobLockTests : IAsyncLifetime
     {
         await using AppDbContext first = CreateContext();
         await using AppDbContext second = CreateContext();
-        var firstLock = new PostgresJobLock(first);
-        var secondLock = new PostgresJobLock(second);
+        var firstLock = new SqlServerJobLock(first);
+        var secondLock = new SqlServerJobLock(second);
 
         IAsyncDisposable? held = await firstLock.TryAcquireAsync("renewal", CancellationToken.None);
         Assert.NotNull(held);
@@ -63,7 +63,7 @@ public sealed class JobLockTests : IAsyncLifetime
     public async Task A_droppedConnectionReleasesTheLock()
     {
         var holder = CreateContext();
-        IAsyncDisposable? held = await new PostgresJobLock(holder).TryAcquireAsync(
+        IAsyncDisposable? held = await new SqlServerJobLock(holder).TryAcquireAsync(
             "crash-test", CancellationToken.None);
         Assert.NotNull(held);
 
@@ -72,7 +72,7 @@ public sealed class JobLockTests : IAsyncLifetime
         await holder.DisposeAsync();
 
         await using AppDbContext survivor = CreateContext();
-        IAsyncDisposable? reacquired = await new PostgresJobLock(survivor).TryAcquireAsync(
+        IAsyncDisposable? reacquired = await new SqlServerJobLock(survivor).TryAcquireAsync(
             "crash-test", CancellationToken.None);
         Assert.NotNull(reacquired);
         await reacquired!.DisposeAsync();

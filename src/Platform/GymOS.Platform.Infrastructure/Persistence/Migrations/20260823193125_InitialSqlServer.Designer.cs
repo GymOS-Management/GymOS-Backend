@@ -4,82 +4,82 @@ using System.Collections.Generic;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
 namespace GymOS.Platform.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260811175554_AddPlatformStats")]
-    partial class AddPlatformStats
+    [Migration("20260823193125_InitialSqlServer")]
+    partial class InitialSqlServer
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.10")
-                .HasAnnotation("Relational:MaxIdentifierLength", 63);
+                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
-            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+            SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
             modelBuilder.Entity("GymOS.BuildingBlocks.Infrastructure.Auditing.AuditLog", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<string>("Action")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("action");
 
                     b.Property<Guid?>("CorrelationId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("correlation_id");
 
                     b.Property<Guid?>("EntityId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("entity_id");
 
                     b.Property<string>("EntityType")
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("entity_type");
 
                     b.Property<string>("IpAddress")
                         .HasMaxLength(45)
-                        .HasColumnType("character varying(45)")
+                        .HasColumnType("nvarchar(45)")
                         .HasColumnName("ip_address");
 
                     b.Property<string>("NewValues")
-                        .HasColumnType("jsonb")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("new_values");
 
                     b.Property<string>("OldValues")
-                        .HasColumnType("jsonb")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("old_values");
 
                     b.Property<string>("UserAgent")
                         .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
+                        .HasColumnType("nvarchar(512)")
                         .HasColumnName("user_agent");
 
                     b.Property<string>("UserEmail")
                         .HasMaxLength(320)
-                        .HasColumnType("character varying(320)")
+                        .HasColumnType("nvarchar(320)")
                         .HasColumnName("user_email");
 
                     b.Property<Guid?>("UserId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("user_id");
 
                     b.HasKey("Id", "CreatedAtUtc")
@@ -104,58 +104,58 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.BuildingBlocks.Infrastructure.Idempotency.IdempotencyRecord", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<Guid>("ClaimToken")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("claim_token");
 
                     b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at");
 
                     b.Property<DateTimeOffset>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("expires_at");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
+                        .HasColumnType("nvarchar(200)")
                         .HasColumnName("idempotency_key");
 
                     b.Property<DateTimeOffset>("LeaseExpiresAt")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("lease_expires_at");
 
                     b.Property<string>("OperationKey")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("operation_key");
 
                     b.Property<string>("RequestHash")
                         .IsRequired()
                         .HasMaxLength(64)
-                        .HasColumnType("character(64)")
+                        .HasColumnType("nchar(64)")
                         .HasColumnName("request_hash")
                         .IsFixedLength();
 
                     b.Property<string>("ResponseBody")
-                        .HasColumnType("jsonb")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("response_body");
 
                     b.Property<int>("ResponseStatus")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("response_status");
 
                     b.Property<int>("Status")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("status");
 
                     b.Property<Guid?>("TenantId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("tenant_id");
 
                     b.HasKey("Id")
@@ -170,34 +170,34 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.BuildingBlocks.Infrastructure.Outbox.OutboxDelivery", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<int>("Attempts")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("attempts");
 
                     b.Property<string>("HandlerName")
                         .IsRequired()
                         .HasMaxLength(400)
-                        .HasColumnType("character varying(400)")
+                        .HasColumnType("nvarchar(400)")
                         .HasColumnName("handler_name");
 
                     b.Property<string>("LastError")
                         .HasMaxLength(4000)
-                        .HasColumnType("character varying(4000)")
+                        .HasColumnType("nvarchar(4000)")
                         .HasColumnName("last_error");
 
                     b.Property<Guid>("MessageId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("message_id");
 
                     b.Property<DateTimeOffset?>("NextRetryAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("next_retry_at_utc");
 
                     b.Property<DateTimeOffset?>("ProcessedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("processed_at_utc");
 
                     b.Property<short>("Status")
@@ -220,60 +220,60 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.BuildingBlocks.Infrastructure.Outbox.OutboxMessage", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<Guid>("AggregateId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("aggregate_id");
 
                     b.Property<string>("AggregateType")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
+                        .HasColumnType("nvarchar(200)")
                         .HasColumnName("aggregate_type");
 
                     b.Property<int>("CausationDepth")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("causation_depth");
 
                     b.Property<Guid?>("CorrelationId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("correlation_id");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<Guid>("EventId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("event_id");
 
                     b.Property<string>("EventName")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
+                        .HasColumnType("nvarchar(200)")
                         .HasColumnName("event_name");
 
                     b.Property<int>("EventVersion")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("event_version");
 
                     b.Property<DateTimeOffset>("OccurredAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("occurred_at_utc");
 
                     b.Property<string>("Payload")
                         .IsRequired()
-                        .HasColumnType("jsonb")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("payload");
 
                     b.Property<Guid?>("TenantId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("tenant_id");
 
                     b.Property<Guid?>("UserId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("user_id");
 
                     b.HasKey("Id")
@@ -295,31 +295,31 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Analytics.DailyPlatformStats", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<int>("ActiveGyms")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("active_gyms");
 
                     b.Property<int>("CanceledGyms")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("canceled_gyms");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<int>("ExpiredGyms")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("expired_gyms");
 
                     b.Property<int>("NewGyms")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("new_gyms");
 
                     b.Property<int>("ProvisioningGyms")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("provisioning_gyms");
 
                     b.Property<DateOnly>("StatDate")
@@ -327,11 +327,11 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasColumnName("stat_date");
 
                     b.Property<int>("SuspendedGyms")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("suspended_gyms");
 
                     b.Property<int>("TotalGyms")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("total_gyms");
 
                     b.HasKey("Id")
@@ -347,11 +347,11 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Analytics.PlatformMrr", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<Guid>("StatsId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("stats_id");
 
                     b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "GymOS.Platform.Domain.Analytics.PlatformMrr.Amount#Money", b1 =>
@@ -359,13 +359,13 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                             b1.IsRequired();
 
                             b1.Property<decimal>("Amount")
-                                .HasColumnType("numeric(14,4)")
+                                .HasColumnType("decimal(14,4)")
                                 .HasColumnName("amount_amount");
 
                             b1.Property<string>("Currency")
                                 .IsRequired()
                                 .HasMaxLength(3)
-                                .HasColumnType("character varying(3)")
+                                .HasColumnType("nvarchar(3)")
                                 .HasColumnName("amount_currency");
                         });
 
@@ -381,54 +381,55 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Features.Feature", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<string>("Category")
                         .IsRequired()
                         .HasMaxLength(60)
-                        .HasColumnType("character varying(60)")
+                        .HasColumnType("nvarchar(60)")
                         .HasColumnName("category");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<bool>("DefaultEnabled")
-                        .HasColumnType("boolean")
+                        .HasColumnType("bit")
                         .HasColumnName("default_enabled");
 
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)")
+                        .HasColumnType("nvarchar(1000)")
                         .HasColumnName("description");
 
                     b.Property<bool>("IsPremium")
-                        .HasColumnType("boolean")
+                        .HasColumnType("bit")
                         .HasColumnName("is_premium");
 
                     b.Property<string>("Key")
                         .IsRequired()
                         .HasMaxLength(60)
-                        .HasColumnType("character varying(60)")
+                        .HasColumnType("nvarchar(60)")
                         .HasColumnName("key");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
-                        .HasColumnType("character varying(120)")
+                        .HasColumnType("nvarchar(120)")
                         .HasColumnName("name");
 
-                    b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("xmin")
+                    b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
+                        .IsRequired()
                         .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("datetimeoffset")
+                        .HasColumnName("updated_at_utc");
 
                     b.HasKey("Id")
                         .HasName("pk_features");
@@ -446,48 +447,49 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Features.GymFeatureOverride", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<Guid>("FeatureId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("feature_id");
 
                     b.Property<Guid>("GymId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("gym_id");
 
                     b.Property<bool>("IsEnabled")
-                        .HasColumnType("boolean")
+                        .HasColumnType("bit")
                         .HasColumnName("is_enabled");
 
                     b.Property<string>("Reason")
                         .IsRequired()
                         .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
+                        .HasColumnType("nvarchar(500)")
                         .HasColumnName("reason");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
+
                     b.Property<DateTimeOffset>("SetAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("set_at_utc");
 
                     b.Property<Guid?>("SetByUserId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("set_by_user_id");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
 
                     b.HasKey("Id")
                         .HasName("pk_gym_feature_overrides");
@@ -511,56 +513,63 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Gyms.Gym", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<string>("CountryCode")
                         .IsRequired()
                         .HasMaxLength(2)
-                        .HasColumnType("character varying(2)")
+                        .HasColumnType("nvarchar(2)")
                         .HasColumnName("country_code");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<string>("Currency")
                         .IsRequired()
                         .HasMaxLength(3)
-                        .HasColumnType("character varying(3)")
+                        .HasColumnType("nvarchar(3)")
                         .HasColumnName("currency");
 
                     b.Property<DateTimeOffset?>("DeletedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("deleted_at_utc");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
+                        .HasColumnType("nvarchar(200)")
                         .HasColumnName("name");
 
                     b.Property<string>("OwnerEmail")
                         .IsRequired()
                         .HasMaxLength(320)
-                        .HasColumnType("character varying(320)")
+                        .HasColumnType("nvarchar(320)")
                         .HasColumnName("owner_email");
 
                     b.Property<string>("OwnerName")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
+                        .HasColumnType("nvarchar(200)")
                         .HasColumnName("owner_name");
 
                     b.Property<string>("Phone")
                         .HasMaxLength(40)
-                        .HasColumnType("character varying(40)")
+                        .HasColumnType("nvarchar(40)")
                         .HasColumnName("phone");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
 
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasMaxLength(63)
-                        .HasColumnType("character varying(63)")
+                        .HasColumnType("nvarchar(63)")
                         .HasColumnName("slug");
 
                     b.Property<short>("Status")
@@ -569,24 +578,18 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("SuspensionReason")
                         .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)")
+                        .HasColumnType("nvarchar(1000)")
                         .HasColumnName("suspension_reason");
 
                     b.Property<string>("TimeZoneId")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("time_zone_id");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
 
                     b.HasKey("Id")
                         .HasName("pk_gyms");
@@ -607,56 +610,57 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Gyms.GymBranding", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<string>("CustomDomain")
                         .HasMaxLength(253)
-                        .HasColumnType("character varying(253)")
+                        .HasColumnType("nvarchar(253)")
                         .HasColumnName("custom_domain");
 
                     b.Property<string>("EmailSenderName")
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("email_sender_name");
 
                     b.Property<string>("FaviconUrl")
                         .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
+                        .HasColumnType("nvarchar(500)")
                         .HasColumnName("favicon_url");
 
                     b.Property<Guid>("GymId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("gym_id");
 
                     b.Property<string>("LogoUrl")
                         .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
+                        .HasColumnType("nvarchar(500)")
                         .HasColumnName("logo_url");
 
                     b.Property<string>("PrimaryColour")
                         .HasMaxLength(7)
-                        .HasColumnType("character varying(7)")
+                        .HasColumnType("nvarchar(7)")
                         .HasColumnName("primary_colour");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
 
                     b.Property<string>("SecondaryColour")
                         .HasMaxLength(7)
-                        .HasColumnType("character varying(7)")
+                        .HasColumnType("nvarchar(7)")
                         .HasColumnName("secondary_colour");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
 
                     b.HasKey("Id")
                         .HasName("pk_gym_branding");
@@ -676,33 +680,33 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.Permission", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
+                        .HasColumnType("nvarchar(500)")
                         .HasColumnName("description");
 
                     b.Property<string>("Key")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("key");
 
                     b.Property<string>("Module")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
+                        .HasColumnType("nvarchar(50)")
                         .HasColumnName("module");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
 
                     b.HasKey("Id")
@@ -718,54 +722,54 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<string>("CreatedByIp")
                         .IsRequired()
                         .HasMaxLength(45)
-                        .HasColumnType("character varying(45)")
+                        .HasColumnType("nvarchar(45)")
                         .HasColumnName("created_by_ip");
 
                     b.Property<DateTimeOffset>("ExpiresAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("expires_at_utc");
 
                     b.Property<string>("ReplacedByTokenHash")
                         .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
+                        .HasColumnType("nvarchar(128)")
                         .HasColumnName("replaced_by_token_hash");
 
                     b.Property<string>("RevocationReason")
                         .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
+                        .HasColumnType("nvarchar(200)")
                         .HasColumnName("revocation_reason");
 
                     b.Property<DateTimeOffset?>("RevokedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("revoked_at_utc");
 
                     b.Property<string>("RevokedByIp")
                         .HasMaxLength(45)
-                        .HasColumnType("character varying(45)")
+                        .HasColumnType("nvarchar(45)")
                         .HasColumnName("revoked_by_ip");
 
                     b.Property<string>("TokenHash")
                         .IsRequired()
                         .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
+                        .HasColumnType("nvarchar(128)")
                         .HasColumnName("token_hash");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
 
                     b.Property<Guid>("UserId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("user_id");
 
                     b.HasKey("Id")
@@ -784,52 +788,53 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.Role", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
+                        .HasColumnType("nvarchar(500)")
                         .HasColumnName("description");
 
                     b.Property<bool>("IsSystem")
-                        .HasColumnType("boolean")
+                        .HasColumnType("bit")
                         .HasColumnName("is_system");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("name");
 
                     b.Property<string>("NormalizedName")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("normalized_name");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
 
                     b.Property<short>("Scope")
                         .HasColumnType("smallint")
                         .HasColumnName("scope");
 
                     b.Property<Guid?>("TenantId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("tenant_id");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
 
                     b.HasKey("Id")
                         .HasName("pk_roles");
@@ -838,19 +843,17 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("ix_roles_normalized_name_tenant_id");
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("NormalizedName", "TenantId"), false);
-
                     b.ToTable("roles", "platform");
                 });
 
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.RolePermission", b =>
                 {
                     b.Property<Guid>("RoleId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("role_id");
 
                     b.Property<Guid>("PermissionId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("permission_id");
 
                     b.HasKey("RoleId", "PermissionId")
@@ -865,60 +868,67 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.User", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasMaxLength(320)
-                        .HasColumnType("character varying(320)")
+                        .HasColumnType("nvarchar(320)")
                         .HasColumnName("email");
 
                     b.Property<int>("FailedLoginAttempts")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("failed_login_attempts");
 
                     b.Property<string>("FirstName")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("first_name");
 
                     b.Property<DateTimeOffset?>("LastLoginAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("last_login_at_utc");
 
                     b.Property<string>("LastName")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasColumnType("nvarchar(100)")
                         .HasColumnName("last_name");
 
                     b.Property<DateTimeOffset?>("LockedOutUntilUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("locked_out_until_utc");
 
                     b.Property<string>("NormalizedEmail")
                         .IsRequired()
                         .HasMaxLength(320)
-                        .HasColumnType("character varying(320)")
+                        .HasColumnType("nvarchar(320)")
                         .HasColumnName("normalized_email");
 
                     b.Property<DateTimeOffset?>("PasswordChangedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("password_changed_at_utc");
 
                     b.Property<string>("PasswordHash")
                         .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
+                        .HasColumnType("nvarchar(500)")
                         .HasColumnName("password_hash");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
+
                     b.Property<Guid>("SecurityStamp")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("security_stamp");
 
                     b.Property<short>("Status")
@@ -927,18 +937,12 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("SuspensionReason")
                         .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)")
+                        .HasColumnType("nvarchar(1000)")
                         .HasColumnName("suspension_reason");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
 
                     b.HasKey("Id")
                         .HasName("pk_users");
@@ -950,22 +954,84 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("users", "platform");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Identity.UserActivationToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("ConsumedAtUtc")
+                        .HasColumnType("datetimeoffset")
+                        .HasColumnName("consumed_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("datetimeoffset")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<DateTimeOffset>("ExpiresAtUtc")
+                        .HasColumnType("datetimeoffset")
+                        .HasColumnName("expires_at_utc");
+
+                    b.Property<int>("Purpose")
+                        .HasColumnType("int")
+                        .HasColumnName("purpose");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .HasColumnName("token_hash");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_user_activation_tokens");
+
+                    b.HasIndex("CreatedByUserId")
+                        .HasDatabaseName("ix_user_activation_tokens_created_by_user_id");
+
+                    b.HasIndex("ExpiresAtUtc")
+                        .HasDatabaseName("ix_user_activation_tokens_expires_at_utc");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasDatabaseName("ix_user_activation_tokens_token_hash");
+
+                    b.HasIndex("UserId", "ConsumedAtUtc")
+                        .HasDatabaseName("ix_user_activation_tokens_user_id_consumed_at_utc");
+
+                    b.ToTable("user_activation_tokens", "platform");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.UserRole", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<Guid>("RoleId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("role_id");
 
                     b.Property<Guid?>("TenantId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("tenant_id");
 
                     b.Property<Guid>("UserId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("user_id");
 
                     b.HasKey("Id")
@@ -978,82 +1044,81 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("ix_user_roles_user_id_role_id_tenant_id");
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("UserId", "RoleId", "TenantId"), false);
-
                     b.ToTable("user_roles", "platform");
                 });
 
             modelBuilder.Entity("GymOS.Platform.Domain.Invoices.Invoice", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<DateTimeOffset>("DueAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("due_at_utc");
 
                     b.Property<Guid>("GymId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("gym_id");
 
                     b.Property<string>("InvoiceNumber")
                         .IsRequired()
                         .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
+                        .HasColumnType("nvarchar(20)")
                         .HasColumnName("invoice_number");
 
                     b.Property<DateTimeOffset>("IssuedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("issued_at_utc");
 
                     b.Property<DateTimeOffset?>("PaidAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("paid_at_utc");
 
                     b.Property<string>("PaymentReference")
                         .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
+                        .HasColumnType("nvarchar(200)")
                         .HasColumnName("payment_reference");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
 
                     b.Property<short>("Status")
                         .HasColumnType("smallint")
                         .HasColumnName("status");
 
                     b.Property<Guid>("SubscriptionId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("subscription_id");
 
                     b.Property<decimal>("TaxRate")
-                        .HasColumnType("numeric(5,4)")
+                        .HasColumnType("decimal(5,4)")
                         .HasColumnName("tax_rate");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
 
                     b.ComplexProperty(typeof(Dictionary<string, object>), "Subtotal", "GymOS.Platform.Domain.Invoices.Invoice.Subtotal#Money", b1 =>
                         {
                             b1.IsRequired();
 
                             b1.Property<decimal>("Amount")
-                                .HasColumnType("numeric(14,4)")
+                                .HasColumnType("decimal(14,4)")
                                 .HasColumnName("subtotal_amount");
 
                             b1.Property<string>("Currency")
                                 .IsRequired()
                                 .HasMaxLength(3)
-                                .HasColumnType("character varying(3)")
+                                .HasColumnType("nvarchar(3)")
                                 .HasColumnName("subtotal_currency");
                         });
 
@@ -1062,13 +1127,13 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                             b1.IsRequired();
 
                             b1.Property<decimal>("Amount")
-                                .HasColumnType("numeric(14,4)")
+                                .HasColumnType("decimal(14,4)")
                                 .HasColumnName("tax_amount");
 
                             b1.Property<string>("Currency")
                                 .IsRequired()
                                 .HasMaxLength(3)
-                                .HasColumnType("character varying(3)")
+                                .HasColumnType("nvarchar(3)")
                                 .HasColumnName("tax_currency");
                         });
 
@@ -1077,13 +1142,13 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                             b1.IsRequired();
 
                             b1.Property<decimal>("Amount")
-                                .HasColumnType("numeric(14,4)")
+                                .HasColumnType("decimal(14,4)")
                                 .HasColumnName("total_amount");
 
                             b1.Property<string>("Currency")
                                 .IsRequired()
                                 .HasMaxLength(3)
-                                .HasColumnType("character varying(3)")
+                                .HasColumnType("nvarchar(3)")
                                 .HasColumnName("total_currency");
                         });
 
@@ -1109,21 +1174,21 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Invoices.InvoiceLine", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
+                        .HasColumnType("nvarchar(500)")
                         .HasColumnName("description");
 
                     b.Property<Guid>("InvoiceId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("invoice_id");
 
                     b.Property<int>("Quantity")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("quantity");
 
                     b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "GymOS.Platform.Domain.Invoices.InvoiceLine.Amount#Money", b1 =>
@@ -1131,13 +1196,13 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                             b1.IsRequired();
 
                             b1.Property<decimal>("Amount")
-                                .HasColumnType("numeric(14,4)")
+                                .HasColumnType("decimal(14,4)")
                                 .HasColumnName("amount_amount");
 
                             b1.Property<string>("Currency")
                                 .IsRequired()
                                 .HasMaxLength(3)
-                                .HasColumnType("character varying(3)")
+                                .HasColumnType("nvarchar(3)")
                                 .HasColumnName("amount_currency");
                         });
 
@@ -1146,13 +1211,13 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                             b1.IsRequired();
 
                             b1.Property<decimal>("Amount")
-                                .HasColumnType("numeric(14,4)")
+                                .HasColumnType("decimal(14,4)")
                                 .HasColumnName("unit_price_amount");
 
                             b1.Property<string>("Currency")
                                 .IsRequired()
                                 .HasMaxLength(3)
-                                .HasColumnType("character varying(3)")
+                                .HasColumnType("nvarchar(3)")
                                 .HasColumnName("unit_price_currency");
                         });
 
@@ -1168,11 +1233,11 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.GymSubscription", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<bool>("AutoRenew")
-                        .HasColumnType("boolean")
+                        .HasColumnType("bit")
                         .HasColumnName("auto_renew");
 
                     b.Property<short>("BillingCycle")
@@ -1180,81 +1245,94 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasColumnName("billing_cycle");
 
                     b.Property<bool>("CancelAtPeriodEnd")
-                        .HasColumnType("boolean")
+                        .HasColumnType("bit")
                         .HasColumnName("cancel_at_period_end");
 
                     b.Property<DateTimeOffset?>("CanceledAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("canceled_at_utc");
 
                     b.Property<string>("CancellationReason")
                         .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)")
+                        .HasColumnType("nvarchar(1000)")
                         .HasColumnName("cancellation_reason");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<DateTimeOffset>("CurrentPeriodEndUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("current_period_end_utc");
 
                     b.Property<DateTimeOffset>("CurrentPeriodStartUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("current_period_start_utc");
 
+                    b.Property<DateTimeOffset?>("ExpiredAtUtc")
+                        .HasColumnType("datetimeoffset")
+                        .HasColumnName("expired_at_utc");
+
                     b.Property<Guid>("GymId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("gym_id");
 
                     b.Property<DateTimeOffset>("PeriodAnchorUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("period_anchor_utc");
 
                     b.Property<Guid>("PlanId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("plan_id");
 
                     b.Property<Guid?>("PlanPriceId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("plan_price_id");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
 
                     b.Property<short>("Status")
                         .HasColumnType("smallint")
                         .HasColumnName("status");
 
                     b.Property<DateTimeOffset?>("TrialEndsAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("trial_ends_at_utc");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
 
                     b.ComplexProperty(typeof(Dictionary<string, object>), "Price", "GymOS.Platform.Domain.Subscriptions.GymSubscription.Price#Money", b1 =>
                         {
                             b1.IsRequired();
 
                             b1.Property<decimal>("Amount")
-                                .HasColumnType("numeric(14,4)")
+                                .HasColumnType("decimal(14,4)")
                                 .HasColumnName("price_amount");
 
                             b1.Property<string>("Currency")
                                 .IsRequired()
                                 .HasMaxLength(3)
-                                .HasColumnType("character varying(3)")
+                                .HasColumnType("nvarchar(3)")
                                 .HasColumnName("price_currency");
                         });
 
                     b.HasKey("Id")
                         .HasName("pk_gym_subscriptions");
+
+                    b.HasIndex("CanceledAtUtc")
+                        .HasDatabaseName("ix_gym_subscriptions_canceled_at_utc")
+                        .HasFilter("status = 4");
+
+                    b.HasIndex("ExpiredAtUtc")
+                        .HasDatabaseName("ix_gym_subscriptions_expired_at_utc")
+                        .HasFilter("status = 5");
 
                     b.HasIndex("GymId")
                         .IsUnique()
@@ -1279,19 +1357,19 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanFeature", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<Guid>("FeatureId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("feature_id");
 
                     b.Property<bool>("IsEnabled")
-                        .HasColumnType("boolean")
+                        .HasColumnType("bit")
                         .HasColumnName("is_enabled");
 
                     b.Property<Guid>("PlanId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("plan_id");
 
                     b.HasKey("Id")
@@ -1310,7 +1388,7 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.PlanPrice", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<short>("BillingCycle")
@@ -1318,7 +1396,7 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasColumnName("billing_cycle");
 
                     b.Property<Guid>("PlanId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("plan_id");
 
                     b.ComplexProperty(typeof(Dictionary<string, object>), "Price", "GymOS.Platform.Domain.Subscriptions.PlanPrice.Price#Money", b1 =>
@@ -1326,13 +1404,13 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                             b1.IsRequired();
 
                             b1.Property<decimal>("Amount")
-                                .HasColumnType("numeric(14,4)")
+                                .HasColumnType("decimal(14,4)")
                                 .HasColumnName("price_amount");
 
                             b1.Property<string>("Currency")
                                 .IsRequired()
                                 .HasMaxLength(3)
-                                .HasColumnType("character varying(3)")
+                                .HasColumnType("nvarchar(3)")
                                 .HasColumnName("price_currency");
                         });
 
@@ -1348,53 +1426,60 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.SubscriptionPlan", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("id");
 
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasMaxLength(40)
-                        .HasColumnType("character varying(40)")
+                        .HasColumnType("nvarchar(40)")
                         .HasColumnName("code");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("created_at_utc");
 
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)")
+                        .HasColumnType("nvarchar(2000)")
                         .HasColumnName("description");
 
                     b.Property<bool>("IsActive")
-                        .HasColumnType("boolean")
+                        .HasColumnType("bit")
                         .HasColumnName("is_active");
 
                     b.Property<bool>("IsPublic")
-                        .HasColumnType("boolean")
+                        .HasColumnType("bit")
                         .HasColumnName("is_public");
 
                     b.Property<int?>("MaxMembers")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("max_members");
 
                     b.Property<int?>("MaxStaff")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("max_staff");
 
                     b.Property<int?>("MaxTrainers")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("max_trainers");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
-                        .HasColumnType("character varying(120)")
+                        .HasColumnType("nvarchar(120)")
                         .HasColumnName("name");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
+
                     b.Property<int>("SortOrder")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("sort_order");
 
                     b.Property<long?>("StorageLimitMb")
@@ -1402,18 +1487,12 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasColumnName("storage_limit_mb");
 
                     b.Property<int>("TrialDays")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("trial_days");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetimeoffset")
                         .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
 
                     b.HasKey("Id")
                         .HasName("pk_subscription_plans");
@@ -1511,6 +1590,21 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_role_permissions_roles_role_id");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Identity.UserActivationToken", b =>
+                {
+                    b.HasOne("GymOS.Platform.Domain.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .HasConstraintName("fk_user_activation_tokens_user_created_by_user_id");
+
+                    b.HasOne("GymOS.Platform.Domain.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_activation_tokens_user_user_id");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Identity.UserRole", b =>
                 {
                     b.HasOne("GymOS.Platform.Domain.Identity.Role", null)
@@ -1580,11 +1674,11 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.OwnsOne("GymOS.Platform.Domain.Subscriptions.PendingPlanChange", "PendingChange", b1 =>
                         {
                             b1.Property<Guid>("GymSubscriptionId")
-                                .HasColumnType("uuid")
+                                .HasColumnType("uniqueidentifier")
                                 .HasColumnName("id");
 
                             b1.Property<decimal>("Amount")
-                                .HasColumnType("numeric(14,4)")
+                                .HasColumnType("decimal(14,4)")
                                 .HasColumnName("pending_price_amount");
 
                             b1.Property<short>("BillingCycle")
@@ -1592,21 +1686,21 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                                 .HasColumnName("pending_billing_cycle");
 
                             b1.Property<DateTimeOffset>("ChangeAtUtc")
-                                .HasColumnType("timestamp with time zone")
+                                .HasColumnType("datetimeoffset")
                                 .HasColumnName("pending_change_at_utc");
 
                             b1.Property<string>("CurrencyCode")
                                 .IsRequired()
                                 .HasMaxLength(3)
-                                .HasColumnType("character varying(3)")
+                                .HasColumnType("nvarchar(3)")
                                 .HasColumnName("pending_price_currency");
 
                             b1.Property<Guid>("PlanId")
-                                .HasColumnType("uuid")
+                                .HasColumnType("uniqueidentifier")
                                 .HasColumnName("pending_plan_id");
 
                             b1.Property<Guid?>("PlanPriceId")
-                                .HasColumnType("uuid")
+                                .HasColumnType("uniqueidentifier")
                                 .HasColumnName("pending_plan_price_id");
 
                             b1.HasKey("GymSubscriptionId");

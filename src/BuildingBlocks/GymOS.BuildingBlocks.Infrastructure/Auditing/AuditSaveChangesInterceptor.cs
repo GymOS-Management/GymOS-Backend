@@ -13,7 +13,7 @@ namespace GymOS.BuildingBlocks.Infrastructure.Auditing;
 /// that commits the change commits its trail, so the two cannot diverge.
 ///
 /// Only declared entities are captured (see <see cref="AuditPolicy"/>), and only scalar
-/// properties: navigations would recurse, and shadow state like <c>xmin</c> describes the
+/// properties: navigations would recurse, and shadow state like <c>row_version</c> describes the
 /// storage engine rather than the business fact. Modifications record just the properties
 /// that actually changed, because a diff listing forty unchanged fields is a diff nobody
 /// reads.

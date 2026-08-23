@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -19,7 +20,7 @@ public sealed class OutboxMessageConfiguration : IEntityTypeConfiguration<Outbox
 
         builder.Property(message => message.EventName).HasMaxLength(200);
         builder.Property(message => message.AggregateType).HasMaxLength(200);
-        builder.Property(message => message.Payload).HasColumnType("jsonb");
+        builder.Property(message => message.Payload).HasColumnType(JsonConventions.JsonColumnType);
 
         builder.HasIndex(message => message.EventId).IsUnique();
         builder.HasIndex(message => message.CreatedAtUtc);

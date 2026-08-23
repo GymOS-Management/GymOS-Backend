@@ -11,22 +11,22 @@ namespace GymOS.IntegrationTests;
 /// what happens when the caller lacks the permission, which is the case an endpoint test is
 /// actually for.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class PlatformAdminApiTests : IAsyncLifetime
 {
     private static readonly Uri Users = new("/api/v1/users", UriKind.Relative);
     private static readonly Uri Roles = new("/api/v1/roles", UriKind.Relative);
     private static readonly Uri AuditLogs = new("/api/v1/audit-logs", UriKind.Relative);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public PlatformAdminApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public PlatformAdminApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("platform_admin");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("platform_admin");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

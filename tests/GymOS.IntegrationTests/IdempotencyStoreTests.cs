@@ -3,12 +3,12 @@ using GymOS.BuildingBlocks.Infrastructure.Time;
 using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
+using Microsoft.Data.SqlClient;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
 
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class IdempotencyStoreTests : IAsyncLifetime
 {
     // TryTakeOverAsync's lease check runs against PostgreSQL's own now(), so the test needs
@@ -16,15 +16,15 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
     // (AD-40); Application.Idempotency stays clock-free in production.
     private static readonly SystemClock Clock = new();
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public IdempotencyStoreTests(PostgresFixture postgres) => _postgres = postgres;
+    public IdempotencyStoreTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        _connectionString = await _postgres.CreateIsolatedDatabaseAsync("idempotency_store");
-        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("idempotency_store");
+        // Migrations moved into SqlServerFixture, which applies them as the migrator before handing
         // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
@@ -33,7 +33,7 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
     private AppDbContext CreateContext()
     {
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(_connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new AppDbContext(options);
@@ -197,9 +197,9 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
     [Fact]
     public async Task Claim_unique_index_exists_with_coalesced_tenant()
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand(
+        await using var command = new SqlCommand(
             "SELECT indexdef FROM pg_indexes WHERE schemaname='platform' AND indexname='ux_idempotency_records_claim'",
             connection);
         string? definition = (string?)await command.ExecuteScalarAsync();

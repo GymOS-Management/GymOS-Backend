@@ -14,20 +14,20 @@ namespace GymOS.IntegrationTests;
 /// enforces, the confirmation that guards deletion, and what happens when the caller lacks the
 /// permission — which is the case an endpoint test is actually for.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class GymApiTests : IAsyncLifetime
 {
     private static readonly Uri Gyms = new("/api/v1/gyms", UriKind.Relative);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public GymApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public GymApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("gyms");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("gyms");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

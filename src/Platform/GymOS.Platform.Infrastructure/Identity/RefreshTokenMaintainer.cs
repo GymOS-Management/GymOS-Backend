@@ -1,8 +1,8 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Infrastructure.Persistence;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Npgsql;
 
 namespace GymOS.Platform.Infrastructure.Identity;
 
@@ -68,7 +68,7 @@ internal sealed partial class RefreshTokenMaintainer
 
             LogPurged(_logger, removed, RetentionDays);
         }
-        catch (NpgsqlException exception)
+        catch (SqlException exception)
         {
             // Non-fatal, like the other maintenance halves: housekeeping must not take the job
             // (or, at startup, the host) down with it.

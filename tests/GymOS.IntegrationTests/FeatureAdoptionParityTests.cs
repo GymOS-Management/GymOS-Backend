@@ -21,20 +21,20 @@ namespace GymOS.IntegrationTests;
 /// gym's known (override, plan, default) triple — then compared against what
 /// <c>GET /api/v1/features</c> actually returns.</para>
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class FeatureAdoptionParityTests : IAsyncLifetime
 {
     private static readonly Uri Features = new("/api/v1/features", UriKind.Relative);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public FeatureAdoptionParityTests(PostgresFixture postgres) => _postgres = postgres;
+    public FeatureAdoptionParityTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("feature_adoption_parity");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("feature_adoption_parity");
         // Jobs off. This suite asserts on stored gym_feature_overrides rows, and
         // FeatureOverrideSweepJob runs daily at 03:50 UTC — a CI run alive across that
         // minute would have the sweep withdraw the very exceptions these assertions

@@ -24,6 +24,11 @@
     <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
     <!-- Access-token creation (AD-4); validation lives in the host. -->
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <!-- Direct, not transitive-through-the-provider: this assembly names SqlException (the
+         maintainers that must survive a schemaless database) and SqlParameter (the T-SQL the
+         job lock and the partition maintainer issue). A type you name is a dependency you
+         declare. -->
+    <PackageReference Include="Microsoft.Data.SqlClient" />
   </ItemGroup>
 </Project>

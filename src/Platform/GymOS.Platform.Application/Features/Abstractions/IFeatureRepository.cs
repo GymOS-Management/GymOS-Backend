@@ -19,7 +19,7 @@ public interface IFeatureRepository
     Task<IReadOnlyList<Feature>> ListAllAsync(CancellationToken cancellationToken);
 
     /// <summary>Declares the version the caller believes they are updating (ARCHITECTURE.md §3).</summary>
-    void ExpectVersion(Feature feature, uint expectedVersion);
+    void ExpectVersion(Feature feature, ulong expectedVersion);
 
     /// <summary>Every override of one gym, tracked — the working set for a resolution write.</summary>
     Task<IReadOnlyList<GymFeatureOverride>> ListOverridesForGymAsync(

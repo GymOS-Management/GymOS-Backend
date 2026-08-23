@@ -12,17 +12,17 @@ namespace GymOS.IntegrationTests;
 /// about what the seeder refuses to do: it never invents a credential, and it never
 /// overwrites one.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class SuperAdminSeedingTests
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
 
-    public SuperAdminSeedingTests(PostgresFixture postgres) => _postgres = postgres;
+    public SuperAdminSeedingTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     [Fact]
     public async Task WithNoSeedConfigured_TheHostStarts_AndNoUserExists()
     {
-        string connectionString = await _postgres.CreateDatabaseAsync("seed_unconfigured");
+        string connectionString = await _sqlServer.CreateDatabaseAsync("seed_unconfigured");
 
         // Blanked, not removed. WebApplicationFactory loads the host project's user
         // secrets, so a developer who configured a local SuperAdmin would otherwise have
@@ -51,7 +51,7 @@ public sealed class SuperAdminSeedingTests
     [Fact]
     public async Task ARejectedPassword_CreatesNoAccountAtAll()
     {
-        string connectionString = await _postgres.CreateDatabaseAsync("seed_weak_password");
+        string connectionString = await _sqlServer.CreateDatabaseAsync("seed_weak_password");
 
         await using AuthenticationHost host = AuthenticationHost.Create(
             connectionString,
@@ -72,7 +72,7 @@ public sealed class SuperAdminSeedingTests
     [Fact]
     public async Task ASecondStartupWithADifferentPassword_LeavesTheExistingAccountUntouched()
     {
-        string connectionString = await _postgres.CreateDatabaseAsync("seed_idempotency");
+        string connectionString = await _sqlServer.CreateDatabaseAsync("seed_idempotency");
 
         await using (AuthenticationHost first = AuthenticationHost.Create(connectionString))
         {
@@ -106,7 +106,7 @@ public sealed class SuperAdminSeedingTests
     [Fact]
     public async Task TheSeededPasswordIsStoredAsAnArgon2idHash_NeverInTheClear()
     {
-        string connectionString = await _postgres.CreateDatabaseAsync("seed_hash_shape");
+        string connectionString = await _sqlServer.CreateDatabaseAsync("seed_hash_shape");
 
         await using AuthenticationHost host = AuthenticationHost.Create(connectionString);
         using HttpClient client = host.CreateClient();

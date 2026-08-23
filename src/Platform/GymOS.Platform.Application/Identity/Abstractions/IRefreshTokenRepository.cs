@@ -12,7 +12,7 @@ public interface IRefreshTokenRepository
 
     /// <summary>
     /// The rotation lookup: loads the token holding its row lock until the ambient transaction
-    /// ends (<c>SELECT … FOR UPDATE</c>).
+    /// ends (<c>SELECT … WITH (UPDLOCK, ROWLOCK)</c>).
     ///
     /// <para><b>This is what makes reuse detection real.</b> Rotation is a read-then-write — see
     /// it unrevoked, revoke it, issue a successor — and without the lock two simultaneous uses of

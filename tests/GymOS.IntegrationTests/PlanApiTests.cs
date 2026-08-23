@@ -13,21 +13,21 @@ namespace GymOS.IntegrationTests;
 /// database can prove: that <c>Money</c> round-trips through its column pair, and that the
 /// (plan, cycle, currency) unique index created as raw SQL in the migration actually exists.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class PlanApiTests : IAsyncLifetime
 {
     private static readonly Uri Plans = new("/api/v1/plans", UriKind.Relative);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
     private Guid _plan;
 
-    public PlanApiTests(PostgresFixture postgres) => _postgres = postgres;
+    public PlanApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("plans");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("plans");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 
@@ -162,10 +162,10 @@ public sealed class PlanApiTests : IAsyncLifetime
     {
         // Created as raw SQL in the migration because EF cannot index inside a complex property. If that
         // statement were ever dropped from the migration, nothing else in the suite would notice.
-        await using var connection = new Npgsql.NpgsqlConnection(_host.ConnectionString);
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(_host.ConnectionString);
         await connection.OpenAsync();
 
-        await using Npgsql.NpgsqlCommand command = connection.CreateCommand();
+        await using Microsoft.Data.SqlClient.SqlCommand command = connection.CreateCommand();
         command.CommandText =
             """
             SELECT indexdef

@@ -8,20 +8,20 @@ namespace GymOS.IntegrationTests;
 /// covered by the Application unit tests). Kept in its own host so a low permit limit
 /// does not throttle the other suites.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class SignInRateLimitingTests : IAsyncLifetime
 {
     private const int PermitLimit = 3;
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public SignInRateLimitingTests(PostgresFixture postgres) => _postgres = postgres;
+    public SignInRateLimitingTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateDatabaseAsync("sign_in_rate_limit_tests");
+        string connectionString = await _sqlServer.CreateDatabaseAsync("sign_in_rate_limit_tests");
 
         _host = AuthenticationHost.Create(connectionString, settings =>
         {

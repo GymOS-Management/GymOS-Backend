@@ -1,3 +1,4 @@
+using GymOS.BuildingBlocks.Infrastructure.Persistence;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Subscriptions;
@@ -83,7 +84,7 @@ internal sealed class SubscriptionQueries : ISubscriptionQueries
                 subscription.CancellationReason,
                 subscription.CreatedAtUtc,
                 subscription.PendingChange,
-                RowVersion = EF.Property<uint>(subscription, "xmin"),
+                RowVersion = EF.Property<ulong>(subscription, ConcurrencyConventions.RowVersionProperty),
                 PlanCode = _dbContext.Set<SubscriptionPlan>()
                     .Where(plan => plan.Id == subscription.PlanId)
                     .Select(plan => plan.Code)

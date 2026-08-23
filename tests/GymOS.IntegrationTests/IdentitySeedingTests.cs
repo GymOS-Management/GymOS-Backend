@@ -11,20 +11,20 @@ using Xunit;
 
 namespace GymOS.IntegrationTests;
 
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class IdentitySeedingTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset KnownInstant = new(2026, 8, 4, 16, 30, 0, TimeSpan.Zero);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private string _connectionString = string.Empty;
 
-    public IdentitySeedingTests(PostgresFixture postgres) => _postgres = postgres;
+    public IdentitySeedingTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        _connectionString = await _postgres.CreateDatabaseAsync("seeding_tests");
-        // Migrations moved into PostgresFixture, which applies them as the migrator before handing
+        _connectionString = await _sqlServer.CreateDatabaseAsync("seeding_tests");
+        // Migrations moved into SqlServerFixture, which applies them as the migrator before handing
         // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
@@ -34,7 +34,7 @@ public sealed class IdentitySeedingTests : IAsyncLifetime
     {
         var clock = new FakeClock(KnownInstant);
         DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.GetName().Name!))
+            .UseSqlServer(_connectionString, TestDatabase.Options)
             .UseSnakeCaseNamingConvention()
             .AddInterceptors(
                 new AuditableTimestampsInterceptor(clock),
@@ -47,7 +47,7 @@ public sealed class IdentitySeedingTests : IAsyncLifetime
     {
         await using AppDbContext context = CreateContext();
         var seeder = new PlatformIdentitySeeder(
-            context, new UnitOfWork(context), new PostgresAdvisoryLock(context), NullLogger<PlatformIdentitySeeder>.Instance);
+            context, new UnitOfWork(context), new SqlServerAdvisoryLock(context), NullLogger<PlatformIdentitySeeder>.Instance);
         await seeder.SeedAsync(CancellationToken.None);
     }
 
@@ -111,9 +111,9 @@ public sealed class IdentitySeedingTests : IAsyncLifetime
         await using AppDbContext second = CreateContext();
 
         var seederOne = new PlatformIdentitySeeder(
-            first, new UnitOfWork(first), new PostgresAdvisoryLock(first), NullLogger<PlatformIdentitySeeder>.Instance);
+            first, new UnitOfWork(first), new SqlServerAdvisoryLock(first), NullLogger<PlatformIdentitySeeder>.Instance);
         var seederTwo = new PlatformIdentitySeeder(
-            second, new UnitOfWork(second), new PostgresAdvisoryLock(second), NullLogger<PlatformIdentitySeeder>.Instance);
+            second, new UnitOfWork(second), new SqlServerAdvisoryLock(second), NullLogger<PlatformIdentitySeeder>.Instance);
 
         await Task.WhenAll(
             seederOne.SeedAsync(CancellationToken.None),

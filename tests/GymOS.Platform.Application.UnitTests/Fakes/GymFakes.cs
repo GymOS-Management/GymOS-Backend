@@ -20,13 +20,13 @@ internal sealed class FakeGymRepository : IGymRepository
 
     public IReadOnlyList<GymBranding> Branding => _branding;
 
-    public Dictionary<Guid, uint> ExpectedVersions { get; } = [];
+    public Dictionary<Guid, ulong> ExpectedVersions { get; } = [];
 
     /// <summary>Ids whose aggregate version was deliberately advanced.</summary>
     public HashSet<Guid> AggregateChanges { get; } = [];
 
     /// <summary>Set to make <see cref="ExpectVersion"/> behave as a stale-version write.</summary>
-    public uint? ConflictingVersion { get; set; }
+    public ulong? ConflictingVersion { get; set; }
 
     public void Seed(Gym gym) => _gyms.Add(gym);
 
@@ -59,7 +59,7 @@ internal sealed class FakeGymRepository : IGymRepository
     /// refusing the write. The real check happens in PostgreSQL, so this is the only way a handler test
     /// can cover the conflict path at all.
     /// </summary>
-    public void ExpectVersion(Gym gym, uint expectedVersion)
+    public void ExpectVersion(Gym gym, ulong expectedVersion)
     {
         ExpectedVersions[gym.Id] = expectedVersion;
 
@@ -84,7 +84,7 @@ internal sealed class FakeGymQueries : IGymQueries
     public FakeGymQueries(FakeGymRepository gyms) => _gyms = gyms;
 
     /// <summary>Settable, so a "version changed" assertion has something to see.</summary>
-    public uint RowVersion { get; set; } = 1;
+    public ulong RowVersion { get; set; } = 1;
 
     /// <summary>
     /// Assign the feature fake to have the detail carry resolved features, as the real projection does

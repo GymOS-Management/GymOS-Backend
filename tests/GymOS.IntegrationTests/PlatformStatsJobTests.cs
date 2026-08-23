@@ -21,21 +21,21 @@ namespace GymOS.IntegrationTests;
 /// compiler can be called by hand, from a scope, with a fixed <c>now</c> — exactly what
 /// <c>RetentionJobTests</c> does for its job.</para>
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class PlatformStatsJobTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset Now = new(2026, 1, 15, 4, 0, 0, TimeSpan.Zero);
     private static readonly DateOnly Yesterday = DateOnly.FromDateTime(Now.UtcDateTime).AddDays(-1);
 
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public PlatformStatsJobTests(PostgresFixture postgres) => _postgres = postgres;
+    public PlatformStatsJobTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("platform_stats_job");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("platform_stats_job");
 
         // The host's own timer stays off: this suite drives DailyStatsCompiler by hand, with a fixed
         // `now`, the same way RetentionJobTests drives RetentionJob.

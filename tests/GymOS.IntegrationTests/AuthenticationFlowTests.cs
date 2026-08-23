@@ -15,18 +15,18 @@ namespace GymOS.IntegrationTests;
 /// Everything below goes through the wire, so cookie attributes, status codes, problem
 /// shapes, and token validation are all under test — not just the handlers.
 /// </summary>
-[Collection(PostgresCollectionDefinition.Name)]
+[Collection(SqlServerCollectionDefinition.Name)]
 public sealed class AuthenticationFlowTests : IAsyncLifetime
 {
-    private readonly PostgresFixture _postgres;
+    private readonly SqlServerFixture _sqlServer;
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public AuthenticationFlowTests(PostgresFixture postgres) => _postgres = postgres;
+    public AuthenticationFlowTests(SqlServerFixture postgres) => _sqlServer = postgres;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _postgres.CreateIsolatedDatabaseAsync("auth_flow");
+        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("auth_flow");
         _host = AuthenticationHost.Create(connectionString);
         _client = _host.CreateClient();
 

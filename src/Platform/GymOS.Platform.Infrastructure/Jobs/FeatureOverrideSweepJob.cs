@@ -104,14 +104,14 @@ internal sealed partial class FeatureOverrideSweepJob : IScheduledJob
                 // DELETE were separate implicit transactions under READ COMMITTED: a subscription
                 // upgrade committing between them let a verdict computed against the OLD plan delete
                 // an exception that is not redundant under the new one — silently, because the
-                // override rows' xmin never saw the subscription change, so no concurrency error
+                // override rows' row version never saw the subscription change, so no concurrency error
                 // fired. RenewalService is the model this job's own docs cite, and it does exactly
                 // this: open a transaction, read the row that decides under a lock, then commit.
                 await using IUnitOfWorkTransaction transaction =
                     await unitOfWork.BeginTransactionAsync(cancellationToken);
 
                 // Committed state, read explicitly, because there is no pending change here to
-                // derive it from instead (see the type's remarks). Read FOR UPDATE inside the
+                // derive it from instead (see the type's remarks). Read under UPDLOCK inside the
                 // transaction so a console edit racing this sweep waits its turn rather than winning
                 // at save time — again RenewalService's pattern, and the reason
                 // FindLiveByGymForUpdateAsync exists.
@@ -134,7 +134,7 @@ internal sealed partial class FeatureOverrideSweepJob : IScheduledJob
             }
             catch (ConcurrencyConflictException)
             {
-                // An expected interleaving, not a failure. GymFeatureOverride carries an xmin
+                // An expected interleaving, not a failure. GymFeatureOverride carries a row version
                 // token, so an operator restating an override between this sweep's read and its
                 // delete makes the delete match nothing. That is the design working — the
                 // operator's decision wins and the next sweep re-evaluates against it — and

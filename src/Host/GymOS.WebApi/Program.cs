@@ -22,7 +22,6 @@ using GymOS.WebApi.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Npgsql;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
@@ -138,7 +137,7 @@ try
     //
     // Registering a second check alongside it was the obvious shape and is the wrong one here: the
     // health-check service runs registrations concurrently, each in its own scope with its own
-    // DbContext, so a second check makes every host's Npgsql pool open a second physical connection
+    // DbContext, so a second check makes every host's SqlClient pool open a second physical connection
     // the first time anything probes /health/ready. The integration suite boots on the order of a
     // hundred hosts against one container, and that alone took the run past `max_connections=300` —
     // 122 failures with `53300: remaining connection slots are reserved for roles with the SUPERUSER
@@ -156,7 +155,7 @@ try
         .WithTracing(tracing => tracing
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
-            .AddNpgsql()
+            .AddSqlClientInstrumentation()
             .AddSource(MessagingDiagnostics.ActivitySourceName))
         .WithMetrics(metrics => metrics
             .AddAspNetCoreInstrumentation());

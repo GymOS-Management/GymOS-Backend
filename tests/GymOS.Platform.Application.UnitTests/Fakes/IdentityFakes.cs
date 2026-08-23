@@ -33,7 +33,7 @@ internal sealed class FakeUserRepository : IUserRepository
     /// store refusing the write. The real check happens in PostgreSQL, so this is the only way a
     /// handler test can cover the conflict path at all.
     /// </summary>
-    public void ExpectVersion(User user, uint expectedVersion)
+    public void ExpectVersion(User user, ulong expectedVersion)
     {
         ExpectedVersions[user.Id] = expectedVersion;
 
@@ -43,7 +43,7 @@ internal sealed class FakeUserRepository : IUserRepository
         }
     }
 
-    public Dictionary<Guid, uint> ExpectedVersions { get; } = [];
+    public Dictionary<Guid, ulong> ExpectedVersions { get; } = [];
 
     /// <summary>Ids whose aggregate version was deliberately advanced.</summary>
     public HashSet<Guid> AggregateChanges { get; } = [];
@@ -51,7 +51,7 @@ internal sealed class FakeUserRepository : IUserRepository
     public void MarkAggregateChanged(User user) => AggregateChanges.Add(user.Id);
 
     /// <summary>Set to make <see cref="ExpectVersion"/> behave as a stale-version write.</summary>
-    public uint? ConflictingVersion { get; set; }
+    public ulong? ConflictingVersion { get; set; }
 }
 
 internal sealed class FakeRefreshTokenRepository : IRefreshTokenRepository
@@ -251,7 +251,7 @@ internal sealed class FakeUserQueries : IUserQueries
     public Dictionary<string, int> ActiveUsersPerRole { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Incremented on each read, so a "version changed" assertion has something to see.</summary>
-    public uint RowVersion { get; set; } = 1;
+    public ulong RowVersion { get; set; } = 1;
 
     public Task<PagedResult<UserListItem>> ListAsync(UserListFilter filter, CancellationToken cancellationToken) =>
         Task.FromResult(PagedResult.Empty<UserListItem>(filter.Page));
