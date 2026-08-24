@@ -24,6 +24,10 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest # Docker available — Testcontainers integration tests run here
+    # A healthy run is 8-9 minutes. Without this the job inherits GitHub's 6-hour default,
+    # which is how a run whose SQL Server container died 50 seconds in went on to burn 67
+    # minutes discovering that every remaining integration test also could not connect.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -78,6 +82,8 @@ jobs:
   # See docs/Infrastructure/DOCKER.md for the reasoning behind each setting asserted below.
   docker:
     runs-on: ubuntu-latest
+    # Builds the image and starts every compose profile; 5 minutes on a normal run.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
