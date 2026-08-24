@@ -137,24 +137,59 @@ jobs:
     runs-on: ubuntu-latest
     environment: UAT
     steps:
-      # ===============================================================================================
-      # TODO -- NOT IMPLEMENTED. This is the one step that needs infrastructure that does not exist.
-      #
-      # Deliberately left as a failing placeholder rather than a plausible-looking `azure/webapps-deploy`
-      # block with invented resource names: a deploy step that references a resource group and app name
-      # nobody created is not closer to working, it just fails later and less clearly.
-      #
-      # When the hosting decision is made, this becomes roughly ten lines. For Azure Container Apps:
-      #   - azure/login@v2 with AZURE_CREDENTIALS (or federated OIDC, which needs no stored secret)
-      #   - az containerapp update --name <app> --resource-group <rg> --image ${{ needs.build.outputs.image }}
-      # For App Service for Containers, azure/webapps-deploy@v3 with the same image reference.
-      #
-      # ASPNETCORE_ENVIRONMENT must be Staging on the target, and ConnectionStrings__Database must be
-      # the UAT *app* principal string -- not the migrator one used above.
-      # ===============================================================================================
-      - name: Deploy application
+      # The resource these lines name was created by hand on 2026-08-24; the workflow updates it
+      # rather than creating it. Infrastructure-as-code for UAT is not in this repository, so the
+      # names below are the record of what exists -- keep them in step with the resource group.
+      # Fail before touching Azure if the credential is absent, so the error names the missing
+      # secret instead of surfacing as an opaque az login failure. Same shape as the migrate job's
+      # guard above, and for the same reason.
+      - name: Verify the deployment credential is configured
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
-          echo "::error::Deploy step is not implemented -- no UAT hosting resource exists yet. See the comment in this file and docs/Infrastructure/ENVIRONMENTS.md."
+          if [ -z "${AZURE_CREDENTIALS:-}" ]; then
+            echo "::error::AZURE_CREDENTIALS is not set in the UAT environment. See docs/Infrastructure/ENVIRONMENTS.md."
+            exit 1
+          fi
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          # Contributor on the GymOS-UAT resource group only, scoped to the UAT GitHub Environment.
+          # Federated OIDC would need no stored secret and is the better end state; this is the
+          # smaller step, and swapping it later changes only this block.
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Image only. Environment variables and secrets on the app -- the connection string, the JWT
+      # signing key, the SuperAdmin seed -- are deployment state, not build state, and are not
+      # rewritten here: a workflow that reasserted them on every push would silently undo any
+      # correction made against the running app.
+      #
+      # The image is the SHA-tagged one `build` pushed and `migrate` has already run, so the code
+      # being deployed is the code whose migrations are applied.
+      - name: Deploy the image to Container Apps
+        run: |
+          set -euo pipefail
+
+          az containerapp update             --name gymos-uat-api             --resource-group GymOS-UAT             --image "${{ needs.build.outputs.image }}"
+
+      # `update` returns once the revision is accepted, not once it serves traffic. Without this the
+      # smoke test races the rollout and reads the old revision's health as the new one's.
+      - name: Wait for the new revision to become active
+        run: |
+          set -euo pipefail
+
+          for attempt in $(seq 1 30); do
+            state=$(az containerapp revision list               --name gymos-uat-api --resource-group GymOS-UAT               --query "[?properties.active].properties.runningState" -o tsv | head -1)
+            echo "attempt $attempt: runningState=${state:-unknown}"
+            if [ "$state" = "Running" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "::error::The new revision did not reach Running within five minutes."
+          az containerapp logs show --name gymos-uat-api --resource-group GymOS-UAT --tail 100 || true
           exit 1
 
   smoke:
