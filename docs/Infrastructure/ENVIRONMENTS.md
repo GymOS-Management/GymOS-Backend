@@ -212,11 +212,28 @@ environment scoping is what stops one environment reading the other's credential
 | `GYMOS_MIGRATOR_CONNECTION_STRING` | UAT, Production | migrator principal — has DDL rights. Used only by the `migrate` job |
 | `GYMOS_APP_CONNECTION_STRING` | UAT, Production | app principal — reads and writes rows, no DDL. What the running app uses |
 | `GYMOS_JWT_SIGNING_KEY` | UAT, Production | 32+ bytes; `openssl rand -base64 48`. Startup refuses a shorter one |
+| `AZURE_CLIENT_ID` | UAT | app registration the deploy job signs in as. **Not a credential** — federated OIDC, so there is no secret to rotate |
+| `AZURE_TENANT_ID` | UAT | the Entra tenant. Secret only to keep it out of logs |
+| `AZURE_SUBSCRIPTION_ID` | UAT | the subscription `az` acts against. Same |
 
 | Variable | Purpose |
 |---|---|
 | `UAT_DEPLOY_ENABLED` / `PRODUCTION_DEPLOY_ENABLED` | `true` turns the deploy workflow on. Both are off, so nothing runs against absent infrastructure |
 | `UAT_BASE_URL` / `PRODUCTION_BASE_URL` | where the readiness smoke test points |
+
+### How the deploy job authenticates
+
+Federated OIDC, not a stored client secret. The `gymos-uat-deploy` app registration carries a
+federated credential whose subject is `repo:GymOS-Management/GymOS-Backend:environment:UAT`, and
+Entra will exchange a GitHub token only for that exact subject.
+
+Two consequences worth knowing before editing the workflow. The deploy job's `environment: UAT` line
+is what produces that subject, so removing it breaks authentication rather than merely widening
+scope. And the job needs `permissions: id-token: write`, which is set on the job rather than the
+workflow so no other job can mint a token.
+
+Nothing about this expires, so nothing needs rotating. Production will need its own federated
+credential, with `environment:Production` in the subject, when it exists.
 
 Configure **required reviewers** on the `Production` environment. That is what makes a production
 migration pause for a human.

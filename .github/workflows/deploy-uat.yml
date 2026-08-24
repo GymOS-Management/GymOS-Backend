@@ -136,29 +136,44 @@ jobs:
     if: needs.preflight.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     environment: UAT
+
+    # `id-token: write` is the whole mechanism: it lets the runner ask GitHub for the short-lived
+    # OIDC token azure/login exchanges. Without it there is no token to present and, now, no stored
+    # secret to fall back on. Job-level rather than workflow-level, so no other job here can mint one.
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
       # The resource these lines name was created by hand on 2026-08-24; the workflow updates it
       # rather than creating it. Infrastructure-as-code for UAT is not in this repository, so the
       # names below are the record of what exists -- keep them in step with the resource group.
-      # Fail before touching Azure if the credential is absent, so the error names the missing
-      # secret instead of surfacing as an opaque az login failure. Same shape as the migrate job's
-      # guard above, and for the same reason.
-      - name: Verify the deployment credential is configured
+      # Fail before touching Azure if the identity is not configured, so the error names what is
+      # missing instead of surfacing as an opaque az login failure. Same shape as the migrate job's
+      # guards above, and for the same reason.
+      - name: Verify the deployment identity is configured
         env:
-          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
-          if [ -z "${AZURE_CREDENTIALS:-}" ]; then
-            echo "::error::AZURE_CREDENTIALS is not set in the UAT environment. See docs/Infrastructure/ENVIRONMENTS.md."
+          if [ -z "${AZURE_CLIENT_ID:-}" ]; then
+            echo "::error::AZURE_CLIENT_ID is not set in the UAT environment. See docs/Infrastructure/ENVIRONMENTS.md."
             exit 1
           fi
 
+      # Federated OIDC. There is no client secret here to store, rotate, or leak: GitHub mints a
+      # token for this job and Azure trusts it only for the subject
+      # `repo:GymOS-Management/GymOS-Backend:environment:UAT`.
+      #
+      # That subject is why `environment: UAT` above is load-bearing rather than decoration -- a job
+      # without it presents a different subject and Entra refuses the exchange. The three values
+      # below are identifiers, not credentials; they are secrets here only to keep the tenant and
+      # subscription out of logs.
       - name: Log in to Azure
         uses: azure/login@v2
         with:
-          # Contributor on the GymOS-UAT resource group only, scoped to the UAT GitHub Environment.
-          # Federated OIDC would need no stored secret and is the better end state; this is the
-          # smaller step, and swapping it later changes only this block.
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # Image only. Environment variables and secrets on the app -- the connection string, the JWT
       # signing key, the SuperAdmin seed -- are deployment state, not build state, and are not
