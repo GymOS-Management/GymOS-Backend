@@ -12,54 +12,100 @@ Design: [`docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md`](../
 [`docs/superpowers/specs/2026-08-15-database-roles-design.md`](../superpowers/specs/2026-08-15-database-roles-design.md)
 (the roles that make it actually run).
 
-## The three database roles
+## The three database principals
 
-The application never connects as a superuser. Three roles replace the single bootstrap account:
+The application never connects as a privileged principal. Three replace the single bootstrap account:
 
-| Role | Attributes | Owns | Used by |
+| Principal | Holds | Owns | Used by |
 |---|---|---|---|
-| `gymos_admin` | superuser — this is `POSTGRES_USER` | the cluster | humans, `psql`, maintenance |
-| `gymos_migrator` | `NOSUPERUSER NOBYPASSRLS` | database `gymos`, its schemas, every table | the one-shot `migrator` compose service only |
-| `gymos_app` | `NOSUPERUSER NOBYPASSRLS` | nothing | the API at runtime |
+| `sa` | `sysadmin` — the image's bootstrap login | the instance | humans, `sqlcmd`, maintenance |
+| `gymos_migrator` | `db_ddladmin`, `db_datareader`, `db_datawriter`, `ALTER ANY SECURITY POLICY` | the `platform` and `outbox` schemas and everything in them | the one-shot `migrator` compose service only |
+| `gymos_app` | `db_datareader`, `db_datawriter`, `EXECUTE` on `platform` | nothing | the API at runtime |
 
-Created by `docker/postgres/initdb/10-roles.sql`, which reads both passwords via psql's `\getenv`
-rather than shell-interpolating them into SQL — a password containing a single quote cannot break the
-statement or inject anything.
+Created by `docker/sqlserver/initdb/10-principals.sql`, applied by the `db-init` service, which passes
+both passwords as `sqlcmd` `:setvar` bindings rather than shell-interpolating them into SQL — a
+password containing a quote cannot break the statement or inject anything.
 
-### Why two non-superuser roles, not one
+### Why two unprivileged principals, not one
 
-A single non-superuser role that owned its own tables would still not be enough. **An owner can
-execute `ALTER TABLE … NO FORCE ROW LEVEL SECURITY` and switch its own isolation off in one statement**
-— no superuser privilege required, just ownership. Row-level security exists largely as a defence
-against SQL injection, and an injected statement running as that owner disables the very control meant
-to contain it, with nothing to notice until the next boot's validator run, potentially weeks later.
+A single unprivileged principal that could change its own tables would still not be enough. Two
+statements are enough to remove the protection, and neither needs `sysadmin`:
 
-Splitting the role in two closes that gap by taking ownership away from the role that serves requests.
-`gymos_migrator` owns every table and runs DDL; `gymos_app` owns nothing and holds no DDL rights at
-all, so the identical injected statement is refused outright — a non-owner cannot switch off a policy
-it does not own, full stop. This is the whole reason for the split: an owner *can* be talked into
-disabling its own protection in a single statement; a non-owner cannot be, regardless of what SQL it is
-tricked into running.
+```sql
+ALTER SECURITY POLICY platform.some_policy WITH (STATE = OFF);   -- needs ALTER ANY SECURITY POLICY
+ALTER TABLE platform.some_table DROP COLUMN tenant_id;           -- needs ALTER on the table
+```
 
-### The constraint this creates — stated plainly, because it is the one that will bite someone
+Row-level security exists largely as a defence against SQL injection, and an injected statement
+running as a principal holding either right disables the very control meant to contain it, with
+nothing to notice until the next boot's validator run — potentially weeks later.
 
-`gymos_app`'s read/write access comes from `ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator`, declared
-once at initdb time with no `IN SCHEMA` clause so it covers every schema and table created afterward,
-including ones migrations haven't written yet. **Default privileges attach only to objects created *by
-`gymos_migrator`*.** Anything that ever creates a table as another role — a manual `psql` session as
-`gymos_admin`, a future tool that runs DDL under its own identity — produces a table `gymos_app` cannot
-read, write, or even see with a plain `SELECT`, and the failure looks exactly like a permission bug
-rather than anything pointing at privileges. Today only the migrator holds DDL rights, so the
-constraint holds by construction — but that is precisely the kind of thing that stops holding quietly,
-the day a second path to creating a table appears.
+Splitting in two closes that gap by taking both rights away from the principal that serves requests.
+`gymos_migrator` owns the schemas and runs DDL; `gymos_app` owns nothing, is in no role carrying DDL
+or security administration, and so is refused outright. This is the whole reason for the split: a
+privileged principal *can* be talked into disabling its own protection in a single statement; an
+unprivileged one cannot be, regardless of what SQL it is tricked into running.
 
-An Azure-managed deployment starting from an existing database needs the ownership-transfer procedure
-and the explicit `GRANT … ON ALL TABLES` this constraint implies for objects that already exist,
-recorded in [`docs/runbooks/managed-postgres-roles.md`](../runbooks/managed-postgres-roles.md).
+### What moving from PostgreSQL changed here
+
+The split is unchanged. One of its three original justifications became unnecessary, and the statement
+to worry about changed:
+
+| PostgreSQL | SQL Server |
+|---|---|
+| A superuser or `BYPASSRLS` role is exempt from every policy **at read time** | **No read-time exemption exists.** A security policy filters every principal — schema owner, `dbo`, `sysadmin` — so a privileged connection sees no more rows than anyone else |
+| A table's owner is exempt from its own policies unless `FORCE ROW LEVEL SECURITY` is set | **No owner exemption exists**, so there is no `FORCE` to set and no flag whose absence could quietly void a policy |
+| The reachable attack is `ALTER TABLE … NO FORCE ROW LEVEL SECURITY` | The reachable attack is `ALTER SECURITY POLICY … WITH (STATE = OFF)` — a bigger hammer, since it disables the policy for everyone rather than exempting one role |
+| The validator checks `rolsuper`, `rolbypassrls`, `relrowsecurity`, `relforcerowsecurity`, `pg_policy`, `pg_has_role` | The validator checks role membership, `ALTER ANY SECURITY POLICY`, `CONTROL`, `sys.security_policies.is_enabled`, and per-table `ALTER` |
+
+The net effect is that the *read* path is harder to subvert than it was and the *disable* path is
+what remains — which is exactly what `gymos_app`'s permissions are arranged to prevent, and what
+`TenantIsolationValidator` refuses to boot without.
+
+### The constraint this used to create, and why it is gone
+
+`gymos_app`'s read/write access is `db_datareader` and `db_datawriter` — two fixed database roles,
+granted once, that cover **every table in the database**, including ones no migration has written yet.
+
+That is a genuine improvement over the PostgreSQL arrangement rather than a translation of it. There,
+the same access came from `ALTER DEFAULT PRIVILEGES FOR ROLE gymos_migrator`, and default privileges
+attach only to objects created *by the role they were declared for*. Anything that ever created a
+table as another role — a manual `psql` session, a future tool running DDL under its own identity —
+produced a table `gymos_app` could not read, write, or even see, and the failure looked exactly like a
+permission bug rather than anything pointing at privileges. This document recorded that as the
+constraint most likely to bite someone. Database-wide role membership has no such hole: it does not
+care who created the table.
+
+**Two things did not carry over, and both are exceptions to watch.**
+
+`db_datareader` and `db_datawriter` cover tables and nothing else — not procedures. `gymos_app` needs
+`EXECUTE` on two modules that issue DDL on its behalf (`platform.next_invoice_number`,
+`platform.ensure_audit_log_partitions`), so `10-principals.sql` issues a standing
+`GRANT EXECUTE ON SCHEMA::platform`. That grant is the real counterpart of `ALTER DEFAULT PRIVILEGES`,
+it covers every module a future migration adds, and it is the one line whose absence produces the old
+failure mode: a permission error on something a migration only just introduced.
+
+And `GRANT VIEW DEFINITION ON SCHEMA::platform`, which has no PostgreSQL counterpart at all —
+`pg_policy` was readable by anyone. **SQL Server's catalog views are permission-filtered**, and a
+security policy is an object `gymos_app` holds no permission on, so without this grant
+`SELECT COUNT(*) FROM sys.security_predicates` returns **0** on the application's connection against a
+database whose predicates plainly exist.
+
+That is not cosmetic, because `TenantIsolationValidator` deliberately runs on the application's own
+connection: the question worth asking is "is the principal I am about to serve requests as actually
+filtered", and a privileged connection answers a different one. Without the grant the validator reads
+its own protection as absent and refuses to boot — failing closed, which is the right direction, but
+for a reason that is false and with a message pointing at a missing migration. It cost a full suite
+run to find. `VIEW DEFINITION` is metadata visibility only: it confers no right to read a row, call a
+module, or change anything.
+
+An Azure-managed deployment needs these principals created as contained users rather than logins, and
+the ordered statements are in
+[`docs/runbooks/managed-sqlserver-roles.md`](../runbooks/managed-sqlserver-roles.md).
 
 ## Purpose
 
-GymOS runs every gym in one PostgreSQL database, not one database per gym. That is cheaper to operate
+GymOS runs every gym in one SQL Server database, not one database per gym. That is cheaper to operate
 and cheaper to migrate, and it means the only thing standing between one gym's data and another's is
 whatever code remembers to ask for the right rows. R14 exists because "whatever code remembers" is not
 a control — it is a hope, and a hope with a body count: a handler copy-pasted from a platform-scoped
@@ -70,7 +116,7 @@ is the control that replaces the hope, and the reasoning a future maintainer nee
 
 `tenant_id = the session's tenant, or no rows.`
 
-A tenant-scoped table's every read and write is filtered by PostgreSQL itself, through row-level
+A tenant-scoped table's every read and write is filtered by the database itself, through row-level
 security, not by application code remembering a `WHERE tenant_id = …` clause. The comparison lives in
 the database, so a handler that forgets to filter does not leak rows sideways — it simply reads none
 (see "Fail closed", below). That property, not the filtering itself, is the point of building this in
@@ -123,16 +169,16 @@ it is the one part of this the type cannot enforce.
 > fail if anyone reintroduces the set-and-clear shape. The end-to-end proof that RLS actually filters
 > through a `TenantScope` needs a tenant-scoped table and belongs to that increment.
 
-The setting then has to survive the trip to PostgreSQL. `TenantSessionInterceptor` writes
-`app.tenant_id` on **every** connection open — never merely reset — including an empty value for
-platform scope, so nothing is ever read that this connection's current user did not just write.
+The setting then has to survive the trip to the database. `TenantSessionInterceptor` writes
+`app.tenant_id` into `SESSION_CONTEXT` on **every** connection open — never merely reset — including a
+NULL for platform scope, so nothing is ever read that this connection's current user did not just
+write.
 
-**Why unconditionally, stated accurately.** Npgsql pools physical connections, and a plain session
-`SET` outlives the logical connection that wrote it — but Npgsql also resets a pooled connection when
-it is returned (`DISCARD ALL`/`RESET ALL`), which clears the setting before the next borrower sees it.
-That reset is disabled by `No Reset On Close=true`, and is skipped entirely when multiplexing is
-enabled; neither is set anywhere in this solution today. So the unconditional write is **defence in
-depth over Npgsql's connection reset, not the sole thing preventing leakage**. This is measured rather
+**Why unconditionally, stated accurately.** SqlClient pools physical connections, and session context
+outlives the logical connection that wrote it — but SqlClient also issues `sp_reset_connection` when a
+pooled connection is handed out again, which clears it before the next borrower sees it. So the
+unconditional write is **defence in
+depth over the driver's connection reset, not the sole thing preventing leakage**. This is measured rather
 than argued: the interceptor was temporarily changed to skip the write when there is no tenant — the
 shape this design rejects — and all eight isolation tests still passed, the pool's reset having covered
 the gap. The unconditional write is kept because it is what stays correct the day someone turns that
@@ -169,46 +215,58 @@ nobody having decided it should. There is no bypass to reach for, so there is no
 to acquire. The extra queries are the guarantee, not a shortcoming of it — do not add the flag back in
 the name of efficiency without re-reading this paragraph first.
 
-## Why `FORCE` is mandatory, and why it is not enough on its own
+## There is no `FORCE`, and none is needed
 
-PostgreSQL exempts a table's **owner** from that table's own row-level security policies, unless the
-table also carries `FORCE ROW LEVEL SECURITY`. Every migration runs as `gymos_migrator`, so
-`gymos_migrator` owns every table it creates. Without `FORCE`, every policy in this design would exist,
-read correctly in a code review, and filter nothing for that connection — which is why the startup
-validator asserts `relforcerowsecurity` specifically, not merely `relrowsecurity`, and a tenant-scoped
-table missing it fails the boot rather than passing a check that looked complete.
+**SQL Server has no owner exemption from row-level security, and no `BYPASSRLS`.** A security policy
+filters every principal that queries the table — the schema owner, `dbo`, `sysadmin`, all of them.
+There is no flag to set, and therefore no flag whose absence could leave a policy present, correct in
+review, and filtering nothing.
 
-**`FORCE` stops a table's owner from bypassing its own policies. It does not stop a superuser, and
-PostgreSQL gives no way to make it stop one: row security is never applied to a superuser, or to any
-role carrying `BYPASSRLS`, whether or not the table is forced.** This was not a hypothetical for this
-platform: the deployment used to connect to PostgreSQL as `gymos`, the bootstrap superuser the
-`postgres` image creates, and against a superuser `FORCE` bought nothing at all — the reasoning R14
-originally used to reject a separate, non-owner runtime role ("little is bought once `FORCE` is
-asserted at boot") did not hold once the connecting role was a superuser rather than a plain owner.
+This section used to be the longest and most anxious in the document, and it is worth recording why,
+because the anxiety was justified under the old engine and is not under this one. PostgreSQL exempts a
+table's owner unless `FORCE ROW LEVEL SECURITY` is set, and exempts a superuser or `BYPASSRLS` role
+unconditionally — `FORCE` included, with no way to make it stop one. Every migration ran as
+`gymos_migrator`, so that role owned every table; the deployment originally connected as the
+bootstrap superuser, against which `FORCE` bought nothing at all. Two separate exemptions, one of them
+unfixable, both silent.
 
-**This is now fixed.** The API connects as `gymos_app`, which is `NOSUPERUSER NOBYPASSRLS` and owns
-nothing (§3, above), so `FORCE` governs it exactly as designed, and the owner-bypass risk is closed by
-ownership rather than by `FORCE` alone — see "Why two non-superuser roles, not one", above. The
-validator's role check — refusing to boot against a connected role reporting `rolsuper` or
-`rolbypassrls` — is now unconditional rather than gated on some entity implementing `ITenantScoped`, so
-it is exercised on every boot rather than waiting for `members` to land before it can even fire.
-`gymos_migrator` still owns the tables and still needs `FORCE` to be bound by its own policies;
-the validator continues to assert `relforcerowsecurity` unchanged.
+Neither exists here. What remains reachable is **disabling** the policy —
+`ALTER SECURITY POLICY … WITH (STATE = OFF)` — which is a larger effect (it switches the policy off for
+everyone, not just for one principal) but a much narrower privilege: it needs
+`ALTER ANY SECURITY POLICY`, which `gymos_app` does not hold and is in no role that carries. The
+control therefore rests entirely on the principal split described above, rather than on a per-table
+flag that a superuser could ignore.
 
-**The owner-bypass guard was proved, not merely asserted.** With `FORCE ROW LEVEL SECURITY` removed from
-the test table, the isolation test that expects one tenant's row back reported
-`Assert.Single() Failure: The collection contained 2 items` — the exact silent failure this whole
-section exists to prevent — and passed again once the line was restored. A control that cannot be shown
-failing is indistinguishable from one that does nothing; this one was shown. The role split itself was
-proved the same way: `ALTER TABLE … NO FORCE ROW LEVEL SECURITY` is refused (SQLSTATE 42501) on the
-`gymos_app` connection, and succeeds on the `gymos_migrator` connection running the identical statement
-as the control — the pair that keeps the first assertion meaningful rather than merely green.
+**The validator was re-pointed accordingly, not relaxed.** It refuses to boot when the connected
+principal is in `sysadmin`, `db_owner`, `db_ddladmin` or `db_securityadmin`, or holds
+`ALTER ANY SECURITY POLICY` or `CONTROL`, or can `ALTER` a tenant-scoped table. It also asserts that
+each tenant-scoped table has an **enabled** FILTER predicate and an **enabled** BLOCK predicate —
+enabled specifically, because a disabled policy leaves every row in `sys.security_predicates` exactly
+where it was while filtering nothing. That check is the direct heir of `relforcerowsecurity`: the one
+that catches a control which looks installed and is not.
+
+**Both halves were proved, not merely asserted.** `TheOwnerDoesNotBypassThePolicy` reads the probe
+table as the schema owner with no tenant set and gets zero rows; running
+`ALTER SECURITY POLICY … WITH (STATE = OFF)` immediately above that assertion turns it into
+`Expected: 0, Actual: 2`, so it detects the condition rather than restating the manual. The principal
+split was proved the same way, as a pair:
+`ALTER SECURITY POLICY platform.tenant_probe_isolation WITH (STATE = OFF)` fails on the `gymos_app`
+connection and succeeds on the `gymos_migrator` connection running the identical statement — the
+control that keeps the first assertion meaningful rather than merely green. The pairing matters more
+than it did under PostgreSQL, whose 42501 said "insufficient privilege" outright: SQL Server answers
+33268, *"Cannot find the object … because it does not exist or you do not have permissions"*,
+deliberately conflating absent with forbidden, so only the companion test proves which one happened.
 
 ## Fail closed: unset means nothing, not everything
 
-The policy compares `tenant_id` to `current_setting('app.tenant_id', true)`, which reads as an empty
-string under platform scope and casts to `NULL` for the comparison — and `tenant_id = NULL` matches no
-rows, never every row.
+The predicate compares `tenant_id` to `CONVERT(uniqueidentifier, SESSION_CONTEXT(N'app.tenant_id'))`,
+which is NULL under platform scope — and `tenant_id = NULL` matches no rows, never every row.
+
+Simpler than it was, and deliberately so. PostgreSQL session settings are text, so platform scope wrote
+an empty string and the policy needed `NULLIF(…, '')::uuid` to turn it back into NULL. Session context
+holds a typed `uniqueidentifier`, so NULL is written directly and no conversion is left that could
+throw. An empty string here would in fact be worse: `CONVERT(uniqueidentifier, N'')` is a conversion
+error rather than a NULL, so every platform-scope query would fail instead of returning nothing.
 
 This is the single most important property in the whole mechanism. A code path that forgets to set the
 tenant — a handler wired to the wrong route, a job that reuses one scope across every gym instead of
@@ -248,8 +306,9 @@ not the same claim as "the platform is isolated" — that second claim waits on 
 
 ~~The deployment connects as a PostgreSQL superuser, which voids `FORCE` entirely against it.~~ **Closed
 by the database-roles increment (2026-08-15).** The API now connects as `gymos_app`
-(`NOSUPERUSER NOBYPASSRLS`, owns nothing); see "The three database roles" and "Why `FORCE` is mandatory",
-above.
+(owns nothing, holds no DDL or security administration); see "The three database principals" and
+"There is no `FORCE`, and none is needed", above. The move to SQL Server closed it a second time, by
+removing read-time exemptions from the engine altogether.
 
 - **No gym-scoped grant can be issued through the API yet — and issuing one today would be a
   privilege-escalation defect, not merely a gap.** `SetUserRolesCommandHandler` rejects any attempt at a

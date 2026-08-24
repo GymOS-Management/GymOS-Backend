@@ -22,7 +22,7 @@ public sealed class AnalyticsApiTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public AnalyticsApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public AnalyticsApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

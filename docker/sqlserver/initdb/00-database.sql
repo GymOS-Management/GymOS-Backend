@@ -24,3 +24,33 @@ BEGIN
     EXEC sys.sp_executesql @sql;
 END
 GO
+
+-- ── READ_COMMITTED_SNAPSHOT ──────────────────────────────────────────────────────────────────
+-- Makes READ COMMITTED use row versioning instead of shared locks, so a reader never blocks a
+-- writer and a writer never blocks a reader.
+--
+-- **This is the setting that makes the application's concurrency behave as it was written.** Every
+-- handler in GymOS was designed against PostgreSQL, where MVCC gives non-blocking reads for free and
+-- pessimistic locking is something you must ask for explicitly (SELECT ... FOR UPDATE). SQL Server's
+-- default is the opposite: an ordinary SELECT takes shared locks, so two operations that never
+-- contended before can now deadlock through a table neither of them locked on purpose.
+--
+-- Measured, not assumed. Without this, SetGymFeaturesCommand and SetPlanFeatureCommand deadlock when
+-- they run concurrently: the gym write holds a deliberate shared lock on subscription_plans (its
+-- FindByIdForShareAsync) and then READS plan_features, while the plan write holds plan_features and
+-- wants subscription_plans. Neither reads a row the other has any business locking — the cycle exists
+-- only because reads take locks. The integration suite has a test for exactly that race
+-- (A_concurrent_plan_edit_cannot_make_the_gym_writes_own_answer_stale), and it returned a 500 until
+-- this line existed.
+--
+-- The explicit hints keep working and keep meaning what they say: UPDLOCK and REPEATABLEREAD are
+-- still pessimistic under RCSI, which is the point — the code asks for blocking exactly where it
+-- wants it, and gets none where it does not.
+--
+-- Azure SQL Database has this ON by default, so enabling it here makes development and the
+-- production target agree rather than diverge. Setting it needs exclusive access to the database,
+-- which is why it happens now, before anything connects.
+DECLARE @rcsi nvarchar(max) =
+    N'ALTER DATABASE ' + QUOTENAME(N'$(GYMOS_DB)') + N' SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE';
+EXEC sys.sp_executesql @rcsi;
+GO

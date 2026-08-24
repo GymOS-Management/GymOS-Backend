@@ -2,8 +2,8 @@ using GymOS.BuildingBlocks.Application.Idempotency;
 using GymOS.BuildingBlocks.Infrastructure.Time;
 using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -11,7 +11,7 @@ namespace GymOS.IntegrationTests;
 [Collection(SqlServerCollectionDefinition.Name)]
 public sealed class IdempotencyStoreTests : IAsyncLifetime
 {
-    // TryTakeOverAsync's lease check runs against PostgreSQL's own now(), so the test needs
+    // TryTakeOverAsync's lease check runs against the database's own clock (SYSDATETIMEOFFSET), so the test needs
     // real wall-clock time, not a fixed instant — SystemClock is the sanctioned call site
     // (AD-40); Application.Idempotency stays clock-free in production.
     private static readonly SystemClock Clock = new();
@@ -19,7 +19,7 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
     private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public IdempotencyStoreTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public IdempotencyStoreTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {
@@ -199,13 +199,48 @@ public sealed class IdempotencyStoreTests : IAsyncLifetime
     {
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
-        await using var command = new SqlCommand(
-            "SELECT indexdef FROM pg_indexes WHERE schemaname='platform' AND indexname='ux_idempotency_records_claim'",
-            connection);
+        await using var command = new SqlCommand(TestDatabase.IndexDefinitionSql, connection);
+        command.Parameters.AddWithValue("@schema", "platform");
+        command.Parameters.AddWithValue("@table", "idempotency_records");
+        command.Parameters.AddWithValue("@index", "ux_idempotency_records_claim");
+
         string? definition = (string?)await command.ExecuteScalarAsync();
 
         Assert.NotNull(definition);
-        Assert.Contains("COALESCE", definition, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("UNIQUE", definition, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("tenant_id", definition, StringComparison.OrdinalIgnoreCase);
+
+        // Not filtered. EF adds `WHERE [tenant_id] IS NOT NULL` to unique indexes over nullable
+        // columns on its own; this one is hand-written so it does not, and asserting the absence is
+        // what would catch someone "tidying" it into a model declaration. A filtered index here would
+        // exempt every platform-scope claim from the constraint.
+        Assert.DoesNotContain("WHERE", definition, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The property the index exists for, asserted through behaviour rather than through its text.
+    /// </summary>
+    /// <remarks>
+    /// The PostgreSQL index read <c>COALESCE(tenant_id, '000…')</c> and the old version of the test
+    /// above asserted that word appeared in its definition. The COALESCE was there for one reason —
+    /// PostgreSQL treats two NULLs as distinct in a unique index, so platform-scope claims would not
+    /// have collided without a sentinel — and SQL Server treats them as equal, so the sentinel is
+    /// gone. That makes "does the definition mention COALESCE" the wrong question, and this the right
+    /// one: two platform-scope claims on the same key must still conflict.
+    /// </remarks>
+    [Fact]
+    public async Task Two_platform_scope_claims_on_the_same_key_conflict()
+    {
+        await using AppDbContext context = CreateContext();
+        var store = new IdempotencyStore(context);
+
+        // tenant_id is NULL on both — every claim this suite makes is platform-scope, which is
+        // precisely the case PostgreSQL needed the COALESCE sentinel to catch.
+        IdempotencyClaimResult first = await store.TryClaimAsync(Claim("shared-key"), CancellationToken.None);
+        IdempotencyClaimResult second = await store.TryClaimAsync(Claim("shared-key"), CancellationToken.None);
+
+        Assert.True(first.Claimed);
+        Assert.False(second.Claimed);
+        Assert.NotNull(second.Existing);
     }
 }

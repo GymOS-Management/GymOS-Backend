@@ -37,7 +37,7 @@ public sealed class TenantResolutionTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public TenantResolutionTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public TenantResolutionTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

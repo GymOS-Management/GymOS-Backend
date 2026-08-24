@@ -7,7 +7,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The users, roles, and audit surfaces over real HTTP against real PostgreSQL — including
+/// The users, roles, and audit surfaces over real HTTP against real SQL Server — including
 /// what happens when the caller lacks the permission, which is the case an endpoint test is
 /// actually for.
 /// </summary>
@@ -22,7 +22,7 @@ public sealed class PlatformAdminApiTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public PlatformAdminApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public PlatformAdminApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

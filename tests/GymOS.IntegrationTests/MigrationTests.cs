@@ -10,7 +10,7 @@ public sealed class MigrationTests
 {
     private readonly SqlServerFixture _sqlServer;
 
-    public MigrationTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public MigrationTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     [Fact]
     public async Task Migrations_ApplyCleanly_AndAreIdempotent()

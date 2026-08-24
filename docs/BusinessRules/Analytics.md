@@ -262,12 +262,12 @@ Migration `AddPlatformStats`, schema `platform`:
 - **`daily_platform_stats`** — `stat_date date` (unique), the seven population/event `int` columns
   above, `created_at_utc`.
 - **`daily_platform_stats_mrr`** — `(stats_id, amount_currency)` unique, one `Money` per row via
-  `MoneyConventions.HasMoney` (`amount numeric(14,4)` + `currency varchar(3)`), FK to
+  `MoneyConventions.HasMoney` (`amount decimal(14,4)` + `currency nvarchar(3)`), FK to
   `daily_platform_stats` on the surrogate `stats_id` (not `stat_date`), cascade. EF cannot build a
   unique index across a complex property's member, so the uniqueness is raw SQL in the migration —
   the same treatment M3.1 gave the `(plan, cycle, currency)` price index.
 
-**Neither table carries an `xmin` concurrency token, and neither is audited.** Both are derived data
+**Neither table carries a `row_version` concurrency token, and neither is audited.** Both are derived data
 written by exactly one job, serialised by `IJobLock` — there is no concurrent writer for a token to
 guard against, and the audit trail of a computed row is the job's own log, not a change history nobody
 would read. Exempted in `ConcurrencyModelTests.ExemptFromConcurrency` with that reasoning attached.

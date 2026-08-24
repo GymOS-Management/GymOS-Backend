@@ -12,7 +12,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The nightly sweep (M4.1 task 3) over real PostgreSQL: the two triggers whose blast radius is
+/// The nightly sweep (M4.1 task 3) over real SQL Server: the two triggers whose blast radius is
 /// every gym on a plan — a plan editing its own feature opinion, and a platform default flipping —
 /// are too wide to withdraw inline (task 2's synchronous hook only covers one gym's own
 /// subscription changing), so they wait for <see cref="FeatureOverrideSweepJob"/> instead.
@@ -28,7 +28,7 @@ public sealed class FeatureOverrideSweepTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public FeatureOverrideSweepTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public FeatureOverrideSweepTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

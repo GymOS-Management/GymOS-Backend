@@ -32,8 +32,8 @@ matches what a following `GET` would return.
 
 ### 2. Optimistic concurrency — implemented end to end
 
-- `rowVersion` on every mutable resource, in the body and as a strong `ETag`, backed by PostgreSQL
-  `xmin` rather than a column anyone has to remember to bump.
+- `rowVersion` on every mutable resource, in the body and as a strong `ETag`, backed by a SQL Server
+  `rowversion` column rather than one anyone has to remember to bump.
 - `If-Match` **required** on `PUT` (`428` without it), honored on action endpoints.
 - `409` with `retryable: false` and explicit re-read/re-apply/retry guidance; `400` for a malformed or
   weak validator, so a client is never told to retry something that cannot succeed.
@@ -206,10 +206,10 @@ shapes, and the addition of tests.
 | **Total** | **337** | up from 256 at v0.3.0 |
 
 Gates on every commit: Release build with warnings-as-errors, `dotnet format --verify-no-changes`,
-full suite on Testcontainers PostgreSQL 17, transitive banned-package audit, OpenAPI snapshot diff, and
+full suite on Testcontainers SQL Server 2022, transitive banned-package audit, OpenAPI snapshot diff, and
 `has-pending-model-changes`.
 
-Verified beyond the suite, live against PostgreSQL 17: `201` with `Location`/`ETag`/resource, `428`
+Verified beyond the suite, live against SQL Server 2022: `201` with `Location`/`ETag`/resource, `428`
 without `If-Match`, `200` with a fresh version and a new `ETag`, `409` with `retryable: false` on a
 stale version, `400` on a weak validator, and partition maintenance reporting at startup.
 

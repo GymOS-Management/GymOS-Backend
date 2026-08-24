@@ -10,7 +10,7 @@ public sealed class IdempotencyHostTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public IdempotencyHostTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public IdempotencyHostTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

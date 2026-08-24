@@ -9,7 +9,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The plan catalogue over real HTTP against real PostgreSQL — including the two things only a real
+/// The plan catalogue over real HTTP against real SQL Server — including the two things only a real
 /// database can prove: that <c>Money</c> round-trips through its column pair, and that the
 /// (plan, cycle, currency) unique index created as raw SQL in the migration actually exists.
 /// </summary>
@@ -23,7 +23,7 @@ public sealed class PlanApiTests : IAsyncLifetime
     private HttpClient _client = null!;
     private Guid _plan;
 
-    public PlanApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public PlanApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {
@@ -85,7 +85,7 @@ public sealed class PlanApiTests : IAsyncLifetime
         using HttpResponseMessage set = await SetPriceAsync(planId, "Yearly", "EUR", 499.99m);
         Assert.Equal(HttpStatusCode.OK, set.StatusCode);
 
-        // Read back through a fresh request, so the value came from PostgreSQL rather than from the
+        // Read back through a fresh request, so the value came from the database rather than from the
         // aggregate still in memory.
         using HttpResponseMessage detail = await _client.GetAsync(PlanUri(planId));
         JsonElement body = await detail.Content.ReadFromJsonAsync<JsonElement>();
@@ -166,14 +166,10 @@ public sealed class PlanApiTests : IAsyncLifetime
         await connection.OpenAsync();
 
         await using Microsoft.Data.SqlClient.SqlCommand command = connection.CreateCommand();
-        command.CommandText =
-            """
-            SELECT indexdef
-            FROM pg_indexes
-            WHERE schemaname = 'platform'
-              AND tablename = 'plan_prices'
-              AND indexname = 'ix_plan_prices_plan_cycle_currency';
-            """;
+        command.CommandText = TestDatabase.IndexDefinitionSql;
+        command.Parameters.AddWithValue("@schema", "platform");
+        command.Parameters.AddWithValue("@table", "plan_prices");
+        command.Parameters.AddWithValue("@index", "ix_plan_prices_plan_cycle_currency");
 
         object? definition = await command.ExecuteScalarAsync();
 

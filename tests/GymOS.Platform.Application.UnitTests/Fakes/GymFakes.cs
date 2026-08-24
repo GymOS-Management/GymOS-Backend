@@ -56,7 +56,7 @@ internal sealed class FakeGymRepository : IGymRepository
 
     /// <summary>
     /// Records the expectation and, when <see cref="ConflictingVersion"/> matches it, simulates the store
-    /// refusing the write. The real check happens in PostgreSQL, so this is the only way a handler test
+    /// refusing the write. The real check happens in the database, so this is the only way a handler test
     /// can cover the conflict path at all.
     /// </summary>
     public void ExpectVersion(Gym gym, ulong expectedVersion)

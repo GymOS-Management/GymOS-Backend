@@ -6,7 +6,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The job lock against real PostgreSQL: one holder per name, independent names do not contend,
+/// The job lock against real SQL Server: one holder per name, independent names do not contend,
 /// and release makes the name acquirable again — the property that lets two API replicas run the
 /// job host without ever running the same sweep twice.
 /// </summary>
@@ -16,7 +16,7 @@ public sealed class JobLockTests : IAsyncLifetime
     private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public JobLockTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public JobLockTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync() =>
         // No migration: advisory locks live in the server, not the schema.
@@ -68,7 +68,7 @@ public sealed class JobLockTests : IAsyncLifetime
         Assert.NotNull(held);
 
         // Simulate a crashed instance: the context (and its session) dies without a polite
-        // unlock. PostgreSQL frees session locks with the session — no job can be wedged shut.
+        // unlock. SQL Server frees session application locks with the session — no job can be wedged shut.
         await holder.DisposeAsync();
 
         await using AppDbContext survivor = CreateContext();

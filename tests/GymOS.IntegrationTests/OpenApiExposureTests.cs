@@ -26,7 +26,7 @@ public sealed class OpenApiExposureTests : IAsyncLifetime
     private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public OpenApiExposureTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public OpenApiExposureTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync() =>
         _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("openapi_exposure");

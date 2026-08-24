@@ -1,3 +1,4 @@
+using System.Globalization;
 using GymOS.BuildingBlocks.Infrastructure.Time;
 using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Identity;
@@ -12,7 +13,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The retention job performs both folded maintenance halves against real PostgreSQL: expired
+/// The retention job performs both folded maintenance halves against real SQL Server: expired
 /// idempotency records go, and audit partitions exist ahead of need. Real wall clock, like the
 /// other idempotency tests — the rows compare against database time.
 /// </summary>
@@ -24,7 +25,7 @@ public sealed class RetentionJobTests : IAsyncLifetime
     private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public RetentionJobTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public RetentionJobTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {
@@ -56,10 +57,10 @@ public sealed class RetentionJobTests : IAsyncLifetime
                 (id, operation_key, idempotency_key, request_hash, status, response_status,
                  claim_token, lease_expires_at, created_at, expires_at)
             VALUES
-                (gen_random_uuid(), 'test.op', 'expired', '{new string('a', 64)}', 2, 200,
-                 gen_random_uuid(), {now.AddHours(-2)}, {now.AddHours(-3)}, {now.AddHours(-1)}),
-                (gen_random_uuid(), 'test.op', 'live', '{new string('b', 64)}', 2, 200,
-                 gen_random_uuid(), {now.AddHours(-2)}, {now.AddHours(-3)}, {now.AddDays(1)})
+                (NEWID(), 'test.op', 'expired', '{new string('a', 64)}', 2, 200,
+                 NEWID(), {now.AddHours(-2)}, {now.AddHours(-3)}, {now.AddHours(-1)}),
+                (NEWID(), 'test.op', 'live', '{new string('b', 64)}', 2, 200,
+                 NEWID(), {now.AddHours(-2)}, {now.AddHours(-3)}, {now.AddDays(1)})
             """);
 
         var job = new RetentionJob(
@@ -84,21 +85,26 @@ public sealed class RetentionJobTests : IAsyncLifetime
 
         // Partitions exist for next month — the recurring guarantee the startup call could only
         // give processes that restart often enough.
+        // A boundary, not a table: SQL Server partitions are numbered ranges of one table rather
+        // than separate tables, so what maintenance creates is a new split point. See
+        // AuditLogPartitioningTests for the same substitution across that whole suite.
         DateTime nextMonth = Clock.UtcNow.UtcDateTime.AddMonths(1);
-        string expectedPartition = $"audit_logs_{nextMonth:yyyy_MM}";
-        List<string> partitions = await context.Database
+        string expectedBoundary = nextMonth.ToString("yyyy-MM", CultureInfo.InvariantCulture);
+        List<string> boundaries = await context.Database
             .SqlQueryRaw<string>(
                 """
-                SELECT tablename AS "Value" FROM pg_tables
-                WHERE schemaname = 'platform' AND tablename LIKE 'audit_logs_%'
+                SELECT CONVERT(char(7), CONVERT(datetimeoffset(7), prv.value), 126) AS [Value]
+                FROM sys.partition_range_values prv
+                JOIN sys.partition_functions pf ON pf.function_id = prv.function_id
+                WHERE pf.name = N'pf_audit_logs_monthly'
                 """)
             .ToListAsync();
-        Assert.Contains(expectedPartition, partitions);
+        Assert.Contains(expectedBoundary, boundaries);
 
         // Idempotent: a second run finds nothing left to do and changes nothing.
         await job.ExecuteAsync(Clock.UtcNow, CancellationToken.None);
         Assert.Equal(1, await context.Database
-            .SqlQueryRaw<int>("""SELECT COUNT(*)::int AS "Value" FROM platform.idempotency_records""")
+            .SqlQueryRaw<int>("SELECT COUNT(*) AS [Value] FROM platform.idempotency_records")
             .SingleAsync());
     }
 }

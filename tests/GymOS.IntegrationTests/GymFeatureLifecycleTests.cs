@@ -35,7 +35,7 @@ public sealed class GymFeatureLifecycleTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public GymFeatureLifecycleTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public GymFeatureLifecycleTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

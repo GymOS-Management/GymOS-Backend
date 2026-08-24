@@ -6,7 +6,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// Optimistic concurrency over real HTTP against real PostgreSQL (ARCHITECTURE.md §3).
+/// Optimistic concurrency over real HTTP against real SQL Server (ARCHITECTURE.md §3).
 ///
 /// The scenario every case here comes back to: two administrators open the same account, both
 /// edit, both save. Exactly one must win, and the loser must be told — not silently overwritten.
@@ -18,7 +18,7 @@ public sealed class ConcurrencyTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public ConcurrencyTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public ConcurrencyTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

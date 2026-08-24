@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -8,7 +9,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// Subscriptions over real HTTP against real PostgreSQL. Two things only a database can prove are here:
+/// Subscriptions over real HTTP against real SQL Server. Two things only a database can prove are here:
 /// that the price snapshot survives a repricing of the plan, and that the partial unique index really
 /// allows only one live subscription per gym while keeping every ended one.
 /// </summary>
@@ -19,7 +20,7 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public SubscriptionApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public SubscriptionApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {
@@ -167,33 +168,31 @@ public sealed class SubscriptionApiTests : IAsyncLifetime
         await connection.OpenAsync();
 
         await using Microsoft.Data.SqlClient.SqlCommand command = connection.CreateCommand();
-        command.CommandText =
-            """
-            SELECT indexdef FROM pg_indexes
-            WHERE schemaname = 'platform'
-              AND tablename = 'gym_subscriptions'
-              AND indexname = 'ux_gym_subscriptions_one_live_per_gym';
-            """;
+        command.CommandText = TestDatabase.IndexDefinitionSql;
+        command.Parameters.AddWithValue("@schema", "platform");
+        command.Parameters.AddWithValue("@table", "gym_subscriptions");
+        command.Parameters.AddWithValue("@index", "ux_gym_subscriptions_one_live_per_gym");
 
         string? definition = (string?)await command.ExecuteScalarAsync();
 
         Assert.NotNull(definition);
         Assert.Contains("UNIQUE", definition, StringComparison.Ordinal);
         Assert.Contains("gym_id", definition, StringComparison.Ordinal);
-        Assert.Contains("status = ANY", definition, StringComparison.Ordinal);
+        Assert.Contains("WHERE", definition, StringComparison.Ordinal);
 
-        // The migration hardcodes "status IN (1, 2, 3)" (Postgres normalises it to
-        // "= ANY (ARRAY[1, 2, 3])" in pg_indexes), rather than deriving the list from
-        // SubscriptionStatusTransitions.Live. Migrations are never hand-edited once shipped, so
-        // this is the guard: if Live ever grows, this fails instead of the index silently ceasing
-        // to guarantee one-live-subscription-per-gym — the same invariant FeatureQueries'
+        // The configuration hardcodes "status IN (1, 2, 3)" rather than deriving the list from
+        // SubscriptionStatusTransitions.Live. Migrations are never hand-edited once shipped, so this
+        // is the guard: if Live ever grows, this fails instead of the index silently ceasing to
+        // guarantee one-live-subscription-per-gym — the same invariant FeatureQueries'
         // FirstOrDefault and SubscriptionRepository's SingleOrDefault disagree about today.
-        Match arrayLiteral = Regex.Match(definition, @"ARRAY\[([^\]]+)\]");
-        Assert.True(arrayLiteral.Success, $"Expected an ARRAY[...] literal in: {definition}");
-
-        int[] filterValues = arrayLiteral.Groups[1].Value
-            .Split(',', StringSplitOptions.TrimEntries)
-            .Select(int.Parse)
+        //
+        // The numbers are pulled out of the filter rather than string-matched, because each engine
+        // normalises the predicate its own way and neither spelling is the point. PostgreSQL rewrote
+        // `IN (1, 2, 3)` as `= ANY (ARRAY[1, 2, 3])`; SQL Server stores it as
+        // `([status] IN ((1),(2),(3)))`, wrapping each literal in its own parentheses. Matching every
+        // integer in the filter is stable across both and across whatever either does next.
+        int[] filterValues = Regex.Matches(definition, @"\d+")
+            .Select(match => int.Parse(match.Value, CultureInfo.InvariantCulture))
             .Order()
             .ToArray();
 

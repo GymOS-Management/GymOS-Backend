@@ -30,7 +30,7 @@ public sealed class FeatureAdoptionParityTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public FeatureAdoptionParityTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public FeatureAdoptionParityTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

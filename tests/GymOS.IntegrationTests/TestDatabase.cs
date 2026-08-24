@@ -35,4 +35,42 @@ internal static class TestDatabase
                 PlatformInfrastructureServiceCollectionExtensions.HistoryTableName,
                 PlatformInfrastructureServiceCollectionExtensions.PlatformSchema);
     }
+
+    /// <summary>
+    /// Renders one index's definition as a single string, in the spirit of PostgreSQL's
+    /// <c>pg_indexes.indexdef</c>: uniqueness, name, table, key columns in order, and the filter.
+    /// </summary>
+    /// <remarks>
+    /// <para>Several suites assert that a hand-written index still exists and still says what the
+    /// migration said — the guard against an index silently ceasing to enforce its invariant. Under
+    /// PostgreSQL each of them read <c>indexdef</c>, a ready-made <c>CREATE INDEX</c> string. SQL
+    /// Server's catalog has no equivalent column, so the string is assembled here from
+    /// <c>sys.indexes</c> and <c>sys.index_columns</c> — once, rather than four times with four
+    /// slightly different queries.</para>
+    /// <para>Key columns only: <c>is_included_column = 0</c> excludes INCLUDE columns, which are
+    /// payload rather than part of what the index enforces. Ordered by <c>key_ordinal</c>, because
+    /// column order is the property some of these tests are actually about.</para>
+    /// </remarks>
+    public const string IndexDefinitionSql =
+        """
+        SELECT CONCAT(
+                   CASE WHEN i.is_unique = 1 THEN 'UNIQUE ' ELSE '' END,
+                   'INDEX ', i.name,
+                   ' ON ', SCHEMA_NAME(t.schema_id), '.', t.name,
+                   ' (',
+                   (SELECT STRING_AGG(c.name, ', ') WITHIN GROUP (ORDER BY ic.key_ordinal)
+                      FROM sys.index_columns ic
+                      JOIN sys.columns c
+                        ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                     WHERE ic.object_id = i.object_id
+                       AND ic.index_id = i.index_id
+                       AND ic.is_included_column = 0),
+                   ')',
+                   ISNULL(' WHERE ' + i.filter_definition, ''))
+        FROM sys.indexes i
+        JOIN sys.tables t ON t.object_id = i.object_id
+        WHERE SCHEMA_NAME(t.schema_id) = @schema
+          AND t.name = @table
+          AND i.name = @index
+        """;
 }

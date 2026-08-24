@@ -52,7 +52,7 @@ renewal job would revert an upgrade the gym just paid for.
 
 ## Numbering
 
-`YYYY-NNNNNN`, sequential within each year, drawn from a per-year PostgreSQL sequence
+`YYYY-NNNNNN`, sequential within each year, drawn from a per-year SQL Server sequence
 (`platform.next_invoice_number`) created on first use. Unique by index, **immutable** — the number
 leaves the system the moment it is issued.
 

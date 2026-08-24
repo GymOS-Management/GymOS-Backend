@@ -70,7 +70,7 @@ public sealed class OutboxCaptureTests : IAsyncLifetime
     private readonly SqlServerFixture _sqlServer;
     private string _connectionString = string.Empty;
 
-    public OutboxCaptureTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public OutboxCaptureTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

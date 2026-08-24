@@ -8,7 +8,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The catalogue seeder against real PostgreSQL — and above all the property that makes it
+/// The catalogue seeder against real SQL Server — and above all the property that makes it
 /// different from the permission seeder: <b>it never overwrites what an operator changed</b>.
 /// </summary>
 [Collection(SqlServerCollectionDefinition.Name)]
@@ -17,7 +17,7 @@ public sealed class FeatureCatalogSeedingTests : IAsyncLifetime
     private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public FeatureCatalogSeedingTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public FeatureCatalogSeedingTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

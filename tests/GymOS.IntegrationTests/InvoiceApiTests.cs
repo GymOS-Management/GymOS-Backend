@@ -6,7 +6,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// Invoices over real HTTP against real PostgreSQL — the M3.3 endpoint surface, and the AD-39
+/// Invoices over real HTTP against real SQL Server — the M3.3 endpoint surface, and the AD-39
 /// idempotency framework's first end-to-end proof: the same <c>Idempotency-Key</c> replays the stored
 /// response byte for byte, a reused key with a different body is refused, and a deterministic failure
 /// replays as the same failure.
@@ -20,7 +20,7 @@ public sealed class InvoiceApiTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public InvoiceApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public InvoiceApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

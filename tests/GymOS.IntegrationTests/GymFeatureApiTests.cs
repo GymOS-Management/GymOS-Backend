@@ -10,7 +10,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// <c>GET/PUT /gyms/{id}/features</c> over real HTTP against real PostgreSQL — the three-layer rule
+/// <c>GET/PUT /gyms/{id}/features</c> over real HTTP against real SQL Server — the three-layer rule
 /// end to end, including the part that has no unit-test equivalent: that a withdrawn override really
 /// leaves the table, so the next plan change reaches the gym.
 /// </summary>
@@ -23,7 +23,7 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public GymFeatureApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public GymFeatureApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {
@@ -510,7 +510,7 @@ public sealed class GymFeatureApiTests : IAsyncLifetime
                 FROM platform.gym_feature_overrides o
                 JOIN platform.features f ON f.id = o.feature_id
                 JOIN platform.users u ON u.id = o.set_by_user_id
-                WHERE o.gym_id = {gymId} AND f.key = {featureKey}
+                WHERE o.gym_id = {gymId} AND f.[key] = {featureKey}
                 """)
             .SingleAsync();
     }

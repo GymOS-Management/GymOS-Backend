@@ -10,7 +10,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The gyms surface over real HTTP against real PostgreSQL: the lifecycle, the uniqueness the database
+/// The gyms surface over real HTTP against real SQL Server: the lifecycle, the uniqueness the database
 /// enforces, the confirmation that guards deletion, and what happens when the caller lacks the
 /// permission — which is the case an endpoint test is actually for.
 /// </summary>
@@ -23,7 +23,7 @@ public sealed class GymApiTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public GymApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public GymApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

@@ -85,7 +85,7 @@ cannot be quietly reachable.
   indistinguishable from "no such gym", and the operator needs to be told which. It is excluded from
   lists by default, which is also what stops a deleted tenant being counted in a figure someone reports
   upward.
-- **Branding shares the gym's row version.** A branding-only write advances the gym's `xmin`
+- **Branding shares the gym's row version.** A branding-only write advances the gym's `row_version`
   explicitly, or two operators editing branding concurrently would both succeed — the child-row gap
   documented in `API_STANDARDS.md` §3.
 - Every gym has a branding record from the moment it is provisioned, so the detail view and the branding
@@ -93,12 +93,15 @@ cannot be quietly reachable.
 
 ## Storage notes
 
-- `slug` is `varchar(63)` with a unique index and a `slug = lower(slug)` CHECK constraint, rather than
-  the `citext` extension. Lowercase-by-construction plus the constraint satisfies "unique, URL-safe,
-  immutable" without adding an extension to every environment.
-- `country_code` and `currency` are `varchar`, not `char(2)`/`char(3)`: `bpchar` compares ignoring
-  trailing spaces, which would make a padded value equal to a clean one in an index. The exact length is
-  a domain rule.
+- `slug` is `nvarchar(63)` with a unique index and a `slug = LOWER(slug)` CHECK constraint.
+  Lowercase-by-construction plus the constraint satisfies "unique, URL-safe, immutable" without
+  depending on the column's collation to enforce it. That independence is worth keeping now that the
+  database collation is case-**in**sensitive: the unique index would catch a differently-cased
+  duplicate on its own, but the CHECK is what keeps the stored value canonical rather than merely
+  unique, so a slug read back from the database is always the one that appears in a URL.
+- `country_code` and `currency` are `nvarchar`, not `nchar(2)`/`nchar(3)`: a fixed-length column pads
+  with trailing spaces, which would make a padded value equal to a clean one in an index. The exact
+  length is a domain rule.
 - `custom_domain` carries a **filtered** unique index (`WHERE custom_domain IS NOT NULL`), so the unset
   majority does not collide and the index means "claimed domains".
 

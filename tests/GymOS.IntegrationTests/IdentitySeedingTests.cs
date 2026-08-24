@@ -19,7 +19,7 @@ public sealed class IdentitySeedingTests : IAsyncLifetime
     private readonly SqlServerFixture _sqlServer;
     private string _connectionString = string.Empty;
 
-    public IdentitySeedingTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public IdentitySeedingTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

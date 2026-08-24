@@ -17,7 +17,7 @@ public sealed class SuperAdminSeedingTests
 {
     private readonly SqlServerFixture _sqlServer;
 
-    public SuperAdminSeedingTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public SuperAdminSeedingTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     [Fact]
     public async Task WithNoSeedConfigured_TheHostStarts_AndNoUserExists()

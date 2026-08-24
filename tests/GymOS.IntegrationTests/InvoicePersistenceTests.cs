@@ -9,27 +9,30 @@ using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.SharedKernel;
 using GymOS.SharedKernel.Currencies;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The M3.3 storage contract, checked against real PostgreSQL: the per-year number function hands out
+/// The M3.3 storage contract, checked against real SQL Server: the per-year number function hands out
 /// distinct numbers under concurrency, an <see cref="Invoice"/> and its lines survive the round trip,
 /// and the single-currency CHECK holds what the aggregate promises.
 /// </summary>
 [Collection(SqlServerCollectionDefinition.Name)]
 public sealed class InvoicePersistenceTests : IAsyncLifetime
 {
+    /// <summary>547 — the row was refused by a CHECK, FOREIGN KEY, or other table constraint.</summary>
+    private const int CheckConstraintViolation = 547;
+
     private static readonly DateTimeOffset Now = new(2026, 8, 10, 12, 0, 0, TimeSpan.Zero);
     private static readonly Currency Eur = Currency.Euro;
 
     private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public InvoicePersistenceTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public InvoicePersistenceTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {
@@ -170,7 +173,7 @@ public sealed class InvoicePersistenceTests : IAsyncLifetime
 
         // Hand-written SQL because the aggregate cannot produce this row — that is the point: the
         // CHECK is what holds the invariant against anything that is not the aggregate.
-        var exception = await Assert.ThrowsAsync<PostgresException>(() =>
+        var exception = await Assert.ThrowsAsync<SqlException>(() =>
             context.Database.ExecuteSqlAsync($"""
                 INSERT INTO platform.invoices
                     (id, gym_id, subscription_id, invoice_number, status, tax_rate,
@@ -182,8 +185,20 @@ public sealed class InvoicePersistenceTests : IAsyncLifetime
                      10, 'EUR', 0, 'EUR', 10, 'USD')
                 """));
 
-        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
-        Assert.Equal("ck_invoices_single_currency", exception.ConstraintName);
+        // 547 is SQL Server's constraint-violation number, the counterpart of PostgreSQL's 23514
+        // (check_violation). Confirmed against the server rather than read from a table.
+        Assert.Equal(CheckConstraintViolation, exception.Number);
+
+        // The constraint's NAME is asserted, not just that something refused the row — a row rejected
+        // by the wrong constraint would otherwise pass this test and prove nothing about the
+        // single-currency invariant.
+        //
+        // Read out of the message rather than off a property, unavoidably. Npgsql surfaced it as
+        // PostgresException.ConstraintName; SqlException has no equivalent member, so the name exists
+        // only inside the text ("...conflicted with the CHECK constraint \"ck_invoices_single_currency\"").
+        // UnitOfWork has the same problem for unique violations and solves it the same way — see the
+        // remarks there, including why every connection string pins Current Language=us_english.
+        Assert.Contains("ck_invoices_single_currency", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -194,8 +209,12 @@ public sealed class InvoicePersistenceTests : IAsyncLifetime
         List<string> indexes = await context.Database
             .SqlQueryRaw<string>(
                 """
-                SELECT indexname AS "Value" FROM pg_indexes
-                WHERE schemaname = 'platform' AND tablename = 'invoices'
+                SELECT i.name AS [Value]
+                FROM sys.indexes i
+                JOIN sys.tables t ON t.object_id = i.object_id
+                WHERE SCHEMA_NAME(t.schema_id) = 'platform'
+                  AND t.name = 'invoices'
+                  AND i.name IS NOT NULL
                 """)
             .ToListAsync();
 

@@ -33,7 +33,7 @@ public sealed class OpenApiContractTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public OpenApiContractTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public OpenApiContractTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

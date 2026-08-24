@@ -16,7 +16,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The renewal sweep end to end against real PostgreSQL: a subscription assigned in the past
+/// The renewal sweep end to end against real SQL Server: a subscription assigned in the past
 /// renews through the real repositories, unit of work, number sequence, and invoice tables — one
 /// transaction per subscription, exactly as the job runs it.
 /// </summary>
@@ -28,7 +28,7 @@ public sealed class RenewalSweepTests : IAsyncLifetime
     private readonly SqlServerFixture _sqlServer;
     private string _connectionString = null!;
 
-    public RenewalSweepTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public RenewalSweepTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

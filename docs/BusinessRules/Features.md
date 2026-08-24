@@ -52,8 +52,8 @@ and a cancelled gym degrades to the platform baseline instead of going dark.
 
 | Entity | Notes |
 |---|---|
-| `Feature` | Aggregate root. Platform-scoped, audited, `xmin` concurrency token. Key **immutable**; copy, default, and premium flag are operator-owned. **Never created or deleted through the API.** |
-| `GymFeatureOverride` | Aggregate root. Platform-scoped, audited, `xmin`. Unique on `(gym_id, feature_id)`. `Reason` **required**; author and timestamp recorded automatically. |
+| `Feature` | Aggregate root. Platform-scoped, audited, `row_version` concurrency token. Key **immutable**; copy, default, and premium flag are operator-owned. **Never created or deleted through the API.** |
+| `GymFeatureOverride` | Aggregate root. Platform-scoped, audited, `row_version`. Unique on `(gym_id, feature_id)`. `Reason` **required**; author and timestamp recorded automatically. |
 | `PlanFeature` | Part of the `SubscriptionPlan` aggregate, reached through the plan exactly as `PlanPrice` is. Exempt from the concurrency-token rule for `PlanPrice`'s recorded reason: it is mutated only through the plan, whose token guards it (`MarkAggregateChanged`). |
 
 ## The catalogue is code-canonical, its copy is not

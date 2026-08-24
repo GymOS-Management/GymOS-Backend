@@ -13,7 +13,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// <see cref="DailyStatsCompiler"/> over real PostgreSQL rather than fakes — every number it produces
+/// <see cref="DailyStatsCompiler"/> over real SQL Server rather than fakes — every number it produces
 /// is a SQL count, so a fake repository would only prove the fake's own arithmetic (the M4
 /// <c>PlanRepository</c> missing-<c>Include</c> lesson, applied in advance).
 ///
@@ -31,7 +31,7 @@ public sealed class PlatformStatsJobTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public PlatformStatsJobTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public PlatformStatsJobTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

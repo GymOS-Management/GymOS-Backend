@@ -20,7 +20,7 @@ public sealed class DashboardApiTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public DashboardApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public DashboardApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

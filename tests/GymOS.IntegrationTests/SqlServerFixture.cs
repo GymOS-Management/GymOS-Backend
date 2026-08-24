@@ -62,12 +62,20 @@ public sealed class SqlServerFixture : IAsyncLifetime
     /// Passwords for throwaway principals inside a throwaway container; not secrets.
     /// </summary>
     /// <remarks>
-    /// Mixed-case with a digit because <c>CREATE LOGIN</c> runs with <c>CHECK_POLICY = ON</c>, matching
-    /// the deployment. The PostgreSQL fixture's <c>gymos-test-migrator</c> would be rejected outright.
+    /// <para>Mixed-case with a digit and a symbol, because <c>CREATE LOGIN</c> runs with
+    /// <c>CHECK_POLICY = ON</c> to match the deployment. The PostgreSQL fixture's
+    /// <c>gymos-test-migrator</c> would be rejected outright.</para>
+    /// <para><b>And deliberately unrelated to the principal names.</b> SQL Server's policy also
+    /// refuses any password containing the login name, and it reports that refusal with the same
+    /// "not complex enough" message it uses for everything else — so the obvious
+    /// <c>Gymos_test_migrator1</c>, which is complex by every stated criterion, fails with an error
+    /// that names the wrong reason. Every database in the suite is created by this fixture, so that
+    /// one rejection failed all 303 integration tests at once, in the fixture's constructor, with a
+    /// message pointing at character classes.</para>
     /// </remarks>
-    private const string MigratorPassword = "Gymos_test_migrator1";
+    private const string MigratorPassword = "Tc7-Sch3ma-Owner!";
 
-    private const string AppPassword = "Gymos_test_app1";
+    private const string AppPassword = "Tc7-R3quest-Serving!";
 
     /// <summary>
     /// Creates a database's principals, schemas, and standing grants — everything that must exist
@@ -104,10 +112,16 @@ public sealed class SqlServerFixture : IAsyncLifetime
         EXEC('CREATE SCHEMA outbox   AUTHORIZATION [{MigratorPrincipal}]');
 
         GRANT EXECUTE ON SCHEMA::platform TO [{AppPrincipal}];
+
+        -- Metadata visibility, and nothing else. SQL Server's catalog views are permission-filtered,
+        -- and a security policy is an object the app principal holds no permission on — so without
+        -- this, `sys.security_predicates` reads as empty on the application's connection and
+        -- TenantIsolationValidator refuses to boot every host in the suite, reporting a policy that
+        -- demonstrably exists as missing. See docker/sqlserver/initdb/10-principals.sql.
+        GRANT VIEW DEFINITION ON SCHEMA::platform TO [{AppPrincipal}];
         """;
 
-    private readonly MsSqlContainer _container = new MsSqlBuilder()
-        .WithImage("mcr.microsoft.com/mssql/server:2022-latest")
+    private readonly MsSqlContainer _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest")
         // Feature parity with the deployment and with Azure SQL. Testcontainers' default is
         // Developer edition already, but stating it means a change to that default cannot silently
         // move the suite onto Express — where the 10 GB cap and the missing features would surface
@@ -116,6 +130,13 @@ public sealed class SqlServerFixture : IAsyncLifetime
         // Must match what 00-database.sql creates, or every temp-table join in a test throws a
         // collation conflict against tempdb.
         .WithEnvironment("MSSQL_COLLATION", "Latin1_General_100_CI_AS")
+        // Bounds the buffer pool. Left alone, SQL Server sizes it against the whole machine and
+        // grows into everything available — which on a developer laptop is memory the test host, the
+        // build and Docker itself are also using, and on a CI runner is most of the box. Neither
+        // survives it well: the engine stops answering under pressure and the run fails with
+        // transport-level errors in whichever test was mid-query. PostgreSQL's defaults are modest
+        // enough that its fixture never had to say anything about memory.
+        .WithEnvironment("MSSQL_MEMORY_LIMIT_MB", "3072")
         .Build();
 
     /// <summary>
@@ -148,9 +169,17 @@ public sealed class SqlServerFixture : IAsyncLifetime
         return builder.ConnectionString;
     }
 
-    public async Task<string> CreateDatabaseAsync(string databaseName)
+    /// <remarks>
+    /// <paramref name="prefix"/>, not a name: the sequence number
+    /// <see cref="CreateUnmigratedDatabaseAsync"/> appends is what keeps two instances of the same
+    /// test class apart. xUnit builds a fresh instance per test method, so a suite calling this with
+    /// a fixed string would ask for the same database once per method and every call after the first
+    /// would fail with "database already exists" — which is exactly what happened when this method
+    /// briefly bypassed the counter.
+    /// </remarks>
+    public async Task<string> CreateDatabaseAsync(string prefix)
     {
-        string appConnectionString = await CreateUnmigratedDatabaseNamedAsync(databaseName);
+        string appConnectionString = await CreateUnmigratedDatabaseAsync(prefix);
 
         // The fixture migrates, because the principal the host connects as no longer can. Hosts used
         // to do this themselves through AuthenticationHost's `Database:MigrateOnStartup`, which is
@@ -185,9 +214,42 @@ public sealed class SqlServerFixture : IAsyncLifetime
         // one property of the schema that no migration can assert and every text comparison depends
         // on: SearchPatterns relies on LIKE being case-insensitive, which is the collation's doing
         // and nothing else's.
+        // Explicit, small files, and they are load-bearing rather than tidy.
+        //
+        // A suite run creates on the order of a hundred databases in one container. SQL Server's
+        // default for a new one is inherited from `model` — an 8 MB data file and an 8 MB log that
+        // grow in 64 MB steps. A hundred of those is gigabytes of files the run never fills, and the
+        // I/O of allocating them is enough to make the engine stop answering: the symptom is a
+        // transport-level "existing connection was forcibly closed" in whichever test happened to be
+        // mid-query, which reads as flakiness in unrelated code.
+        //
+        // The PostgreSQL fixture needed none of this — CREATE DATABASE there clones a template
+        // directory and costs almost nothing — so this is a genuinely new obligation rather than a
+        // setting that was overlooked before. 16 MB is more than any single suite writes; the growth
+        // step is small so a suite that somehow exceeds it still runs.
+        //
+        // Recovery model is NOT set here. It is set once on `model` in InitializeAsync so every
+        // database inherits it — see there for why a hundred ALTER DATABASE statements is the wrong
+        // way to get the same result.
         await ExecuteAsync(
             Unpooled(_container.GetConnectionString(), "master"),
-            $"CREATE DATABASE [{databaseName}] COLLATE Latin1_General_100_CI_AS;");
+            $"""
+            CREATE DATABASE [{databaseName}]
+                ON PRIMARY (NAME = N'{databaseName}_data', FILENAME = '/var/opt/mssql/data/{databaseName}.mdf',
+                            SIZE = 16MB, FILEGROWTH = 16MB)
+                LOG ON     (NAME = N'{databaseName}_log',  FILENAME = '/var/opt/mssql/data/{databaseName}_log.ldf',
+                            SIZE = 16MB, FILEGROWTH = 16MB)
+                COLLATE Latin1_General_100_CI_AS;
+
+            -- Row versioning for READ COMMITTED, matching docker/sqlserver/initdb/00-database.sql and
+            -- Azure SQL's own default. Without it a reader takes shared locks, and two handlers that
+            -- never contended under PostgreSQL's MVCC deadlock through a table neither of them locked
+            -- on purpose — see that file for the specific pair, and the test that catches it.
+            --
+            -- Safe to ALTER here despite needing exclusive access: the database was created one
+            -- statement ago and nothing has connected to it yet.
+            ALTER DATABASE [{databaseName}] SET READ_COMMITTED_SNAPSHOT ON;
+            """);
 
         // All of this must run *inside* the new database, so it opens its own connection.
         //
@@ -309,6 +371,22 @@ public sealed class SqlServerFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
+
+        // Every database CREATE DATABASE makes is copied from `model`, so setting the recovery model
+        // there once is how all hundred of them get it.
+        //
+        // The obvious alternative — `ALTER DATABASE … SET RECOVERY SIMPLE` alongside each CREATE —
+        // was tried and is actively worse. ALTER DATABASE takes a database-level lock, and running
+        // one per creation against an instance that is simultaneously serving other suites deadlocks:
+        // "Transaction was deadlocked on lock resources … ALTER DATABASE statement failed", in
+        // whichever test happened to be starting up. One statement here, before any test runs,
+        // has no such contention.
+        //
+        // SIMPLE because nothing in a test container is ever recovered to a point in time, and FULL
+        // means the log grows until someone backs it up — which nothing here does.
+        await ExecuteAsync(
+            Unpooled(_container.GetConnectionString(), "master"),
+            "ALTER DATABASE [model] SET RECOVERY SIMPLE;");
 
         // Logins are server-scoped, so they are created once per container rather than per database.
         // Their database users are created per database by BootstrapDatabaseSql, which is the same

@@ -49,7 +49,7 @@ public sealed class EndpointConventionTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public EndpointConventionTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public EndpointConventionTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

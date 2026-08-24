@@ -106,7 +106,7 @@ The architecture is **frozen** (ADRs 1–49 across the GymOS-Specification set).
 2. **Write a superseding ADR** before any implementation follows it, stating: the issue, the options
    considered, the trade-offs, the decision, and the consequences. ADR-50 and ADR-52 are the templates.
 3. **Get it approved**, then implement.
-4. **An implementation detail is not an ADR.** Choosing `xmin` over a maintained version column,
+4. **An implementation detail is not an ADR.** Choosing a server-maintained `rowversion` over a hand-bumped column,
    or an anonymous projection over a record, needs a comment — not an amendment.
 5. **A deviation forced by another approved rule is documented, not resolved by an ADR.** Example:
    AD-3's `IAppDbContext` is impossible because R7 bans EF Core in the Application layer; the
@@ -141,7 +141,7 @@ milestone did not ask for.
 | Application unit | Handlers through the real dispatcher and pipeline, with in-memory fakes at the seams. | ms |
 | Infrastructure unit | Adapters that need no external dependency: crypto, tokens, redaction, the EF model. | ms |
 | Architecture | Layer and package law, endpoint and event conventions. Runs on every build. | ms |
-| Integration | Real HTTP + real PostgreSQL (Testcontainers): flows, permissions, migrations, physical layout. | seconds |
+| Integration | Real HTTP + real SQL Server (Testcontainers): flows, permissions, migrations, physical layout. | seconds |
 
 **Rules**
 

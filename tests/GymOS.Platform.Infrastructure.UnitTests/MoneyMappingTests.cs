@@ -34,9 +34,9 @@ public sealed class MoneyMappingTests
     {
         IProperty amount = AmountProperty();
 
-        // numeric(14,4): exchange results and per-unit prices carry more precision than settlement
+        // decimal(14,4): exchange results and per-unit prices carry more precision than settlement
         // does, and a column that truncated them would silently change the figure.
-        Assert.Equal("numeric(14,4)", amount.GetColumnType());
+        Assert.Equal("decimal(14,4)", amount.GetColumnType());
         Assert.Equal(typeof(decimal), amount.ClrType);
     }
 

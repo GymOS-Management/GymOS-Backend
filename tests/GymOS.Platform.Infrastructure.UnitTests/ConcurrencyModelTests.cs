@@ -124,16 +124,23 @@ public sealed class ConcurrencyModelTests
     }
 
     [Fact]
-    public void TheConcurrencyTokenIsPostgresXminRatherThanAMaintainedColumn()
+    public void TheConcurrencyTokenIsAServerMaintainedRowVersionRatherThanAMaintainedColumn()
     {
         IEntityType user = Model().FindEntityType(typeof(User))!;
 
         IProperty token = Assert.Single(user.GetProperties(), property => property.IsConcurrencyToken);
 
-        // xmin is maintained by PostgreSQL on every update. A hand-incremented column would have to
-        // be bumped by every write path, and the one that forgot would silently stop protecting.
-        Assert.Equal("xmin", token.GetColumnName());
+        // A rowversion is advanced by SQL Server on every update, the same property PostgreSQL's
+        // xmin had. A hand-incremented column would have to be bumped by every write path, and the
+        // one that forgot would silently stop protecting.
+        Assert.Equal("row_version", token.GetColumnName());
+        Assert.Equal("rowversion", token.GetColumnType());
         Assert.Equal(ValueGenerated.OnAddOrUpdate, token.ValueGenerated);
+
+        // Surfaced as a number, not a byte[]. That is what keeps the API's opaque version token the
+        // numeric string it has always been — see ConcurrencyConventions for why the conversion is
+        // there and why the number must never be treated as ordered.
+        Assert.Equal(typeof(ulong), token.ClrType);
     }
 
     [Fact]
@@ -180,7 +187,7 @@ public sealed class ConcurrencyModelTests
     [InlineData("   ")]
     [InlineData("not-a-version")]
     [InlineData("-1")]
-    [InlineData("4294967296")]        // one past uint.MaxValue
+    [InlineData("18446744073709551616")] // one past ulong.MaxValue — 4294967296 is now a valid token
     [InlineData("W/\"42\"")]          // weak validators cannot be used for If-Match (RFC 9110)
     public void AMalformedPreconditionIsRejectedRatherThanIgnored(string? header)
     {

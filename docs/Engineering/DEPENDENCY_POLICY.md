@@ -41,7 +41,7 @@ no vendor types outside adapters) · ADR-CHANGELOG.md (change process)
 | `Microsoft.Extensions.DependencyInjection.Abstractions` | MIT | Application / Infrastructure | DI registration for the CQRS dispatcher and seam implementations |
 | `Microsoft.Extensions.DependencyInjection` | MIT | tests / Host | Concrete container for dispatcher tests and host composition |
 | `Microsoft.OpenApi` | MIT | transitive pin (central only) | Security pin: `Microsoft.AspNetCore.OpenApi` resolves a vulnerable 2.0.0 (GHSA-v5pm-xwqc-g5wc); pinned to patched 2.x |
-| `SSH.NET` | MIT | transitive pin (central only) | Security pin: `Testcontainers.PostgreSql` 4.13.0 resolves SSH.NET 2025.1.0, which carries GHSA-q939-rpr3-3284 (high); pinned to 2026.0.0. **Not a new dependency** — already in the graph, and test-only in practice. 4.13.0 is the latest Testcontainers, so there is no upstream release to move to; **drop this pin once Testcontainers resolves a patched SSH.NET itself.** Broke CI on 2026-08-13 the day the advisory published, with restore failing before any code compiled |
+| `SSH.NET` | MIT | transitive pin (central only) | Security pin: `Testcontainers.MsSql` 4.13.0 resolves SSH.NET 2025.1.0, which carries GHSA-q939-rpr3-3284 (high); pinned to 2026.0.0. **Not a new dependency** — already in the graph, and test-only in practice. 4.13.0 is the latest Testcontainers, so there is no upstream release to move to; **drop this pin once Testcontainers resolves a patched SSH.NET itself.** Broke CI on 2026-08-13 the day the advisory published, with restore failing before any code compiled |
 | `Microsoft.NET.Test.Sdk` | MIT | tests | Test host |
 | `xunit`, `xunit.runner.visualstudio` | Apache-2.0 | tests | Approved test framework (ARCHITECTURE.md §6) |
 | `NetArchTest.Rules` | MIT | tests | Architecture rule enforcement (AD-49) |
@@ -55,7 +55,8 @@ no vendor types outside adapters) · ADR-CHANGELOG.md (change process)
 |---|---|---|---|
 | `Microsoft.Extensions.*` | MIT | Application (abstractions) / Infrastructure / Host | DI, options, logging, resilience primitives |
 | `Microsoft.EntityFrameworkCore.*` | MIT | Infrastructure only | ORM (AD-3) |
-| `Npgsql.EntityFrameworkCore.PostgreSQL`, `Npgsql`, `Npgsql.OpenTelemetry` | PostgreSQL license | Infrastructure / Host | PostgreSQL provider + its OTel instrumentation |
+| `Microsoft.EntityFrameworkCore.SqlServer`, `Microsoft.Data.SqlClient` | MIT | Infrastructure / Host | SQL Server provider and the ADO.NET driver under it. Replaced the Npgsql family in the PostgreSQL → SQL Server migration; `Microsoft.Data.SqlClient` is referenced directly rather than left transitive because adapter code names `SqlException` and `SqlParameter` |
+| `OpenTelemetry.Instrumentation.SqlClient` | Apache-2.0 | Host | Replaced `Npgsql.OpenTelemetry`. SqlClient emits spans through DiagnosticSource rather than carrying its own ActivitySource, so instrumentation is a separate package on its own version line |
 | `EFCore.NamingConventions` | Apache-2.0 | Infrastructure only | snake_case mapping (M0.3) |
 | `FluentValidation`, `FluentValidation.DependencyInjectionExtensions` | Apache-2.0 | Application | Command/query validators (AD-10) |
 | `Serilog.*` | Apache-2.0 | Host / Infrastructure | Structured logging (AD-38) |
@@ -63,7 +64,7 @@ no vendor types outside adapters) · ADR-CHANGELOG.md (change process)
 | `Polly` / `Microsoft.Extensions.Resilience` | BSD-3 / MIT | Infrastructure | Resilience pipelines (AD-46) |
 | `Konscious.Security.Cryptography.Argon2` | MIT | Infrastructure only | Argon2id hashing (AD-4) |
 | `Asp.Versioning.Http` | MIT | Host | API versioning (AD-37) |
-| `Testcontainers.*` | MIT | tests | Integration test PostgreSQL (M0.5) |
+| `Testcontainers.*` | MIT | tests | Integration test SQL Server (M0.5; PostgreSQL until the migration) |
 | `NSubstitute` | BSD-3 | tests | Approved mocking library |
 | `Azure.*` | MIT | Infrastructure only | Blob storage, Key Vault adapters (AD-11/AD-20) |
 

@@ -1,12 +1,12 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Tenancy;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Data.SqlClient;
 using Xunit;
 
 namespace GymOS.IntegrationTests.Tenancy;
@@ -21,26 +21,32 @@ namespace GymOS.IntegrationTests.Tenancy;
 /// which the validator still checks nothing is logged rather than passed over in silence.
 /// </summary>
 /// <remarks>
-/// <para><b>The suite's own database, and its own pair of database roles.</b> Every assertion here
-/// counts rows, so the suite takes an isolated database. It also takes two dedicated
-/// <c>NOSUPERUSER NOBYPASSRLS</c> roles, because the container's bootstrap role is a superuser and
-/// PostgreSQL exempts superusers from row-level security unconditionally, <c>FORCE</c> included — run
-/// as the bootstrap role, every test below would report "isolation works" no matter what the policies
-/// said.</para>
-/// <para>The pair mirrors the deployment (<c>docker/postgres/initdb/10-roles.sql</c>) rather than
-/// inventing a shape of its own. <see cref="MigratorRole"/> owns the database, the <c>public</c>
-/// schema, everything migrations create and the probe table; <see cref="AppRole"/> owns nothing and is
-/// what the host, the validator and every isolation test connect as, reaching the migrator's tables
-/// only through <c>ALTER DEFAULT PRIVILEGES</c>. That separation is what
+/// <para><b>The suite's own database, and its own pair of database principals.</b> Every assertion
+/// here counts rows, so the suite takes an isolated database. It also uses the fixture's two
+/// unprivileged principals rather than the container's <c>sa</c> login, because <c>sa</c> holds
+/// <c>ALTER ANY SECURITY POLICY</c> — a connection that can switch the policy off is not one these
+/// tests can prove anything with.</para>
+/// <para>The pair mirrors the deployment (<c>docker/sqlserver/initdb/10-principals.sql</c>) rather
+/// than inventing a shape of its own. <see cref="MigratorRole"/> owns the schemas, everything
+/// migrations create and the probe table; <see cref="AppRole"/> owns nothing and is what the host,
+/// the validator and every isolation test connect as, reaching the migrator's tables through
+/// <c>db_datareader</c>/<c>db_datawriter</c>. That separation is what
 /// <see cref="TheAppRoleCannotDisableItsOwnIsolation"/> and
 /// <see cref="TheMigratorRoleCanDisableIt_WhichIsWhyTheAppRoleIsNotTheMigrator"/> exist to prove: one
-/// statement, refused for the role serving requests and accepted for the role that is not.</para>
-/// <para><b><c>Maximum Pool Size=1</c>.</b> Rebuilt here rather than in <c>SqlServerFixture</c>, whose
+/// statement, refused for the principal serving requests and accepted for the one that is not.</para>
+/// <para><b>What moving to SQL Server changed about this suite, in one place.</b> The engine has no
+/// owner exemption from row-level security and no <c>BYPASSRLS</c>, so <c>FORCE</c> has no
+/// counterpart and needs none — a policy filters <c>sa</c> as readily as anyone else, which
+/// <see cref="TheOwnerDoesNotBypassThePolicy"/> now demonstrates rather than works around. What
+/// remains reachable is <i>disabling</i> the policy, so every test that used to turn on the
+/// read-time exemption now turns on <c>ALTER SECURITY POLICY … WITH (STATE = OFF)</c> instead. The
+/// verdicts are unchanged; the statement that produces them is not.</para>
+/// <para><b><c>Max Pool Size=1</c>.</b> Rebuilt here rather than in <c>SqlServerFixture</c>, whose
 /// five-connection cap is load-bearing for the rest of the suite. One connection is what makes
 /// <see cref="TheTenantDoesNotLeakIntoTheNextUseOfAPooledConnection"/> deterministic: the two scopes it
 /// opens are guaranteed the same physical connection, so a leaked setting would be observed rather
-/// than gambled on. Read that test's own comment before trusting it as a control — Npgsql's pooled
-/// connection reset, not the interceptor, is what it currently pins.</para>
+/// than gambled on. Read that test's own comment before trusting it as a control — SqlClient's
+/// <c>sp_reset_connection</c>, not the interceptor, is what it currently pins.</para>
 /// </remarks>
 [Collection(SqlServerCollectionDefinition.Name)]
 public sealed class TenantIsolationTests : IAsyncLifetime
@@ -56,9 +62,9 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
     /// <summary>
     /// The role the host, the validator and every isolation test connect as — the local stand-in for
-    /// <c>gymos_app</c>. Not a superuser and not <c>BYPASSRLS</c>, because those attributes defeat
-    /// row-level security outright; and the owner of nothing, because an owner can turn <c>FORCE</c>
-    /// off on its own tables in one statement.
+    /// <c>gymos_app</c>. In no role that carries ALTER ANY SECURITY POLICY, because a principal that can
+    /// disable the policy is not constrained by it; and the owner of nothing, because an owner can change
+    /// a table out from under the policy that protects it.
     /// </summary>
     private const string AppRole = SqlServerFixture.AppPrincipal;
 
@@ -83,7 +89,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// <summary>
     /// The container's bootstrap role, before ownership moves to <see cref="MigratorRole"/> — a
     /// superuser, and the role this suite deliberately avoids connecting the application host as.
-    /// Kept so <see cref="CreateSuperuserContext"/> can still reach the database through it after
+    /// Kept so <see cref="CreatePrivilegedContext"/> can still reach the database through it after
     /// <see cref="InitializeAsync"/> hands the database and schema away.
     /// </summary>
     private string _bootstrapConnectionString = null!;
@@ -100,7 +106,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
     private AuthenticationHost _host = null!;
 
-    public TenantIsolationTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public TenantIsolationTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {
@@ -113,11 +119,11 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         // CreateIsolatedDatabaseAsync just created, rather than reusing the (now non-superuser)
         // connection string that method returns.
         string appConnectionString = await _sqlServer.CreateIsolatedDatabaseAsync("tenant_isolation");
-        string isolatedDatabaseName = new SqlConnectionStringBuilder(appConnectionString).Database!;
+        string isolatedDatabaseName = new SqlConnectionStringBuilder(appConnectionString).InitialCatalog;
 
         _bootstrapConnectionString = new SqlConnectionStringBuilder(_sqlServer.BootstrapConnectionString)
         {
-            Database = isolatedDatabaseName,
+            InitialCatalog = isolatedDatabaseName,
 
             // Unpooled, for the same reason as the migrator string below. This one is used a handful
             // of times per instance — the role script here, and the two tests that want a superuser
@@ -238,31 +244,36 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         // Acting as A, inserting a row stamped B is refused outright rather than silently landing
         // where the caller cannot see it.
         //
-        // The policy's check arm is what refuses it — but note that deleting `WITH CHECK` alone would
-        // NOT make this test fail: PostgreSQL falls back to the `USING` expression as the check for
-        // INSERT and UPDATE when `WITH CHECK` is absent, and here the two expressions are identical.
-        // So this test pins the write path being policed at all; it does not pin which clause polices
-        // it. Dropping the policy, or dropping FORCE, is what turns it red.
+        // The BLOCK predicate is what refuses it, and unlike its PostgreSQL predecessor this test now
+        // pins exactly that. There, deleting `WITH CHECK` did NOT make the test fail — PostgreSQL falls
+        // back to the `USING` expression as the check for INSERT and UPDATE when `WITH CHECK` is
+        // absent, and the two expressions were identical — so it pinned only that the write path was
+        // policed at all, not which clause policed it.
+        //
+        // SQL Server has no such fallback: a policy with only a FILTER predicate reads safely and
+        // writes across tenants without complaint. Removing `ADD BLOCK PREDICATE` from
+        // TenantProbeSchema turns this red, which is the assertion the original could not make.
         await Assert.ThrowsAnyAsync<DbUpdateException>(() => SeedAsAsync(actingAs: TenantA, stampedWith: TenantB));
     }
 
     [Fact]
     public async Task TheOwnerDoesNotBypassThePolicy()
     {
-        // The test that justifies FORCE. PostgreSQL exempts a table's owner from its own policies, so
-        // WITHOUT `FORCE ROW LEVEL SECURITY` the owner's reads filter nothing.
+        // Under PostgreSQL this was the test that justified FORCE: an owner is exempt from its own
+        // table's policies unless FORCE is set, so without it the owner's reads filtered nothing.
         //
-        // The owner moved when this suite split into a migrator and an app role: the role serving
-        // requests now owns nothing, so asserting through it would prove nothing about the risk — the
-        // policy constrains a non-owner with or without FORCE. The property has to be observed through
-        // the role that IS the owner, which is what the last assertion does.
+        // SQL Server has no owner exemption to switch on or off. A security policy applies to every
+        // principal that queries the table — the schema owner, dbo and sysadmin included — so what
+        // FORCE had to be asked for here is simply the engine's behaviour.
         //
-        // Note where the two guards sit relative to each other, because it is not what it looks like.
-        // Deleting FORCE from TenantProbeSchema.CreateSql does NOT reach the assertion below: the
-        // validator kills the host during InitializeAsync first, with "row-level security is not
-        // FORCED" — run, not assumed. So this assertion is not the tripwire for a probe that ships
-        // unforced; it is the tripwire for FORCE being turned off at RUNTIME, on a table that booted
-        // correctly, which is exactly what an owner-privileged injected statement would do.
+        // The test stays anyway, and is worth more than a restatement of the manual. It is the only
+        // thing in the suite that would notice if that ever stopped being true: a future SQL Server
+        // adding an owner exemption, a policy left disabled at runtime by something with the rights to
+        // do it, or a migration that recreates the policy over the wrong table. The property is what
+        // is asserted; which mechanism provides it is not this test's business.
+        //
+        // The owner is the migrator, not the principal serving requests — asserted first, because
+        // observing this through a non-owner would prove nothing either way.
         Assert.True(await TheMigratorOwnsTheProbeTableAsync());
 
         await SeedAsync(TenantA, "a-note");
@@ -270,11 +281,10 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
         Assert.Single(await NotesAsAsync(TenantA));
 
-        // The owner, with no tenant set: FORCE is why this is 0 and not 2. Confirmed by running an
-        // `ALTER TABLE ... NO FORCE` as the migrator immediately above this line, which turned it into
-        // `Expected: 0, Actual: 2` — so this assertion does detect the condition rather than merely
-        // restate it.
-        Assert.Equal(0L, await ProbeRowsVisibleToTheOwnerAsync());
+        // The owner, with no tenant set. Confirmed to detect the condition rather than merely restate
+        // it: running `ALTER SECURITY POLICY ... WITH (STATE = OFF)` as the migrator immediately above
+        // this line turns it into `Expected: 0, Actual: 2`.
+        Assert.Equal(0, await ProbeRowsVisibleToTheOwnerAsync());
     }
 
     [Fact]
@@ -307,20 +317,27 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ARoleThatBypassesRowLevelSecurityFailsTheBoot()
+    public async Task APrincipalThatCanDisableRowLevelSecurityFailsTheBoot()
     {
-        // FORCE does not constrain a superuser, so a correctly protected table plus a superuser
-        // connection is a platform that boots green and serves every tenant's rows to every caller.
-        // The table flags D5 reasons about are necessary and not sufficient.
+        // A correctly protected table plus a privileged connection is still a platform one statement
+        // away from serving every tenant's rows to every caller. The per-table state the validator
+        // checks is necessary and not sufficient.
+        //
+        // What makes the connection dangerous changed with the engine. PostgreSQL exempted a superuser
+        // from policies at READ time, so the danger was silent and immediate. SQL Server has no such
+        // exemption — `sa` is filtered like anyone else, which
+        // TheOwnerDoesNotBypassThePolicy demonstrates — so the danger is that `sa` holds
+        // ALTER ANY SECURITY POLICY and can switch the policy off whenever it likes. Different
+        // mechanism, same verdict: this connection must not serve requests.
         await CreateProbeAsync(TenantProbeSchema.CreateSql);
 
         InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => ValidatorAsSuperuserAsync().ValidateAsync(CancellationToken.None));
+            () => ValidatorAsPrivilegedPrincipalAsync().ValidateAsync(CancellationToken.None));
 
         // "row-level security" would NOT distinguish this from a table failure: InspectAsync's own
         // messages contain that same phrase, so the assertion would pass on a validator that never
-        // looked at the role at all. BYPASSRLS appears only in the role message.
-        Assert.Contains("BYPASSRLS", error.Message, StringComparison.Ordinal);
+        // looked at the principal at all. ALTER SECURITY POLICY appears only in the principal message.
+        Assert.Contains("ALTER SECURITY POLICY", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -400,59 +417,69 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ASuperuserFailsTheBootEvenWithNothingTenantScoped()
+    public async Task APrivilegedPrincipalFailsTheBootEvenWithNothingTenantScoped()
     {
         // The check used to be conditional on something implementing ITenantScoped, purely because the
         // deployment connected as a superuser and an unconditional check would have failed every boot.
         // That is fixed, so the condition goes — which also closes the hole where an entity that forgets
         // the marker silently switches the whole control off.
         InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => ValidatorWithNoTenantScopedEntitiesAsSuperuserAsync().ValidateAsync(CancellationToken.None));
+            () => ValidatorWithNoTenantScopedEntitiesAsPrivilegedPrincipalAsync()
+                .ValidateAsync(CancellationToken.None));
 
-        Assert.Contains("BYPASSRLS", error.Message, StringComparison.Ordinal);
+        Assert.Contains("ALTER SECURITY POLICY", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task ATenantScopedTableOwnedByTheConnectedRoleFailsTheBoot()
     {
-        // The migrator/app split is the reason an injected statement cannot disable isolation. If the
-        // connecting role owns the table, it can run ALTER TABLE ... NO FORCE and the split has silently
-        // stopped existing — so the boot asserts the separation rather than trusting the deployment.
+        // The migrator/app split is the reason an injected statement cannot subvert isolation. If the
+        // connecting principal can ALTER the table, it can change the table out from under the policy
+        // that protects it and the split has silently stopped existing — so the boot asserts the
+        // separation rather than trusting the deployment.
         await CreateProbeAsync(TenantProbeSchema.CreateSql);
 
         InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
             () => ValidatorOwningTheProbeAsync().ValidateAsync(CancellationToken.None));
 
-        Assert.Contains("owns", error.Message, StringComparison.OrdinalIgnoreCase);
+        // "ALTER", not "owns". SQL Server tables have no owner of their own — they inherit the
+        // schema's — so the validator asks the question that actually matters, whether the principal
+        // can alter the table, rather than the one PostgreSQL could answer directly.
+        Assert.Contains("ALTER this table", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task GrantingTheAppRoleMembershipInTheMigratorFailsTheBoot()
     {
-        // The ownership check must test effective privilege, not name equality. `GRANT migrator TO app`
-        // is a plausible way for a future increment to "fix" a permission error, and nothing in
-        // 10-roles.sql forbids it — but it hands the app role the owner's rights, so
-        // ALTER TABLE ... NO FORCE comes back within reach while `current_user` still reads as the app
-        // role. A check written as `pg_get_userbyid(relowner) = current_user` reports clean through
-        // exactly that, which is the green-while-proving-nothing shape this increment exists to remove.
+        // The ownership check must test effective privilege, not name equality. Adding the app
+        // principal to db_ddladmin is a plausible way for a future increment to "fix" a permission
+        // error, and nothing in 10-principals.sql forbids it — but it hands the app principal ALTER on
+        // every table in the database, so changing the probe out from under its policy comes back
+        // within reach while USER_NAME() still reads as the app principal. A check written as
+        // `USER_NAME(schema.principal_id) = USER_NAME()` reports clean through exactly that, which is
+        // the green-while-proving-nothing shape this increment exists to remove.
+        //
+        // db_ddladmin is the SQL Server analogue of `GRANT migrator TO app`. It is not the only route —
+        // a direct `GRANT ALTER ON platform.tenant_probe` would do as well — but it is the one a tired
+        // engineer reaches for, and it is the one that leaves the principal's own name unchanged.
         await CreateProbeAsync(TenantProbeSchema.CreateSql);
-        await ExecuteAsync(_bootstrapConnectionString, $"GRANT {MigratorRole} TO {AppRole};");
+        await ExecuteAsync(_bootstrapConnectionString, $"ALTER ROLE db_ddladmin ADD MEMBER [{AppRole}];");
 
         try
         {
-            // First, that the risk is real rather than theoretical: the statement PostgreSQL refused
-            // the app role in TheAppRoleCannotDisableItsOwnIsolation now succeeds, because membership
-            // is inherited by default. Restored immediately, so the assertion below is about ownership
-            // and not about the flag this line just cleared.
-            await ExecuteAsAppRoleAsync("ALTER TABLE platform.tenant_probe NO FORCE ROW LEVEL SECURITY;");
-            await ExecuteAsMigratorRoleAsync("ALTER TABLE platform.tenant_probe FORCE ROW LEVEL SECURITY;");
+            // First, that the risk is real rather than theoretical: a statement the app principal
+            // could not previously issue against the probe now succeeds, because role membership is
+            // effective immediately. Reverted on the next line, so the assertion below is about the
+            // privilege and not about the column this one just added.
+            await ExecuteAsAppRoleAsync("ALTER TABLE platform.tenant_probe ADD forged_column int NULL;");
+            await ExecuteAsMigratorRoleAsync("ALTER TABLE platform.tenant_probe DROP COLUMN forged_column;");
 
-            // And that the validator sees it. `current_user` is still the app role throughout, so only
-            // a check written in terms of effective privilege can catch this.
+            // And that the validator sees it. USER_NAME() is still the app principal throughout, so
+            // only a check written in terms of effective privilege can catch this.
             InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => ValidatorAsync().ValidateAsync(CancellationToken.None));
 
-            Assert.Contains("owns", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("ALTER", error.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -467,55 +494,87 @@ public sealed class TenantIsolationTests : IAsyncLifetime
             // other suite is mid-flight while the grant is held, and the revoke runs even if the
             // assertions throw. What it does not survive is the process dying between the two, which is
             // a torn-down container and a fresh one next run.
-            await ExecuteAsync(_bootstrapConnectionString, $"REVOKE {MigratorRole} FROM {AppRole};");
+            await ExecuteAsync(_bootstrapConnectionString, $"ALTER ROLE db_ddladmin DROP MEMBER [{AppRole}];");
         }
     }
 
     [Fact]
     public async Task TheAppRoleCannotDisableItsOwnIsolation()
     {
-        // The reason for two roles rather than one non-superuser role. An owner can turn FORCE off in a
-        // single statement, and that statement is within reach of the SQL injection row-level security
-        // mostly exists to contain. The app role owns nothing, so PostgreSQL refuses it.
+        // The reason for two principals rather than one unprivileged principal. Disabling a security
+        // policy is a single statement, and that statement is within reach of the SQL injection
+        // row-level security mostly exists to contain. The app principal holds neither
+        // ALTER ANY SECURITY POLICY nor membership in a role that carries it, so SQL Server refuses it.
+        //
+        // The statement changed with the engine. Under PostgreSQL the reachable attack was
+        // `ALTER TABLE ... NO FORCE ROW LEVEL SECURITY`, which turns the owner exemption back on;
+        // SQL Server has no owner exemption and therefore no NO FORCE, but it does have
+        // `ALTER SECURITY POLICY ... WITH (STATE = OFF)`, which switches the policy off outright. That
+        // is strictly the bigger hammer of the two, and it is the one this proves is out of reach.
         await CreateProbeAsync(TenantProbeSchema.CreateSql);
 
-        PostgresException error = await Assert.ThrowsAsync<PostgresException>(
-            () => ExecuteAsAppRoleAsync("ALTER TABLE platform.tenant_probe NO FORCE ROW LEVEL SECURITY;"));
+        SqlException error = await Assert.ThrowsAsync<SqlException>(
+            () => ExecuteAsAppRoleAsync(
+                "ALTER SECURITY POLICY platform.tenant_probe_isolation WITH (STATE = OFF);"));
 
-        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+        Assert.Equal(CannotFindTheObjectOrNoPermission, error.Number);
     }
+
+    /// <summary>
+    /// 33268 — <c>Cannot find the object "…" because it does not exist or you do not have permissions</c>.
+    /// </summary>
+    /// <remarks>
+    /// SQL Server deliberately conflates "absent" and "forbidden" here, so that a principal cannot map
+    /// the schema by watching which names produce which error. That ambiguity means this number alone
+    /// does not prove a privilege refusal — a typo in the policy name would produce it too. What
+    /// removes the ambiguity is the pairing:
+    /// <see cref="TheMigratorRoleCanDisableIt_WhichIsWhyTheAppRoleIsNotTheMigrator"/> disables and
+    /// re-enables this exact policy by this exact name, so the object demonstrably exists and is
+    /// demonstrably alterable — by the other principal. Neither test is worth much alone; together
+    /// they are the whole two-principal argument.
+    /// </remarks>
+    private const int CannotFindTheObjectOrNoPermission = 33268;
 
     [Fact]
     public async Task TheMigratorRoleCanDisableIt_WhichIsWhyTheAppRoleIsNotTheMigrator()
     {
         // The control for the test above: it must fail for a privilege reason, not because the statement
-        // is malformed, the table is missing, or the connection is broken.
+        // is malformed, the policy is missing, or the connection is broken. See the remarks on
+        // CannotFindTheObjectOrNoPermission for why that control is load-bearing here in a way it was
+        // not under PostgreSQL, whose 42501 said "insufficient privilege" outright.
         //
-        // The flag is read back rather than letting "no exception" stand as the pass condition. Not
+        // The state is read back rather than letting "no exception" stand as the pass condition. Not
         // throwing is an implicit assertion, and an implicit assertion is one a later `try`/`catch`
         // around ExecuteAsMigratorRoleAsync would neuter in silence — leaving a control that passes
         // unconditionally and therefore certifies nothing about the test it exists to support.
         await CreateProbeAsync(TenantProbeSchema.CreateSql);
 
-        await ExecuteAsMigratorRoleAsync("ALTER TABLE platform.tenant_probe NO FORCE ROW LEVEL SECURITY;");
-        Assert.False(await ProbeIsForcedAsync());
+        await ExecuteAsMigratorRoleAsync(
+            "ALTER SECURITY POLICY platform.tenant_probe_isolation WITH (STATE = OFF);");
+        Assert.False(await ProbePolicyIsEnabledAsync());
 
-        await ExecuteAsMigratorRoleAsync("ALTER TABLE platform.tenant_probe FORCE ROW LEVEL SECURITY;");
-        Assert.True(await ProbeIsForcedAsync());
+        await ExecuteAsMigratorRoleAsync(
+            "ALTER SECURITY POLICY platform.tenant_probe_isolation WITH (STATE = ON);");
+        Assert.True(await ProbePolicyIsEnabledAsync());
     }
 
     [Fact]
     public async Task ATableCreatedByTheMigratorIsUsableByTheAppRoleWithNoExplicitGrant()
     {
-        // The piece most likely to be subtly wrong, and its production failure mode is a permission error
-        // on a table a future migration has only just added. Nothing here grants anything: the INSERT
-        // works only because of the ALTER DEFAULT PRIVILEGES in CreateRolesSql, which were confirmed
-        // load-bearing twice over: deleting them from CreateRolesSql fails this test with
-        // `42501: permission denied for table __EFMigrationsHistory` before it reaches its body, and
-        // an `ALTER DEFAULT PRIVILEGES ... REVOKE ALL ON TABLES` aimed at just this table fails the
-        // INSERT below with `42501: permission denied for table default_privilege_probe`.
+        // The piece most likely to be subtly wrong, and its production failure mode is a permission
+        // error on a table a future migration has only just added. Nothing here grants anything: the
+        // INSERT works only because SqlServerFixture puts the app principal in db_datareader and
+        // db_datawriter, exactly as docker/sqlserver/initdb/10-principals.sql does.
+        //
+        // Those two fixed roles are what replaced PostgreSQL's ALTER DEFAULT PRIVILEGES, and they are
+        // a better fit for the requirement rather than merely a different spelling: default privileges
+        // attach only to objects created by the role they were declared FOR, so a table created by
+        // anyone else silently escaped them. Database-wide role membership has no such hole. What did
+        // NOT carry over is EXECUTE — db_datareader and db_datawriter cover tables and nothing else —
+        // which is why the schema-level EXECUTE grant exists separately and why
+        // TheTwoFunctionsThatIssueDdlOnTheAppRoleSBehalfWorkAndStayContained is a distinct test.
         await ExecuteAsMigratorRoleAsync(
-            "CREATE TABLE platform.default_privilege_probe (id uuid PRIMARY KEY);");
+            "CREATE TABLE platform.default_privilege_probe (id uniqueidentifier NOT NULL PRIMARY KEY);");
 
         await ExecuteAsAppRoleAsync(
             $"INSERT INTO platform.default_privilege_probe (id) VALUES ('{Guid.NewGuid()}');");
@@ -551,69 +610,109 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         // body emptied, the first assertion fails with `42501: permission denied for schema
         // platform` and the catalog assertions fail on prosecdef.
 
-        // 1. The app role can call them at all, and they do the work.
-        long invoiceNumber = await ScalarAsAppRoleAsync<long>(
-            "SELECT platform.next_invoice_number(2026)");
+        // 1. The app principal can call them at all, and they do the work.
+        //
+        // Both are procedures with OUTPUT parameters rather than functions called from a SELECT, and
+        // that is forced rather than chosen: a SQL Server function may not issue DDL, and issuing DDL
+        // on the caller's behalf is the entire reason these two exist. See the migration.
+        long invoiceNumber = await ProcedureScalarAsAppRoleAsync<long>(
+            "platform.next_invoice_number", "bigint", ("@year", 2026));
 
         Assert.Equal(1, invoiceNumber);
 
         // A month far enough out that neither the migration's three-month lookahead nor the host's
         // own startup maintenance has already created it — otherwise the function returns 0 for the
         // uninteresting reason that there was nothing to do, and the privilege is never exercised.
-        int created = await ScalarAsAppRoleAsync<int>(
-            "SELECT platform.ensure_audit_log_partitions(date '2099-01-01', 0)");
+        int created = await ProcedureScalarAsAppRoleAsync<int>(
+            "platform.ensure_audit_log_partitions",
+            "int",
+            ("@from_month", new DateTime(2099, 1, 1)),
+            ("@months_ahead", 0));
 
         Assert.Equal(1, created);
 
         await using var connection = new SqlConnection(_migratorConnectionString);
         await connection.OpenAsync();
 
-        // 2. SECURITY DEFINER bought the app role the right to CALL them. It must not have handed it
-        // ownership of what they produce, or the two-role split would be undone by the very fix that
-        // made invoicing work — an owner can ALTER its own table's isolation off. The objects belong
-        // to the definer, which is the migrator.
+        // 2. EXECUTE AS OWNER bought the app principal the right to CALL them. It must not have handed
+        // it ownership of what they produce, or the two-principal split would be undone by the very fix
+        // that made invoicing work. The objects belong to the schema, which belongs to the migrator.
         await using (SqlCommand owner = connection.CreateCommand())
         {
             owner.CommandText =
                 """
-                SELECT pg_get_userbyid(c.relowner)
-                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'platform' AND c.relname = 'invoice_number_seq_2026'
+                SELECT USER_NAME(COALESCE(sq.principal_id, s.principal_id))
+                FROM sys.sequences sq
+                JOIN sys.schemas s ON s.schema_id = sq.schema_id
+                WHERE s.name = 'platform' AND sq.name = 'invoice_number_seq_2026'
                 """;
 
             Assert.Equal(MigratorRole, (string)(await owner.ExecuteScalarAsync())!);
         }
 
-        // 3 and 4. The two properties that make SECURITY DEFINER safe rather than a
+        // 3 and 4. The two properties that make an elevated module safe rather than a
         // privilege-escalation vector, read from the catalog rather than from the migration's text.
-        // An unpinned search_path lets a caller point the elevated function at a schema it writes
-        // and have its own code run as the schema owner. EXECUTE left at the CREATE FUNCTION default
-        // — PUBLIC — lends that same elevation to every role in the database. Either alone turns the
-        // fix into a worse defect than the one it fixed.
+        //
+        // What is checked here differs from the PostgreSQL version, because one of its two hazards does
+        // not exist on SQL Server and the other inverts:
+        //
+        //   * search_path. PostgreSQL resolves unqualified names in a SECURITY DEFINER function against
+        //     the CALLER's search_path, so an unpinned path lets a caller point the elevated function at
+        //     a schema it writes and have its own code run as the owner. That is why the original
+        //     asserted `proconfig LIKE '%search_path=%'`. SQL Server resolves unqualified names inside a
+        //     module against the MODULE's own schema; there is no caller-controlled path, so there is no
+        //     equivalent flag and nothing to assert. Its place is taken by the check below that the
+        //     module is elevated at all.
+        //   * PUBLIC execute. `CREATE FUNCTION` grants EXECUTE to PUBLIC on PostgreSQL, so the original
+        //     had to prove the default was revoked. `CREATE PROCEDURE` grants it to nobody here, so the
+        //     hazard runs the other way — the risk is a grant that is too WIDE having been added, which
+        //     is what the public_may_execute check still catches.
         await using SqlCommand definers = connection.CreateCommand();
         definers.CommandText =
             """
-            SELECT p.proname,
-                   p.prosecdef,
-                   coalesce(array_to_string(p.proconfig, ','), '') LIKE '%search_path=%' AS path_pinned,
-                   has_function_privilege('public', p.oid, 'EXECUTE') AS public_may_execute
-            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-            WHERE n.nspname = 'platform'
-              AND p.proname IN ('next_invoice_number', 'ensure_audit_log_partitions')
-            ORDER BY p.proname
+            SELECT o.name,
+                   CONVERT(bit, CASE WHEN m.execute_as_principal_id = -2 THEN 1 ELSE 0 END) AS elevated,
+                   USER_NAME(s.principal_id) AS schema_owner,
+                   CONVERT(bit, CASE WHEN EXISTS (
+                       SELECT 1 FROM sys.database_permissions dp
+                       JOIN sys.database_principals gp ON gp.principal_id = dp.grantee_principal_id
+                       WHERE dp.major_id = o.object_id
+                         AND dp.permission_name = 'EXECUTE'
+                         AND dp.state_desc = 'GRANT'
+                         AND gp.name = 'public') THEN 1 ELSE 0 END) AS public_may_execute
+            FROM sys.objects o
+            JOIN sys.schemas s ON s.schema_id = o.schema_id
+            LEFT JOIN sys.sql_modules m ON m.object_id = o.object_id
+            WHERE s.name = 'platform'
+              AND o.name IN ('next_invoice_number', 'ensure_audit_log_partitions')
+            ORDER BY o.name
             """;
 
         var inspected = new List<string>();
 
-        await using (NpgsqlDataReader reader = await definers.ExecuteReaderAsync())
+        await using (SqlDataReader reader = await definers.ExecuteReaderAsync())
         {
             while (await reader.ReadAsync())
             {
                 string name = reader.GetString(0);
                 inspected.Add(name);
 
-                Assert.True(reader.GetBoolean(1), $"{name} is not SECURITY DEFINER.");
-                Assert.True(reader.GetBoolean(2), $"{name} does not pin its search_path.");
+                // -2 is SQL Server's sentinel for OWNER in sys.sql_modules. NULL there would mean
+                // CALLER — the default, and the bug this whole test exists to prevent: a module that
+                // issues DDL as whoever called it, which for gymos_app is nobody with DDL rights.
+                // A positive id would mean EXECUTE AS 'some named user', which is not what was asked
+                // for and would pin the module to a principal that can be dropped.
+                Assert.True(reader.GetBoolean(1), $"{name} is not EXECUTE AS OWNER.");
+
+                // Not merely elevated — elevated to the MIGRATOR. `EXECUTE AS OWNER` resolves to the
+                // schema's owner at execution time, so a schema accidentally left owned by the app
+                // principal would leave these modules reporting as elevated while conferring nothing.
+                //
+                // Read from the schema rather than from the module: USER_NAME(-2) is NULL, because -2
+                // is a sentinel and not a principal id, so asking who the module executes as answers
+                // nothing. The schema's owner IS the answer.
+                Assert.Equal(MigratorRole, reader.GetString(2));
+
                 Assert.False(reader.GetBoolean(3), $"{name} is executable by PUBLIC.");
             }
         }
@@ -629,8 +728,19 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         // which is precisely how this suite began life before it built a role of its own.
         await using AppDbContext context = CreateHarnessRoleContext();
 
+        // The PostgreSQL version asked `rolsuper OR rolbypassrls`, because those two attributes exempt
+        // a role from row-level security outright. SQL Server has no read-time exemption at all, so the
+        // equivalent question is "can this principal turn the policy OFF" — sysadmin, db_owner and
+        // ALTER ANY SECURITY POLICY are the three ways, and they are exactly what
+        // TenantIsolationValidator refuses to boot on.
         await using var command = context.Database.GetDbConnection().CreateCommand();
-        command.CommandText = "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user";
+        command.CommandText =
+            """
+            SELECT CONVERT(bit, CASE WHEN ISNULL(IS_SRVROLEMEMBER('sysadmin'), 0) = 1
+                                       OR ISNULL(IS_ROLEMEMBER('db_owner'), 0) = 1
+                                       OR ISNULL(HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER ANY SECURITY POLICY'), 0) = 1
+                                     THEN 1 ELSE 0 END)
+            """;
 
         await context.Database.OpenConnectionAsync();
 
@@ -663,20 +773,26 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         await using AppDbContext context = CreateHarnessRoleContext();
 
         // Deliberately asked in terms that hold whether or not migrations have run: an earlier draft
-        // used has_schema_privilege(..., 'platform', ...) and died on `3F000 schema does not exist`,
-        // which is a test failing for the wrong reason rather than a red phase worth trusting.
+        // asked about the `platform` schema by name and died when it did not exist yet, which is a test
+        // failing for the wrong reason rather than a red phase worth trusting.
+        //
+        // `schemas_owned` counts schemas rather than tables, and that is the SQL Server shape of the
+        // question rather than a weaker version of it. A table here has no owner of its own unless one
+        // is set explicitly — it inherits the schema's — so "owns no schema" is what "owns no table"
+        // means, and it is the stronger claim: owning the schema is what would confer ownership of
+        // every table a future migration adds to it.
         await using var command = context.Database.GetDbConnection().CreateCommand();
         command.CommandText =
             """
             SELECT
-                (SELECT count(*) FROM pg_class c
-                 JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE c.relkind = 'r'
-                   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-                   AND pg_get_userbyid(c.relowner) = current_user) AS tables_owned,
-                (SELECT pg_get_userbyid(datdba) = current_user
-                 FROM pg_database WHERE datname = current_database()) AS owns_database,
-                has_database_privilege(current_user, current_database(), 'CREATE') AS can_create
+                (SELECT COUNT(*) FROM sys.schemas s
+                  WHERE s.principal_id = DATABASE_PRINCIPAL_ID()
+                    AND s.name NOT IN ('sys', 'INFORMATION_SCHEMA'))                     AS schemas_owned,
+                CONVERT(bit, ISNULL(IS_ROLEMEMBER('db_owner'), 0))                       AS owns_database,
+                CONVERT(bit, CASE WHEN ISNULL(IS_ROLEMEMBER('db_ddladmin'), 0) = 1
+                                    OR ISNULL(HAS_PERMS_BY_NAME(NULL, NULL, 'CREATE TABLE'), 0) = 1
+                                    OR ISNULL(HAS_PERMS_BY_NAME(NULL, NULL, 'CREATE SCHEMA'), 0) = 1
+                                  THEN 1 ELSE 0 END)                                     AS can_create
             """;
 
         await context.Database.OpenConnectionAsync();
@@ -686,11 +802,12 @@ public sealed class TenantIsolationTests : IAsyncLifetime
             await using var reader = await command.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
 
-            Assert.Equal(0, reader.GetInt64(0));
+            Assert.Equal(0, reader.GetInt32(0));
             Assert.False(reader.GetBoolean(1));
 
-            // CREATE on the database is what lets a role add a schema and own everything in it, so
-            // owning nothing today means little without this.
+            // The right to create is what lets a principal add a schema or table and own everything in
+            // it, so owning nothing today means little without this. Asked three ways because there are
+            // three routes to it — the role, and each of the two permissions it implies.
             Assert.False(reader.GetBoolean(2));
         }
         finally
@@ -793,24 +910,24 @@ public sealed class TenantIsolationTests : IAsyncLifetime
 
     /// <summary>
     /// A validator over a DbContext connected as the container's bootstrap role — the superuser Task 5
-    /// deliberately avoids, because PostgreSQL exempts a superuser (and a BYPASSRLS role) from row-level
+    /// deliberately avoids, because <c>sa</c> holds ALTER ANY SECURITY POLICY and can therefore switch
     /// security entirely, above whatever the table flags say — with the probe in the model, so there is
     /// a tenant-scoped table for it to have an opinion about.
     /// </summary>
-    private TenantIsolationValidator ValidatorAsSuperuserAsync() =>
-        new(CreateSuperuserContext(withTenantProbe: true), NullLogger<TenantIsolationValidator>.Instance);
+    private TenantIsolationValidator ValidatorAsPrivilegedPrincipalAsync() =>
+        new(CreatePrivilegedContext(withTenantProbe: true), NullLogger<TenantIsolationValidator>.Instance);
 
     /// <summary>
     /// A validator over the same superuser connection, but the unmodified <see cref="AppDbContext"/>
     /// model — no <see cref="IModelCustomizer"/> replacement, so nothing implements
     /// <see cref="ITenantScoped"/> and the validator has no subject to check the role against.
     /// </summary>
-    private TenantIsolationValidator ValidatorWithNoTenantScopedEntitiesAsSuperuserAsync() =>
-        new(CreateSuperuserContext(withTenantProbe: false), NullLogger<TenantIsolationValidator>.Instance);
+    private TenantIsolationValidator ValidatorWithNoTenantScopedEntitiesAsPrivilegedPrincipalAsync() =>
+        new(CreatePrivilegedContext(withTenantProbe: false), NullLogger<TenantIsolationValidator>.Instance);
 
     /// <summary>
     /// A validator whose connection is <see cref="MigratorRole"/> — the role that created the probe
-    /// table and therefore owns it. Not a superuser and not <c>BYPASSRLS</c>, deliberately: the only
+    /// table and therefore owns it. Not privileged over security policies, deliberately: the only
     /// thing wrong with this connection is that it owns what it would be serving requests from, so the
     /// ownership check is the only thing that can make it fail.
     /// </summary>
@@ -822,7 +939,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     /// rather than through <c>_host</c>'s DI, so the connected role is the container's bootstrap
     /// superuser instead of <see cref="AppRole"/>.
     /// </summary>
-    private AppDbContext CreateSuperuserContext(bool withTenantProbe) =>
+    private AppDbContext CreatePrivilegedContext(bool withTenantProbe) =>
         CreateRawContext(_bootstrapConnectionString, withTenantProbe);
 
     /// <summary>
@@ -883,10 +1000,17 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     private Task ExecuteAsMigratorRoleAsync(string sql) => ExecuteAsync(_migratorConnectionString, sql);
 
     /// <summary>
-    /// Whether <see cref="MigratorRole"/> — and not the role the suite serves requests as — owns the
-    /// probe table. The precondition that makes <see cref="TheOwnerDoesNotBypassThePolicy"/> a test of
-    /// the risk rather than of nothing.
+    /// Whether <see cref="MigratorRole"/> — and not the principal the suite serves requests as — owns
+    /// the probe table. The precondition that makes <see cref="TheOwnerDoesNotBypassThePolicy"/> a test
+    /// of the risk rather than of nothing.
     /// </summary>
+    /// <remarks>
+    /// Ownership is read from the schema, not the table. SQL Server tables have no owner of their own
+    /// unless one is set explicitly (<c>sys.tables.principal_id</c> is NULL in the ordinary case, which
+    /// means "owned by the schema owner"), so the question PostgreSQL answered with
+    /// <c>pg_get_userbyid(relowner)</c> is answered here by the schema's <c>principal_id</c>. COALESCE
+    /// covers the explicit-owner case so this keeps reporting the truth if one is ever set.
+    /// </remarks>
     private async Task<bool> TheMigratorOwnsTheProbeTableAsync()
     {
         await using var connection = new SqlConnection(_migratorConnectionString);
@@ -895,19 +1019,29 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         await using SqlCommand command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT pg_get_userbyid(c.relowner) = current_user
-            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'platform' AND c.relname = 'tenant_probe'
+            SELECT CONVERT(bit, CASE WHEN USER_NAME(COALESCE(t.principal_id, s.principal_id)) = USER_NAME()
+                                     THEN 1 ELSE 0 END)
+            FROM sys.tables t
+            JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE s.name = 'platform' AND t.name = 'tenant_probe'
             """;
 
         return (bool)(await command.ExecuteScalarAsync())!;
     }
 
     /// <summary>
-    /// Whether the probe table currently has <c>FORCE ROW LEVEL SECURITY</c> set, read straight from
-    /// <c>pg_class</c> — so a test that changes the flag can assert it actually changed.
+    /// Whether the probe's security policy is currently enabled, read straight from
+    /// <c>sys.security_policies</c> — so a test that switches it off can assert it actually went off.
     /// </summary>
-    private async Task<bool> ProbeIsForcedAsync()
+    /// <remarks>
+    /// This replaces the PostgreSQL version's <c>relforcerowsecurity</c> read. The two flags are not
+    /// the same thing and the substitution is not a rename: <c>FORCE</c> governed whether the owner was
+    /// exempt, while <c>is_enabled</c> governs whether the policy filters anybody at all. SQL Server
+    /// has no owner exemption to switch, so the enabled flag is the only thing left that can be turned
+    /// off — and it is a strictly larger lever, which is why the test that proves the app principal
+    /// cannot reach it matters more here than its predecessor did.
+    /// </remarks>
+    private async Task<bool> ProbePolicyIsEnabledAsync()
     {
         await using var connection = new SqlConnection(_migratorConnectionString);
         await connection.OpenAsync();
@@ -915,30 +1049,38 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         await using SqlCommand command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT c.relforcerowsecurity
-            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'platform' AND c.relname = 'tenant_probe'
+            SELECT p.is_enabled
+            FROM sys.security_policies p
+            JOIN sys.schemas s ON s.schema_id = p.schema_id
+            WHERE s.name = 'platform' AND p.name = 'tenant_probe_isolation'
             """;
 
         return (bool)(await command.ExecuteScalarAsync())!;
     }
 
     /// <summary>
-    /// Rows the probe table yields to its own owner with no tenant set. <c>FORCE</c> is the only
-    /// reason this is not "all of them".
+    /// Rows the probe table yields to the principal that owns it, with no tenant set.
     /// </summary>
-    private async Task<long> ProbeRowsVisibleToTheOwnerAsync()
+    /// <remarks>
+    /// Zero, and the reason changed. Under PostgreSQL this was zero only because
+    /// <c>FORCE ROW LEVEL SECURITY</c> was set — without it the owner saw every row. On SQL Server the
+    /// owner is subject to the policy unconditionally, so zero is what the engine does by default.
+    /// The assertion is kept because the property is what matters, not the mechanism that provides it:
+    /// if a future change ever introduces an exemption, or the policy is disabled at runtime, this is
+    /// what notices.
+    /// </remarks>
+    private async Task<int> ProbeRowsVisibleToTheOwnerAsync()
     {
         await using var connection = new SqlConnection(_migratorConnectionString);
         await connection.OpenAsync();
 
         await using SqlCommand command = connection.CreateCommand();
-        command.CommandText = "SELECT count(*) FROM platform.tenant_probe";
+        command.CommandText = "SELECT COUNT(*) FROM platform.tenant_probe";
 
-        return (long)(await command.ExecuteScalarAsync())!;
+        return (int)(await command.ExecuteScalarAsync())!;
     }
 
-    /// <summary>Runs a single-value query on the app-role connection and returns its result.</summary>
+    /// <summary>Runs a single-value query on the app-principal connection and returns its result.</summary>
     private async Task<T> ScalarAsAppRoleAsync<T>(string sql)
     {
         await using var connection = new SqlConnection(_connectionString);
@@ -948,6 +1090,50 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         command.CommandText = sql;
 
         return (T)(await command.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>
+    /// Calls a stored procedure on the app-principal connection and returns its <c>@result</c> OUTPUT
+    /// parameter, declared as <paramref name="resultType"/>.
+    /// </summary>
+    /// <remarks>
+    /// The PostgreSQL original needed nothing like this: its two runtime modules were functions, so
+    /// <c>ScalarAsAppRoleAsync</c> could simply SELECT from them. Both had to become procedures on SQL
+    /// Server — a function here may not issue DDL, and creating a sequence or splitting a partition is
+    /// what they are for — and a procedure returns through an OUTPUT parameter rather than a result set.
+    /// </remarks>
+    private async Task<T> ProcedureScalarAsAppRoleAsync<T>(
+        string procedure,
+        string resultType,
+        params (string Name, object Value)[] arguments)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        await using SqlCommand command = connection.CreateCommand();
+        command.CommandType = System.Data.CommandType.StoredProcedure;
+        command.CommandText = procedure;
+
+        foreach ((string name, object value) in arguments)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        // Named for what each procedure actually calls it, which differs — @number and @created.
+        // Positional binding is what makes one helper serve both: SqlClient matches an unnamed
+        // trailing parameter by position when the name is absent from the procedure's signature, so
+        // the output parameter is declared last and left unnamed here.
+        SqlParameter result = command.Parameters.Add(
+            new SqlParameter
+            {
+                ParameterName = resultType == "bigint" ? "@number" : "@created",
+                SqlDbType = resultType == "bigint" ? System.Data.SqlDbType.BigInt : System.Data.SqlDbType.Int,
+                Direction = System.Data.ParameterDirection.Output,
+            });
+
+        await command.ExecuteNonQueryAsync();
+
+        return (T)result.Value!;
     }
 
     private static async Task ExecuteAsync(string connectionString, string sql)

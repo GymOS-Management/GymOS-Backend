@@ -63,10 +63,84 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
         {
             ArgumentNullException.ThrowIfNull(migrationBuilder);
 
+            CreateIndexesAndConstraintsEfCannotExpress(migrationBuilder);
             CreateTenantIsolationPredicate(migrationBuilder);
             CreateInvoiceNumbering(migrationBuilder);
             PartitionAuditLogs(migrationBuilder);
             CreatePartitionMaintenance(migrationBuilder);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════════════════════
+        // 0. Indexes and constraints the EF model cannot carry
+        // ══════════════════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Three unique indexes and one CHECK constraint that the scaffolded migration does not emit,
+        /// because the model has no way to declare them.
+        /// </summary>
+        /// <remarks>
+        /// <para>Each of these existed under PostgreSQL as raw SQL inside the migration that added its
+        /// table — <c>AddSubscriptionPlans</c>, <c>AddIdempotencyRecords</c>, <c>AddPlatformStats</c>
+        /// and <c>AddInvoices</c>. Rebuilding the history from the model would have silently dropped
+        /// all four, since none of them is in the model to be scaffolded from. They are collected here
+        /// rather than scattered, because there is now one migration that owns everything hand-written.
+        /// </para>
+        /// <para><b>Two data backfills from those migrations are deliberately NOT carried over.</b>
+        /// <c>AddPeriodAnchor</c> set <c>period_anchor_utc</c> from <c>current_period_start_utc</c> and
+        /// <c>AddSubscriptionExpiredAt</c> set <c>expired_at_utc</c> for already-expired subscriptions.
+        /// Both existed to repair rows that predated a new column; on a database created from this
+        /// history there are no such rows, and running them would be a no-op against an empty table.
+        /// They are not lost functionality — they were one-time repairs, and their outcome is now the
+        /// starting state.</para>
+        /// </remarks>
+        private static void CreateIndexesAndConstraintsEfCannotExpress(MigrationBuilder migrationBuilder)
+        {
+            // EF cannot declare a unique index over a complex property's column (price_currency
+            // belongs to the Money complex property), so this stays hand-written — unchanged from the
+            // PostgreSQL original apart from the schema qualifier syntax.
+            migrationBuilder.Sql(
+                """
+                CREATE UNIQUE INDEX ix_plan_prices_plan_cycle_currency
+                    ON platform.plan_prices (plan_id, billing_cycle, price_currency);
+                """);
+
+            migrationBuilder.Sql(
+                """
+                CREATE UNIQUE INDEX ux_daily_platform_stats_mrr_currency
+                    ON platform.daily_platform_stats_mrr (stats_id, amount_currency);
+                """);
+
+            // The claim index, and the one that got materially simpler.
+            //
+            // The PostgreSQL version indexed an EXPRESSION —
+            // `(COALESCE(tenant_id, '00000000-...'::uuid)), operation_key, idempotency_key` — for one
+            // reason: PostgreSQL unique indexes treat two NULLs as distinct, so a plain index over a
+            // nullable tenant_id would have let unlimited platform-scope claims share an idempotency
+            // key. Substituting a sentinel UUID for NULL forced them to collide.
+            //
+            // SQL Server treats NULLs as EQUAL in a unique index, so the collision the COALESCE was
+            // manufacturing is simply the default. The sentinel is not merely unnecessary here — it
+            // would have to be a PERSISTED computed column, since SQL Server cannot index a bare
+            // expression, adding a column to the table for a semantic the engine already provides.
+            //
+            // `HasFilter` has no counterpart to worry about either: this is raw DDL, so EF's habit of
+            // adding `WHERE [tenant_id] IS NOT NULL` to unique indexes over nullable columns — the
+            // trap RoleConfiguration documents — does not apply. Written out, it indexes every row.
+            migrationBuilder.Sql(
+                """
+                CREATE UNIQUE INDEX ux_idempotency_records_claim
+                    ON platform.idempotency_records (tenant_id, operation_key, idempotency_key);
+                """);
+
+            // Money's three columns on an invoice must agree, and the aggregate is not the only thing
+            // that can write them — which is the point: this holds the invariant against anything that
+            // is not the aggregate.
+            migrationBuilder.Sql(
+                """
+                ALTER TABLE platform.invoices
+                    ADD CONSTRAINT ck_invoices_single_currency
+                    CHECK (subtotal_currency = tax_currency AND tax_currency = total_currency);
+                """);
         }
 
         // ══════════════════════════════════════════════════════════════════════════════════════
@@ -429,6 +503,18 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                  WHERE sc.name = N'platform' AND s.name LIKE N'invoice[_]number[_]seq[_]%';
 
                 IF @drop <> N'' EXEC sp_executesql @drop;
+                """);
+
+            // The hand-written indexes and constraint, dropped explicitly. EF does not know they
+            // exist, so nothing else will remove them.
+            migrationBuilder.Sql(
+                """
+                DROP INDEX IF EXISTS ix_plan_prices_plan_cycle_currency ON platform.plan_prices;
+                DROP INDEX IF EXISTS ux_daily_platform_stats_mrr_currency ON platform.daily_platform_stats_mrr;
+                DROP INDEX IF EXISTS ux_idempotency_records_claim ON platform.idempotency_records;
+
+                IF OBJECT_ID('platform.ck_invoices_single_currency', 'C') IS NOT NULL
+                    ALTER TABLE platform.invoices DROP CONSTRAINT ck_invoices_single_currency;
                 """);
         }
     }

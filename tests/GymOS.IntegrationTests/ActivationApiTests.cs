@@ -14,7 +14,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The activation flow over real HTTP and real PostgreSQL (ADR-53).
+/// The activation flow over real HTTP and real SQL Server (ADR-53).
 ///
 /// <para>The journey here is the one that proves the hole is closed: invite an administrator, follow
 /// the link, set a password, and <b>sign in with it</b>. Before this increment that last step was
@@ -43,7 +43,7 @@ public sealed class ActivationApiTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public ActivationApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public ActivationApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     private readonly CapturingEmailSender _mailbox = new();
 

@@ -10,7 +10,7 @@ Rules (enforced by GymOS.ArchitectureTests and startup validation):
   and other modules' `*.Contracts` projects. Never another module's internals,
   never Platform internals.
 - Cross-module communication: **domain events** (default) or **Contracts** queries.
-- Each module owns exactly one PostgreSQL schema, named after it.
+- Each module owns exactly one SQL Server schema, named after it.
 - Each module declares permissions, navigation, events, jobs, and settings in its
   `IModule` manifest; startup fails fast on validation errors.
 - New module projects must be added to the dependency rule table in

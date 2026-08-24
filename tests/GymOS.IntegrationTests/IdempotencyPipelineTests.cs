@@ -46,14 +46,14 @@ public sealed class IdempotencyPipelineTests : IAsyncLifetime
     private readonly ExecutionCounter _counter = new();
 
     // Real wall-clock, NOT a FakeClock — the same reasoning as IdempotencyStoreTests: the store
-    // compares expiry and lease columns against PostgreSQL's own now(), so a clock pinned in the
+    // compares expiry and lease columns against the database's own clock (SYSDATETIMEOFFSET), so a clock pinned in the
     // past writes records that the database judges by real time. A fixed clock here was a time
     // bomb: RetentionPeriod is 72h, and the moment real time passed fixed-time + 72h, every
     // stored outcome was already expired at birth ("expired behaves as absent") and nothing
     // replayed — these tests failed on every checkout, three days after the pinned date.
     private readonly SystemClock _clock = new();
 
-    public IdempotencyPipelineTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public IdempotencyPipelineTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

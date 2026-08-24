@@ -21,7 +21,7 @@ public sealed class FeatureCatalogueApiTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public FeatureCatalogueApiTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public FeatureCatalogueApiTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

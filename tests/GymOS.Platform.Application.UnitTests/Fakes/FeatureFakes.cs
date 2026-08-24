@@ -185,7 +185,7 @@ internal sealed class FakeFeatureQueries : IFeatureQueries
                     // Not resolved here: this fake has no user directory to join against, and the
                     // email round trip is exactly what GymFeatureApiTests.SetByEmailAsync (and the
                     // integration-only An_override_carries_who_set_it_and_when) proves against
-                    // real PostgreSQL instead.
+                    // real SQL Server instead.
                     null);
             })
             .ToList();

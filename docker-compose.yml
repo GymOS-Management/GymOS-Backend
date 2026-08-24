@@ -124,10 +124,23 @@ services:
       start_period: 45s
 
     <<: *default-hardening
-    # No cap_add. The PostgreSQL entrypoint needed CHOWN/DAC_OVERRIDE/FOWNER/SETGID/SETUID to chown
-    # its data directory and drop from root; this image starts as mssql directly and needs none of
-    # them.
-    #
+    cap_add:
+      # The `sqlservr` binary carries the NET_BIND_SERVICE file capability
+      # (`getcap` reports `cap_net_bind_service=ep`). Executing a file whose capabilities fall outside
+      # the container's bounding set fails with EPERM *before the process starts*, so with
+      # `cap_drop: ALL` alone the container crash-loops printing
+      # `/opt/mssql/bin/sqlservr: Operation not permitted` and nothing more — the same trap Seq falls
+      # into, and just as unhelpful to read.
+      #
+      # Granting the one capability the binary declares is the narrow fix. SQL Server does not
+      # actually bind a privileged port here (it listens on 1433), so this buys the image nothing at
+      # runtime; it is required only to let the kernel exec the file at all.
+      #
+      # Still four fewer than the PostgreSQL service needed: that entrypoint added CHOWN,
+      # DAC_OVERRIDE, FOWNER, SETGID and SETUID to chown its data directory and drop from root. This
+      # image starts as the unprivileged `mssql` user and `/var/opt/mssql` is image-owned by it, so
+      # none of those apply.
+      - NET_BIND_SERVICE
     # Not read_only: the engine writes its data files, log, and several transient paths under
     # /var/opt/mssql. The data directory is a volume; the rest are not, and tmpfs-ing them all to
     # claim a read-only flag would be ceremony rather than security.

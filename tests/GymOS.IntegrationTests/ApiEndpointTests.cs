@@ -17,7 +17,7 @@ public sealed class ApiEndpointTests : IAsyncLifetime
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
 
-    public ApiEndpointTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public ApiEndpointTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public Task InitializeAsync()
     {

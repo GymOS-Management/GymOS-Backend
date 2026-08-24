@@ -18,25 +18,41 @@
 -- initialisation scripts at all, so this is invoked by the `db-init` one-shot service in
 -- docker-compose.yml instead. Same "runs once against an empty instance" contract, made explicit.
 --
--- Passwords arrive through sqlcmd :setvar bindings rather than shell interpolation, for the reason
--- the PostgreSQL version used psql's \getenv: a password containing a quote must not be able to
--- terminate the string it sits in and have the remainder read as SQL. That is the class of bug
--- row-level security exists to contain, and it must not be reintroduced by the script that
--- provisions it.
+-- ── How the passwords get in, and the one constraint on them ─────────────────────────────────
+-- CREATE LOGIN will not take the password as a parameter — it must be a literal in the statement
+-- text, so `sp_executesql N'... PASSWORD = @p'` fails outright with "Incorrect syntax near '@p'".
+-- The statement is therefore built as a string, and QUOTENAME(..., '''') does the quoting: it wraps
+-- the value in single quotes and doubles any single quote inside it, on the server, rather than
+-- trusting this file to get the escaping right by hand.
+--
+-- **The residual constraint, stated plainly: a bootstrap password must not contain a single quote.**
+-- sqlcmd's -v substitution is textual and happens client-side, before the server parses anything, so
+-- a quote in the value breaks the literal before QUOTENAME can see it. The PostgreSQL version had no
+-- such limit — psql's \getenv escapes inside psql's own parser — so this is a real capability lost in
+-- the move, not an oversight. It fails loudly at first boot rather than quietly: db-init runs sqlcmd
+-- with -b, exits non-zero, and compose refuses to start the migrator or the API behind it.
 
 USE [$(GYMOS_DB)];
 GO
 
 -- ── Logins (server scope) ────────────────────────────────────────────────────────────────────
 IF SUSER_ID(N'gymos_migrator') IS NULL
-    EXEC sys.sp_executesql
-        N'CREATE LOGIN gymos_migrator WITH PASSWORD = @p, CHECK_POLICY = ON',
-        N'@p sysname', @p = N'$(GYMOS_MIGRATOR_PASSWORD)';
+BEGIN
+    DECLARE @migrator nvarchar(max) =
+        N'CREATE LOGIN gymos_migrator WITH PASSWORD = '
+        + QUOTENAME(N'$(GYMOS_MIGRATOR_PASSWORD)', '''')
+        + N', CHECK_POLICY = ON';
+    EXEC sys.sp_executesql @migrator;
+END
 GO
 IF SUSER_ID(N'gymos_app') IS NULL
-    EXEC sys.sp_executesql
-        N'CREATE LOGIN gymos_app WITH PASSWORD = @p, CHECK_POLICY = ON',
-        N'@p sysname', @p = N'$(GYMOS_APP_PASSWORD)';
+BEGIN
+    DECLARE @app nvarchar(max) =
+        N'CREATE LOGIN gymos_app WITH PASSWORD = '
+        + QUOTENAME(N'$(GYMOS_APP_PASSWORD)', '''')
+        + N', CHECK_POLICY = ON';
+    EXEC sys.sp_executesql @app;
+END
 GO
 
 -- ── Users (database scope) ───────────────────────────────────────────────────────────────────
@@ -102,6 +118,25 @@ GO
 -- Table and row privileges need no equivalent line: db_datareader and db_datawriter are
 -- database-wide and already cover every table a future migration creates.
 GRANT EXECUTE ON SCHEMA::platform TO gymos_app;
+GO
+
+-- ── And the grant that lets R14 verify itself ────────────────────────────────────────────────
+-- VIEW DEFINITION is metadata visibility and nothing else: it confers no right to read a row, call
+-- a module, or change anything. It is required because SQL Server's catalog views are filtered by
+-- permission, and a security policy is an object gymos_app holds no permission on — so without this
+-- line `SELECT COUNT(*) FROM sys.security_predicates` returns 0 for the application connection on a
+-- database where the predicates plainly exist.
+--
+-- That matters because TenantIsolationValidator runs on the application's own connection, by design:
+-- the question it asks is "is the principal *I* am about to serve requests as actually filtered", and
+-- asking it through a privileged connection would answer a different question. Without this grant the
+-- validator reads its own protection as absent and refuses to boot — failing closed, correctly, but
+-- for a reason that is not true, and with a message that sends the reader looking for a missing
+-- migration.
+--
+-- Scoped to the schema rather than granted database-wide (VIEW ANY DEFINITION), so it covers the
+-- objects R14 is about and nothing else.
+GRANT VIEW DEFINITION ON SCHEMA::platform TO gymos_app;
 GO
 
 -- ── Deliberately absent ──────────────────────────────────────────────────────────────────────

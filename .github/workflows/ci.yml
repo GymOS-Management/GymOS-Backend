@@ -88,11 +88,16 @@ jobs:
 
       - name: Validate compose files (production)
         env:
-          POSTGRES_PASSWORD: ci-not-a-real-password
+          # Mixed-case with digits and symbols, because these are interpolated into a file whose
+          # whole job is to be rejected when a secret is missing — and SQL Server would reject them
+          # for a *different* reason (its password policy) if they were the flat lowercase strings
+          # the PostgreSQL overlay used, which would make this step pass or fail for the wrong cause.
+          MSSQL_SA_PASSWORD: Ci-Not-A-Real-Password1
+          MSSQL_PID: Developer
           GYMOS_JWT_SIGNING_KEY: ci-not-a-real-signing-key-at-least-32-bytes
           API_IMAGE: gymos-api:ci
-          GYMOS_MIGRATOR_PASSWORD: ci-not-a-real-migrator-password
-          GYMOS_APP_PASSWORD: ci-not-a-real-app-password
+          GYMOS_MIGRATOR_PASSWORD: Ci-Not-A-Real-Migrator1
+          GYMOS_APP_PASSWORD: Ci-Not-A-Real-App1
         run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
 
       # The fail-fast markers are load-bearing, so they are tested rather than trusted:
@@ -122,18 +127,35 @@ jobs:
           API_IMAGE: gymos-api:ci
         run: docker compose up -d
 
+      # Longer than the 5 minutes the PostgreSQL stack needed, and not by padding: SQL Server creates
+      # its system databases on first boot, so the engine's own start_period is 45s before db-init
+      # can even connect, and the migrator only starts after that.
       - name: Wait for health
         run: |
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 90); do
             api=$(docker inspect --format '{{.State.Health.Status}}' gymos-api 2>/dev/null || echo missing)
-            pg=$(docker inspect --format '{{.State.Health.Status}}' gymos-postgres 2>/dev/null || echo missing)
-            echo "postgres=$pg api=$api"
-            if [ "$api" = healthy ] && [ "$pg" = healthy ]; then exit 0; fi
+            db=$(docker inspect --format '{{.State.Health.Status}}' gymos-mssql 2>/dev/null || echo missing)
+            echo "mssql=$db api=$api"
+            if [ "$api" = healthy ] && [ "$db" = healthy ]; then exit 0; fi
             if [ "$api" = unhealthy ]; then break; fi
             sleep 5
           done
           echo '::error::Stack did not become healthy.'
+          docker compose logs --no-color --tail 100 db-init migrator
           exit 1
+
+      # db-init is a one-shot container, so "healthy" is the wrong question for it — the right one is
+      # whether it exited 0. Asserted explicitly because everything downstream depends on it: the
+      # database, both principals and the two schemas are its work, and compose's
+      # service_completed_successfully gate would let a *skipped* run through unnoticed if the
+      # service were ever accidentally removed from the graph.
+      - name: Assert database initialisation ran and succeeded
+        run: |
+          set -euo pipefail
+          code=$(docker inspect --format '{{.State.ExitCode}}' gymos-db-init)
+          echo "db-init exit=$code"
+          test "$code" = 0
+          docker compose logs --no-color db-init | grep -q 'db-init: complete'
 
       # The stack is not merely running: the database is reachable through it, migrations
       # applied, and the seeded administrator can sign in. A health check that only proves
@@ -164,22 +186,28 @@ jobs:
           test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' gymos-api)" = true
           test "$(docker inspect --format '{{.HostConfig.CapDrop}}' gymos-api)" = '[ALL]'
           test "$(docker inspect --format '{{.HostConfig.CapAdd}}' gymos-api)" = '[]'
-          for c in gymos-api gymos-postgres; do
+          for c in gymos-api gymos-mssql gymos-db-init; do
             opts=$(docker inspect --format '{{.HostConfig.SecurityOpt}}' "$c")
             echo "$c securityOpt=$opts"
             case "$opts" in *no-new-privileges:true*) ;; *) exit 1 ;; esac
           done
-          # Postgres is on the data network only; the edge network must not reach it.
-          nets=$(docker inspect --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' gymos-postgres)
-          echo "postgres networks=$nets"; test "$(echo "$nets" | tr -d ' ')" = gymos-data
+          # SQL Server is on the data network only; the edge network must not reach it.
+          nets=$(docker inspect --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' gymos-mssql)
+          echo "mssql networks=$nets"; test "$(echo "$nets" | tr -d ' ')" = gymos-data
+          # SQL Server adds back exactly one, and only because the sqlservr binary carries the
+          # NET_BIND_SERVICE file capability — exec fails with EPERM without it. Pinned so the list
+          # cannot quietly grow. The PostgreSQL service needed five.
+          test "$(docker inspect --format '{{.HostConfig.CapDrop}}' gymos-mssql)" = '[ALL]'
+          test "$(docker inspect --format '{{.HostConfig.CapAdd}}' gymos-mssql)" = '[CAP_NET_BIND_SERVICE]'
 
       # Every optional profile is started too. Definitions that merely parse are not definitions
-      # that work: Redis, Seq, and pgAdmin each crash-looped the first time they met
-      # `cap_drop: ALL`, and nothing short of booting them says so.
+      # that work: Redis and Seq each crash-looped the first time they met `cap_drop: ALL`, and
+      # nothing short of booting them says so. `tools` is gone from the profile list because it
+      # is now empty — pgAdmin was its only service and cannot speak to SQL Server.
       - name: Start every optional profile
         env:
           API_IMAGE: gymos-api:ci
-          COMPOSE_PROFILES: tools,redis,observability,storage
+          COMPOSE_PROFILES: redis,observability,storage
         run: |
           docker compose up -d
           for _ in $(seq 1 36); do
@@ -197,11 +225,11 @@ jobs:
       - name: Container logs (on failure)
         if: failure()
         env:
-          COMPOSE_PROFILES: tools,redis,observability,storage
+          COMPOSE_PROFILES: redis,observability,storage
         run: docker compose logs --no-color --tail 200
 
       - name: Tear down
         if: always()
         env:
-          COMPOSE_PROFILES: tools,redis,observability,storage
+          COMPOSE_PROFILES: redis,observability,storage
         run: docker compose down -v

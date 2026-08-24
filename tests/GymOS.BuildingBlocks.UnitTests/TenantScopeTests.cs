@@ -64,7 +64,7 @@ public sealed class TenantScopeTests
     public async Task TheEmptyGuidIsRefused()
     {
         // Not because it collides with platform scope — the interceptor writes an empty *string* for
-        // that, so Guid.Empty would reach PostgreSQL as a well-formed uuid matching no gym and the
+        // that, so Guid.Empty would reach the database as a well-formed uniqueidentifier matching no gym and the
         // job would quietly process nothing. A caller passing default(Guid) has a bug, and this is
         // the last place able to say so.
         await using ServiceProvider provider = BuildProvider();

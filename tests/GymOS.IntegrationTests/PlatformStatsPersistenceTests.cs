@@ -6,14 +6,14 @@ using Xunit;
 
 namespace GymOS.IntegrationTests;
 
-/// <summary>The daily read model round-tripping through PostgreSQL, including the write-once rule.</summary>
+/// <summary>The daily read model round-tripping through SQL Server, including the write-once rule.</summary>
 [Collection(SqlServerCollectionDefinition.Name)]
 public sealed class PlatformStatsPersistenceTests : IAsyncLifetime
 {
     private readonly SqlServerFixture _sqlServer;
     private PlatformStatsHost _host = null!;
 
-    public PlatformStatsPersistenceTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public PlatformStatsPersistenceTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

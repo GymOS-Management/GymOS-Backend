@@ -1,7 +1,7 @@
 # GymOS-Backend
 
 **The** GymOS backend — the entire server side as one modular monolith
-(`.NET 10 / PostgreSQL`), per the frozen architecture in
+(`.NET 10 / SQL Server`), per the frozen architecture in
 [GymOS-Specification](../GymOS-Specification) (repository map: **ADR-52**).
 Serves every client: the Super Admin console ([GymOS-Platform](../GymOS-Platform)),
 the gym web app ([GymOS-Admin](../GymOS-Admin)), the member app, and gateways.
@@ -33,7 +33,7 @@ frontend repository.
 The whole stack, from a clean clone, with no setup step:
 
 ```
-docker compose up -d       # PostgreSQL 17 + API + Mailpit, migrated and seeded, on http://localhost:5080
+docker compose up -d       # SQL Server 2022 + API + Mailpit, migrated and seeded, on http://localhost:5080
 ```
 
 Sign in as `admin@gymos.local` / `gymos-dev-admin-password` — deliberately public development
@@ -56,10 +56,10 @@ The usual working setup: the API on the host, only the database in a container.
 dotnet tool restore
 ```
 
-**2. Start PostgreSQL:**
+**2. Start SQL Server:**
 
 ```
-docker compose up -d postgres
+docker compose up -d mssql db-init
 ```
 
 **3. Give yourself an account to sign in with.** Skip this and the seeder warns and creates
@@ -93,7 +93,7 @@ To point one run at the local container without changing anything, set the envir
 it outranks the secret:
 
 ```powershell
-$env:ConnectionStrings__Database='Host=localhost;Port=5432;Database=gymos;Username=gymos;Password=gymos_dev_password'
+$env:ConnectionStrings__Database='Server=localhost,1433;Database=gymos;User Id=gymos_app;Password=Gymos_dev_app_password1;Encrypt=True;TrustServerCertificate=True;Current Language=us_english'
 ```
 
 (Those credentials match `docker-compose.override.yml` and are deliberately public, like the
@@ -130,10 +130,10 @@ the flow at all, point it at a local sink.
 
 Use the **Mailpit** service in the compose file — SMTP with a web inbox, so nothing leaves the
 machine. It is part of the development baseline, so `docker compose up -d` starts it alongside
-PostgreSQL and the API:
+SQL Server and the API:
 
 ```
-docker compose up -d postgres mailpit      # SMTP on :1025, inbox on http://localhost:8025
+docker compose up -d mssql db-init mailpit   # SMTP on :1025, inbox on http://localhost:8025
 ```
 
 ```
@@ -193,8 +193,8 @@ link is a second way in).
 
 - **A build suddenly cannot copy DLLs (`MSB3027`/`MSB3021`).** A previous `dotnet run` is still
   holding the output. Stop it before rebuilding — this has cost time three times now.
-- **`password authentication failed for user "gymos"`.** A natively installed PostgreSQL is winning
-  port 5432 over the container. Set `POSTGRES_PORT=5433` in `.env`, or stop the local service. The
+- **`Login failed for user 'gymos_app'`.** A natively installed SQL Server or LocalDB is winning
+  port 1433 over the container. Set `MSSQL_PORT=1434` in `.env`, or stop the local service. The
   containerised API is unaffected — it reaches the database over the compose network.
 - **The API starts but talks to the wrong database.** See the precedence note above and run
   `dotnet user-secrets list`.

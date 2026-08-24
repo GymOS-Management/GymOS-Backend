@@ -22,7 +22,7 @@ public sealed class AuditCaptureTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public AuditCaptureTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public AuditCaptureTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

@@ -17,7 +17,7 @@ public sealed class SignInRateLimitingTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public SignInRateLimitingTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public SignInRateLimitingTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

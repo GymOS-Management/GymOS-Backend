@@ -10,7 +10,7 @@ using Xunit;
 namespace GymOS.IntegrationTests;
 
 /// <summary>
-/// The M1.2 acceptance path end to end over real HTTP against real PostgreSQL:
+/// The M1.2 acceptance path end to end over real HTTP against real SQL Server:
 /// sign in → refresh → reuse detection → sign out, plus <c>/me</c> and change-password.
 /// Everything below goes through the wire, so cookie attributes, status codes, problem
 /// shapes, and token validation are all under test — not just the handlers.
@@ -22,7 +22,7 @@ public sealed class AuthenticationFlowTests : IAsyncLifetime
     private AuthenticationHost _host = null!;
     private HttpClient _client = null!;
 
-    public AuthenticationFlowTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public AuthenticationFlowTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {

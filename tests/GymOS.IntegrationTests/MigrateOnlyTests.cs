@@ -1,7 +1,7 @@
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -11,7 +11,7 @@ public sealed class MigrateOnlyTests
 {
     private readonly SqlServerFixture _sqlServer;
 
-    public MigrateOnlyTests(SqlServerFixture postgres) => _sqlServer = postgres;
+    public MigrateOnlyTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     [Fact]
     public async Task MigrateOnlyAppliesMigrationsAndDoesNotSeed()
@@ -43,13 +43,13 @@ public sealed class MigrateOnlyTests
     [Fact]
     public async Task MigrateOnlyAgainstAnUnreachableDatabase_DoesNotExitZero()
     {
-        // A database name nobody has created and this test never creates. EF Core's migrator
-        // tries to create it on the fly, and the test role — non-superuser, per SqlServerFixture —
-        // has no CREATEDB privilege, so the very first statement fails:
-        // Npgsql.PostgresException 42501, "permission denied to create database".
+        // A database name nobody has created and this test never creates. EF Core's migrator tries
+        // to create it on the fly, and the test principal — in neither dbcreator nor sysadmin, per
+        // SqlServerFixture — cannot, so the attempt fails with
+        // SqlException 262, "CREATE DATABASE permission denied in database 'master'".
         var builder = new SqlConnectionStringBuilder(_sqlServer.ConnectionString)
         {
-            Database = "gymos_database_that_was_never_created",
+            InitialCatalog = "gymos_database_that_was_never_created",
         };
 
         // The exit code is the load-bearing part of the whole feature: compose gates the API
@@ -58,49 +58,58 @@ public sealed class MigrateOnlyTests
         // unmigrated database. The surrounding try/catch in Program.cs logs Fatal and rethrows,
         // so the exception must surface here rather than being swallowed silently.
         //
-        // ── Why this asserts a specific SQLSTATE and not just "something threw" ────────────────
+        // ── Why this asserts a specific error number and not just "something threw" ────────────
         // It used to be `ThrowsAnyAsync<Exception>`, and that assertion held with the entire
         // MigrateOnly branch deleted from Program.cs: the host simply fell through to
         // TenantIsolationValidator, which opened its own connection to the same nonexistent
-        // database and threw 3D000 (invalid_catalog_name). The test was green either way, so it
-        // pinned nothing about the feature it was written for.
+        // database and threw for that instead. The test was green either way, so it pinned nothing
+        // about the feature it was written for.
         //
-        // 42501 is reachable only through the migrator. It comes from EF's CreateAsync — Migrate
+        // 262 is reachable only through the migrator. It comes from EF's CreateAsync — Migrate
         // finds no history table, asks the database creator to create the database, and the test
-        // role holds no CREATEDB — so it can only be raised by something that tried to MIGRATE.
-        // Every other path against this connection string stops earlier, at 3D000. Watched failing
-        // with the branch removed before being trusted; see the report for that increment.
-        PostgresException failure = await ThrowsPostgresExceptionAsync(
+        // principal cannot — so it can only be raised by something that tried to MIGRATE. Every
+        // other path against this connection string stops earlier, at 4060 ("Cannot open database
+        // ... requested by the login"), because it never attempts the create at all.
+        //
+        // Both numbers were confirmed against SQL Server 2022 rather than read from a table: as the
+        // unprivileged principal, CREATE DATABASE answers 262 and merely opening the missing
+        // database answers 4060. They are the counterparts of the PostgreSQL original's 42501
+        // (insufficient_privilege) and 3D000 (invalid_catalog_name), and the distinction between
+        // them is the whole assertion.
+        SqlException failure = await ThrowsSqlExceptionAsync(
             () => MigrateOnlyAsync(builder.ConnectionString));
 
-        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, failure.SqlState);
+        Assert.Equal(CreateDatabasePermissionDenied, failure.Number);
     }
 
+    /// <summary>262 — <c>CREATE DATABASE permission denied in database 'master'</c>.</summary>
+    private const int CreateDatabasePermissionDenied = 262;
+
     /// <summary>
-    /// Runs <paramref name="action"/> and returns the <see cref="PostgresException"/> it produced,
+    /// Runs <paramref name="action"/> and returns the <see cref="SqlException"/> it produced,
     /// unwrapping whatever the host stack wrapped it in.
     /// </summary>
     /// <remarks>
     /// The exception travels out of <c>WebApplicationFactory</c>'s host build, and neither the number
-    /// of wrapper layers nor their types are a property this suite should assert on — but the
-    /// SQLSTATE underneath is exactly the property it should. Walking the chain keeps the assertion
-    /// on the database's answer rather than on the framework's plumbing. A failure with no
-    /// <see cref="PostgresException"/> anywhere in it fails the test with the whole chain in the
-    /// message, since "it threw something else entirely" is the interesting case to read.
+    /// of wrapper layers nor their types are a property this suite should assert on — but the error
+    /// number underneath is exactly the property it should. Walking the chain keeps the assertion on
+    /// the database's answer rather than on the framework's plumbing. A failure with no
+    /// <see cref="SqlException"/> anywhere in it fails the test with the whole chain in the message,
+    /// since "it threw something else entirely" is the interesting case to read.
     /// </remarks>
-    private static async Task<PostgresException> ThrowsPostgresExceptionAsync(Func<Task> action)
+    private static async Task<SqlException> ThrowsSqlExceptionAsync(Func<Task> action)
     {
         Exception thrown = await Assert.ThrowsAnyAsync<Exception>(action);
 
         for (Exception? current = thrown; current is not null; current = current.InnerException)
         {
-            if (current is PostgresException postgres)
+            if (current is SqlException sql)
             {
-                return postgres;
+                return sql;
             }
         }
 
-        Assert.Fail($"Expected a PostgresException somewhere in the chain, got: {thrown}");
+        Assert.Fail($"Expected a SqlException somewhere in the chain, got: {thrown}");
         return null!;
     }
 
