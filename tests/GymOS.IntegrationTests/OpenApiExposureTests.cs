@@ -83,9 +83,15 @@ public sealed class OpenApiExposureTests : IAsyncLifetime
     /// The default with no setting present: on in Development, off everywhere else. This is the
     /// behaviour an operator gets by doing nothing, which is the one worth pinning.
     /// </summary>
+    /// <remarks>
+    /// Staging is deliberately not a case here. It ships an <c>OpenApi:Enabled</c> of its own in
+    /// appsettings.Staging.json, so "no setting present" is not a state a Staging host can be in, and
+    /// asserting the code default through it would be asserting that file instead. Production still
+    /// covers "off outside Development", which is the half that matters; the file's own choice is
+    /// pinned by <see cref="StagingShipsASettingOfItsOwn_AndPublishes"/>.
+    /// </remarks>
     [Theory]
     [InlineData("Development", System.Net.HttpStatusCode.OK)]
-    [InlineData("Staging", System.Net.HttpStatusCode.NotFound)]
     [InlineData("Production", System.Net.HttpStatusCode.NotFound)]
     public async Task WithNoSetting_TheEnvironmentDecides(string environment, System.Net.HttpStatusCode expected)
     {
@@ -97,6 +103,30 @@ public sealed class OpenApiExposureTests : IAsyncLifetime
         HttpResponseMessage response = await client.GetAsync(new Uri("/openapi/v1.json", UriKind.Relative));
 
         Assert.Equal(expected, response.StatusCode);
+    }
+
+    /// <summary>
+    /// UAT publishes the document, because appsettings.Staging.json says so and means it: the base
+    /// appsettings names a staging or internal environment as exactly where publishing is reasonable,
+    /// and QA and the console developers read the contract there rather than standing up a stack.
+    /// </summary>
+    /// <remarks>
+    /// A separate test rather than a row in the theory above, because it pins a different thing: not
+    /// the framework default for a non-Development environment, but a committed file's deliberate
+    /// override of it. If appsettings.Staging.json ever stops enabling the document, this is what
+    /// should fail, and it should fail by name rather than as "the default moved".
+    /// </remarks>
+    [Fact]
+    public async Task StagingShipsASettingOfItsOwn_AndPublishes()
+    {
+        await using WebApplicationFactory<Program> factory = CreateHost(
+            exposeOpenApi: null,
+            environment: "Staging");
+        using HttpClient client = factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync(new Uri("/openapi/v1.json", UriKind.Relative));
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
     }
 
     private WebApplicationFactory<Program> CreateHost(bool? exposeOpenApi, string? environment = null) =>
