@@ -48,6 +48,21 @@ jobs:
       - name: Build (full solution, warnings are errors)
         run: dotnet build GymOS.Backend.slnx --configuration Release --no-restore
 
+      # The database project is part of the solution, so the build above already validated it:
+      # every object in database/GymOS.Database is parsed against the Azure SQL dialect, and a
+      # migration producing something Azure SQL rejects fails there rather than at deployment.
+      # Nothing is published and no database is touched.
+      #
+      # This step only keeps the result. The dacpac is what schema comparison consumes, so having
+      # every green build publish one means any commit can be compared against a live database
+      # without rebuilding it first.
+      - name: Upload DACPAC
+        uses: actions/upload-artifact@v4
+        with:
+          name: gymos-database-dacpac
+          path: database/GymOS.Database/bin/Release/GymOS.Database.dacpac
+          if-no-files-found: error
+
       - name: Format check
         run: dotnet format GymOS.Backend.slnx --verify-no-changes --no-restore
 

@@ -8,6 +8,13 @@
         "dotnet-ef"
       ],
       "rollForward": false
+    },
+    "microsoft.sqlpackage": {
+      "version": "170.4.83",
+      "commands": [
+        "sqlpackage"
+      ],
+      "rollForward": false
     }
   }
 }

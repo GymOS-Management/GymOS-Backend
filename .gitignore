@@ -58,3 +58,15 @@ skills-lock.json
 # record is the git history and the plan document. Ignored so a coordination artefact can never be
 # mistaken for a deliverable and committed.
 .superpowers/
+
+# Visual Studio shell "migration report", written when a VS-based tool opens a solution containing
+# a project type it cannot load. SSMS produces these because it has no SSDT and cannot open the
+# database project — see the note in GymOS.Backend.slnx. Generated noise, never source.
+UpgradeLog*.htm
+
+# SSDT working files. Visual Studio writes a .dbmdl model cache beside the .sqlproj and keeps it
+# locked while the project is open, and .jfm alongside it. Both are per-machine caches rebuilt from
+# the .sql files, never source, and the lock makes a stray `git add` fail outright.
+*.dbmdl
+*.dbmdl.bak
+*.jfm

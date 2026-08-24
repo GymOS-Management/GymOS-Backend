@@ -34,6 +34,20 @@
     <Project Path="src/BuildingBlocks/GymOS.BuildingBlocks.Application/GymOS.BuildingBlocks.Application.csproj" />
     <Project Path="src/BuildingBlocks/GymOS.BuildingBlocks.Infrastructure/GymOS.BuildingBlocks.Infrastructure.csproj" />
   </Folder>
+  <!-- The declarative record of the schema the EF migrations produce, built for validation and
+       schema comparison and never published. database/README.md sets out the division of
+       responsibility.
+
+       It needs no build exclusion, unlike docker-compose.dcproj below: Microsoft.Build.Sql is an
+       SDK-style project, so `dotnet build` and `dotnet restore` handle it on any platform and CI
+       builds it as part of this solution. Opening it in Visual Studio additionally requires the
+       "Data storage and processing" workload (SQL Server Data Tools) — without it the IDE reports
+       the project type as not found (00d1a9c2-b5f0-4af3-8072-f6c62b433612) and writes an
+       UpgradeLog.htm, which is gitignored for that reason. The command line is unaffected either
+       way. -->
+  <Folder Name="/Database/">
+    <Project Path="database/GymOS.Database/GymOS.Database.sqlproj" />
+  </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/GymOS.ArchitectureTests/GymOS.ArchitectureTests.csproj" />
     <Project Path="tests/GymOS.BuildingBlocks.UnitTests/GymOS.BuildingBlocks.UnitTests.csproj" />
