@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.Build.Sql/2.2.0">
+  <!--
+    RESPONSIBILITY: the declarative record of the schema the EF Core migrations produce, used to
+    validate that schema in CI and to compare it against a live database. It is NOT a deployment
+    mechanism and must never publish. EF migrations remain the only thing that changes a database,
+    in every environment. database/README.md states the division of responsibility in full.
+
+    Microsoft.Build.Sql rather than a legacy SSDT .sqlproj: it builds with `dotnet build` on any
+    platform with no Visual Studio and no Windows requirement, which is what lets CI produce the
+    dacpac. Version 2.2.0 specifically — 1.0.0 fails on .NET SDK 10 with MSB4019, because its
+    targets import NuGet.Build.Tasks.Pack.targets from a path the SDK no longer has.
+  -->
+  <PropertyGroup>
+    <Name>GymOS.Database</Name>
+    <!-- Azure SQL Database, matching where UAT and production run. Rejects at build time anything
+         the platform does not support, which is the validation half of this project's job. -->
+    <DSP>Microsoft.Data.Tools.Schema.Sql.SqlAzureV12DatabaseSchemaProvider</DSP>
+    <ModelCollation>1033, CI</ModelCollation>
+    <!-- Latin1_General_100_CI_AS is fixed at CREATE DATABASE by docker/sqlserver/initdb/00-database.sql
+         and by the Azure SQL databases. Case-insensitive, accent-sensitive. -->
+    <DefaultCollation>Latin1_General_100_CI_AS</DefaultCollation>
+    <AnsiNulls>True</AnsiNulls>
+    <QuotedIdentifier>True</QuotedIdentifier>
+    <ValidateCasingOnIdentifiers>False</ValidateCasingOnIdentifiers>
+    <TreatTSqlWarningsAsErrors>False</TreatTSqlWarningsAsErrors>
+    <!-- 71502: "unresolved reference to object" for names outside the model. The runtime modules
+         legitimately read sys.sequences, sys.partition_range_values and sys.schemas, which are
+         system views the project does not contain. Suppressed narrowly rather than by turning
+         warnings off wholesale. -->
+    <SuppressTSqlWarnings>71502</SuppressTSqlWarnings>
+    <TargetDatabaseSet>True</TargetDatabaseSet>
+    <ProjectGuid>{9f74ee70-db12-6011-4965-975e73d33e44}</ProjectGuid>
+  </PropertyGroup>
+</Project>

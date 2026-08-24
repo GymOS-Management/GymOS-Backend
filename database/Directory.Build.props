@@ -1,0 +1,12 @@
+<Project>
+  <!--
+    Terminates the Directory.Build.props chain. MSBuild walks upward until it finds one of these,
+    so this file's existence stops the repository-root Directory.Build.props from reaching the
+    database project. That is deliberate and required, not tidiness: the root file sets
+    TargetFramework=net10.0, TreatWarningsAsErrors, C# analyzer levels and adds BannedSymbols.txt
+    as an AdditionalFile. None of that means anything to a .sqlproj, and several of them break it.
+
+    Nothing is inherited here on purpose. If the database project ever needs a shared property,
+    add it to this file rather than importing the root one.
+  -->
+</Project>
