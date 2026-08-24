@@ -22,6 +22,11 @@ src/
   Host/GymOS.WebApi/         # composition root — the single deployable
 tests/
   GymOS.ArchitectureTests/   # dependency + package law; runs on every build
+database/
+  GymOS.Database/            # the schema, declaratively — generated from the EF
+                             #   migrations, compared against live databases,
+                             #   never published. See database/README.md
+scripts/                     # schema-compare.ps1, reset-local-db.ps1, populate-all.ps1
 ```
 
 Note: the `GymOS.Platform.*` project names refer to the platform-scope module area
@@ -224,6 +229,20 @@ Removing, renaming, retyping, or changing the meaning of a field needs a new ver
 `dotnet ef` is a pinned local tool (`dotnet-tools.json`) — run `dotnet tool restore` on a
 fresh clone. New migrations:
 `dotnet ef migrations add <Name> --project src/Platform/GymOS.Platform.Infrastructure --startup-project src/Host/GymOS.WebApi --output-dir Persistence/Migrations`
+
+**Adding a migration means regenerating `database/GymOS.Database` in the same commit.** That
+project is the declarative record of what the migrations produce — it is what lets you ask whether
+a live database actually matches, which the migrations themselves cannot answer. It is derived from
+`dotnet ef migrations script` and is a lie the moment it lags. It never deploys: EF migrations are
+the only thing that changes a database, in every environment.
+
+```
+dotnet build database/GymOS.Database/GymOS.Database.sqlproj -c Release   # -> a DACPAC
+./scripts/schema-compare.ps1 -ConnectionString "<target>"                # read-only drift report
+```
+
+Full reference, including the three objects that are deliberately not comparable:
+[`database/README.md`](database/README.md).
 
 ## Build & test
 

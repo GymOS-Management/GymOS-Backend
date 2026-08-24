@@ -1,7 +1,84 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-24 · **The backend has been migrated from PostgreSQL 17 to SQL Server 2022,
-on the branch `feature/sqlserver-migration`, and the ADR that authorises it is still only *proposed*.**
+**Last updated:** 2026-08-25 · **The SQL Server migration is merged, UAT is live and deploys
+itself, and the schema is now in Git as a database project.** The ADR that authorises the migration is
+still only *proposed* — that gate has not moved. The section immediately below covers everything that
+happened after the merge; the paragraphs after it describe the migration as it stood on its branch and
+are kept for their reasoning, not their branch state.
+
+---
+
+## UAT deployment and the database project as built (2026-08-24/25)
+
+**`development` is at `e03f95b`; `main` is 3 commits behind it and `staging` is retired.** Eleven
+commits, all green: CI and Deploy to UAT both pass end to end.
+
+**Five real defects, each hidden behind the previous one.** `dotnet ef` could not reach any database:
+`AppDbContextDesignTimeFactory` read a `GYMOS_DATABASE` environment variable that appears nowhere else
+in the repository, so every command fell through to a `localhost` fallback whose database name
+(`gymos`) was also stale. It now reads `ConnectionStrings__Database`, the one variable compose, both
+deploy workflows and the host already use. Then: the GHCR image tag carried the organisation's
+capitals and the registry refuses those, so Deploy to UAT had never once succeeded; the `migrate` job
+never logged in to GHCR and so could not pull the image `build` had just pushed; and one integration
+test asserted the OpenAPI default for Staging while `appsettings.Staging.json` — added in the last
+commit of the migration itself — deliberately publishes the document. That last one was invisible
+because the first CI run after the merge lost its SQL Server container 50 seconds in and reported 584
+failures on top of it. Both CI jobs now carry `timeout-minutes`, so a hung run costs minutes rather
+than the 67 that one did.
+
+**UAT is real.** Azure SQL `GymOS_UAT` on `gymos-uat.database.windows.net`, migrated by the pipeline;
+`gymos_migrator` and `gymos_app` created per `docs/runbooks/managed-sqlserver-roles.md` with schema
+ownership transferred and `VIEW DEFINITION` granted (without it `TenantIsolationValidator` reads its
+own row-level security as absent and fails closed); a Container App `gymos-uat-api` in resource group
+`GymOS-UAT`, `swedencentral`, answering `/health/ready`. A push to `development` now builds, migrates,
+deploys and smoke-tests with no human step. **Deployment authenticates by federated OIDC and there is
+no stored deployment secret at all** — the client secret was deleted after the first green run. The
+federated subject is `repo:GymOS-Management@312961276/GymOS-Backend@1322886835:environment:UAT`: this
+organisation issues ID-based OIDC claims, so the readable form the Microsoft documentation shows is
+*not* what arrives, and registering that instead fails with `AADSTS700213` — an error that helpfully
+quotes the subject actually presented.
+
+**The schema is in Git.** `database/GymOS.Database` is a `Microsoft.Build.Sql` project — 23 tables,
+54 indexes, 22 foreign keys, 3 check constraints, 2 schemas, 2 procedures, 2 functions — every file
+generated from `dotnet ef migrations script`, never hand-written. **EF migrations remain the only
+thing that changes a database; the project is built, compared and read, and never published.**
+`database/README.md` is the reference. Three objects are deliberately not comparable and each would be
+harmful to publish: `pf_audit_logs_monthly`, whose boundaries come from `SYSUTCDATETIME()` and grow
+monthly at runtime (publishing would `MERGE RANGE` and move audit rows between partitions); the
+`invoice_number_seq_<year>` sequences created on demand by `next_invoice_number` (dropping them
+restarts a legally consecutive invoice series at 1); and `__EFMigrationsHistory` with the two
+principals.
+
+**UAT was verified against it, column by column across all 23 tables: no schema differences at all.**
+The only discrepancies were SSDT's scripting style — `nvarchar (100)` for `nvarchar(100)`,
+`datetimeoffset (7)` for its own default precision. That comparison also turned up
+`platform.should_not_exist` in UAT: the runbook's deliberate negative test, which had succeeded
+because it was run on the admin connection rather than as `gymos_app`. Debris rather than a privilege
+defect; dropped.
+
+**Two traps worth knowing.** `dotnet build` on `GymOS.Backend.slnx` **silently skips a `.sqlproj`** —
+it reports success and produces nothing at all, which is how the DACPAC upload came to fail on a green
+build. The project is listed in the solution so Visual Studio shows it and Schema Compare can be run
+from it, but CI must build it by path, and does. Second, Visual Studio's Schema Compare defaults to
+writing a *second* copy of every object under its own `BySchemaAndSchemaType` layout and rewrites the
+`.sqlproj` with explicit `<Build Include>` items; run it source = project, target = database, and use
+**Generate Script**, never **Update**.
+
+**Opening the solution in Visual Studio needs the "Data storage and processing" workload** (SQL Server
+Data Tools). Without it the IDE cannot load the project type, reports the solution as containing an
+incompatible project, and writes an `UpgradeLog.htm` — gitignored for that reason, along with the
+`.dbmdl` model cache Visual Studio holds locked while the project is open.
+
+**Still owed on this increment:** the schema-comparison CI workflow, which needs one decision — whether
+to give the UAT SQL server an Entra admin so the existing OIDC identity can read it, rather than
+adding a connection-string secret. `deploy-production.yml` still has its deliberate `exit 1` deploy
+step and will need its own federated credential with `environment:Production` in the subject.
+
+---
+
+**Previously (2026-08-24), while the migration was still on its branch:** **The backend has been
+migrated from PostgreSQL 17 to SQL Server 2022, on the branch `feature/sqlserver-migration`, and the
+ADR that authorises it is still only *proposed*.**
 Two commits by Konstantinos (`4b29293`, a deliberate non-building checkpoint, and `002740f`, which
 completes it) replace the Npgsql provider, every runtime adapter, all seventeen migrations, the Docker
 stack, and the whole integration harness. The design does not move: single database, shared schema,
@@ -296,7 +373,9 @@ before resuming work on any machine.
 | **Solution view + F5** | ✅ **merged** (`053f4d6`, `0d56184`) — Solution Explorer regrouped by role (Host/Platform/Shared/Tests, docker-compose at the root); F5 now starts postgres + api + **mailpit** with email wired, so the invitation flow works with nothing started by hand. No project renamed, moved, or re-referenced |
 | **R14 — tenant isolation mechanism** (`ITenantContext`/`ITenantContextSetter`, `TenantSessionInterceptor`, `TenantIsolationValidator`, route-based `TenantResolutionMiddleware`) | ✅ **mechanism built and tested, committed locally on `development`** (not yet pushed to `origin` — pushing is the maintainer's call) — **303 integration / 1401 total tests green**, 0 build warnings, `dotnet format` clean · rules: **`docs/BusinessRules/TenantIsolation.md`** · design: `docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md` · **R14 has a subject and a passing validation for the first time, and no production table is tenant-scoped yet** — Members is next and will be the first · three open items originally recorded under "Known open items" — ~~the deployment connects to PostgreSQL as a superuser (voids `FORCE`)~~ **closed by the next row**, no gym-scoped grant can be issued through the API yet, and `TenantScope` is owed rather than built |
 | **Database roles (R14 close-out)** — three roles replacing the single superuser (`gymos_admin`/`gymos_migrator`/`gymos_app`), `docker/postgres/initdb/10-roles.sql`, a one-shot `migrator` compose service, `TenantIsolationValidator`'s role check made unconditional | ✅ **built and tested, committed locally on `development`** (not yet pushed) — **311 integration / 1409 total tests green**, `ArchitectureTests` **153**, 0 build warnings, `dotnet format` clean · `docker compose down -v && docker compose up -d` proven to bring up a working stack from an empty volume, migrator exits `0`, three roles present with the correct attributes · design: `docs/superpowers/specs/2026-08-15-database-roles-design.md` · rules: **`docs/BusinessRules/TenantIsolation.md`** · runbook: **`docs/runbooks/managed-postgres-roles.md`** (Azure, not yet provisioned against) · **the superuser open item is closed**; the gym-scoped-grant and `TenantScope` open items are unchanged by this increment |
-| **PostgreSQL → SQL Server migration (ADR-54)** — provider and packages, every runtime adapter, all seventeen migrations replaced by two, the Docker stack, and the integration harness | ⚠️ **built on `feature/sqlserver-migration`, unmerged and unreviewed** (`4b29293`, `002740f`, Konstantinos, 2026-08-24) — author reports **1,420 tests / 314 integration green** and a booting stack; **not re-verified here** (SDK 10.0.302 missing on this machine) · `contracts/openapi-v1.json` unchanged, so no console/mobile caller moves · **ADR-54 is `Proposed`** and its rationale is a placeholder · branch is cut from `development` and carries the 60 R14 commits with it · console side: `GymOS-Platform` `2c45888` (E2E suite only) · ⬅ **review owed, ADR approval owed** · one host-run defect (`appsettings.Development.json` left on the PostgreSQL string) found and **fixed 2026-08-24** |
+| **PostgreSQL → SQL Server migration (ADR-54)** — provider and packages, every runtime adapter, all seventeen migrations replaced by two, the Docker stack, and the integration harness | ✅ **merged to `development` and `main`** (`d9fe709`), CI green, and five follow-up defects found and fixed on 2026-08-24 (see the section at the top) — ⬅ **review still owed, ADR-54 approval still owed**. Previously recorded as: **built on `feature/sqlserver-migration`, unmerged and unreviewed** (`4b29293`, `002740f`, Konstantinos, 2026-08-24) — author reports **1,420 tests / 314 integration green** and a booting stack; **not re-verified here** (SDK 10.0.302 missing on this machine) · `contracts/openapi-v1.json` unchanged, so no console/mobile caller moves · **ADR-54 is `Proposed`** and its rationale is a placeholder · branch is cut from `development` and carries the 60 R14 commits with it · console side: `GymOS-Platform` `2c45888` (E2E suite only) · ⬅ **review owed, ADR approval owed** · one host-run defect (`appsettings.Development.json` left on the PostgreSQL string) found and **fixed 2026-08-24** |
+| **UAT deployment** (Azure SQL `GymOS_UAT`, Container App `gymos-uat-api`, both database principals, SuperAdmin seeded) | ✅ **live and self-deploying** — a push to `development` builds, migrates, deploys and smoke-tests with no human step · **federated OIDC, no stored deployment secret** · runbook: `docs/runbooks/managed-sqlserver-roles.md` · environment model: `docs/Infrastructure/ENVIRONMENTS.md` |
+| **Database project** (`database/GymOS.Database`, `Microsoft.Build.Sql` 2.2.0) — the declarative record of what the migrations produce, plus `scripts/schema-compare.ps1` | ✅ **built, in CI, DACPAC published per green build** — 23 tables / 54 indexes / 22 FKs / 3 checks / 2 procedures / 2 functions, generated from `dotnet ef migrations script` · **verified against `GymOS_UAT` with zero schema differences** · read-only by construction: EF migrations remain the only mutation path · reference: **`database/README.md`** · ⬅ **the comparison CI workflow is still owed** |
 | M6+ — per approved roadmap (monitoring, settings) | next |
 
 ## M1.2 as built

@@ -56,6 +56,9 @@ Author, before requesting review:
 - [ ] `dotnet test GymOS.Backend.slnx` — all green (Docker required)
 - [ ] `dotnet format --verify-no-changes`
 - [ ] `dotnet ef migrations has-pending-model-changes` — none, or the migration is in this PR
+- [ ] Migration in this PR? **Regenerate `database/GymOS.Database` in the same commit** — it is
+      derived from `dotnet ef migrations script` and is a lie the moment it lags. See
+      `database/README.md`
 - [ ] New/changed endpoints: summary, description, typed responses, `ProducesProblem` per failure
 - [ ] OpenAPI snapshot regenerated **and the diff read**, not just accepted
 - [ ] New dependency: `DEPENDENCY_POLICY.md` **and** `ForbiddenPackagesTests` updated in this commit
@@ -220,6 +223,11 @@ module. Never hand-write a column name that the convention would produce differe
 - **Data migrations are non-destructive**: rename aside, copy, drop. Never `DROP` before the copy
   succeeded, so a rollback leaves the original in place.
 - **Verify the model matches**: `dotnet ef migrations has-pending-model-changes` is in the PR checklist.
+- **Verify the database matches**, which is a different question: `scripts/schema-compare.ps1`
+  compares `database/GymOS.Database` against a live database, read-only. The migrations say how a
+  database got here; the database project says what it should now contain. Drift means someone
+  changed a database outside the migrations, or the project was not regenerated after one landed —
+  check the second first. The fix is always a migration, never the generated script.
 - **Production applies migrations from the pipeline**, not from application startup.
   `Database:MigrateOnStartup` is a development convenience.
 - **Every migration is applied twice in CI** (`MigrationTests`), so a non-idempotent one fails before
