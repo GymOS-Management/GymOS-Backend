@@ -61,7 +61,7 @@ jobs:
           # `latest`: production must deploy an identifiable build.
           tag="${{ github.event.inputs.image_tag }}"
           if [ -z "$tag" ]; then tag="${{ github.sha }}"; fi
-          echo "image=ghcr.io/${{ github.repository_owner }}/gymos-api:$tag" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/gymos-api:$tag" >> "$GITHUB_OUTPUT"
 
   # Asserts the image exists before the approval gate, so a reviewer is never asked to approve a
   # deployment that cannot happen. Cheap, and it catches the common case: main moved on without UAT
