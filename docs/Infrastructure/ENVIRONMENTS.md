@@ -224,8 +224,19 @@ environment scoping is what stops one environment reading the other's credential
 ### How the deploy job authenticates
 
 Federated OIDC, not a stored client secret. The `gymos-uat-deploy` app registration carries a
-federated credential whose subject is `repo:GymOS-Management/GymOS-Backend:environment:UAT`, and
-Entra will exchange a GitHub token only for that exact subject.
+federated credential whose subject is
+
+```
+repo:GymOS-Management@312961276/GymOS-Backend@1322886835:environment:UAT
+```
+
+and Entra will exchange a GitHub token only for that exact string.
+
+The numbers are the organisation and repository database IDs. This organisation issues **ID-based**
+OIDC subjects, which survive a rename and cannot be impersonated by re-registering the old name — so
+the readable `repo:GymOS-Management/GymOS-Backend:...` form is **not** what arrives and registering
+it fails with `AADSTS700213`. That error quotes the subject actually presented, which is the quickest
+way to read the correct value for a new environment.
 
 Two consequences worth knowing before editing the workflow. The deploy job's `environment: UAT` line
 is what produces that subject, so removing it breaks authentication rather than merely widening

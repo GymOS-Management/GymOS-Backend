@@ -162,9 +162,15 @@ jobs:
 
       # Federated OIDC. There is no client secret here to store, rotate, or leak: GitHub mints a
       # token for this job and Azure trusts it only for the subject
-      # `repo:GymOS-Management/GymOS-Backend:environment:UAT`.
+      # `repo:GymOS-Management@312961276/GymOS-Backend@1322886835:environment:UAT`.
       #
-      # That subject is why `environment: UAT` above is load-bearing rather than decoration -- a job
+      # Those numbers are the org and repository database IDs, and they are in the subject because
+      # this organisation issues ID-based OIDC claims -- the format that survives a rename, and that
+      # a renamed-then-reregistered org cannot impersonate. Registering the readable
+      # `repo:GymOS-Management/GymOS-Backend:...` form instead fails with AADSTS700213, which names
+      # the subject actually presented; that error is the fastest way to read the right value back.
+      #
+      # The subject is why `environment: UAT` above is load-bearing rather than decoration -- a job
       # without it presents a different subject and Entra refuses the exchange. The three values
       # below are identifiers, not credentials; they are secrets here only to keep the tenant and
       # subscription out of logs.
