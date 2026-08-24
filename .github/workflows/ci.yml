@@ -2,14 +2,19 @@ name: CI
 
 on:
   push:
-    # All three long-lived branches. The model is feature/* -> development -> staging -> main, so
-    # development is where work lands and main is the last place a break should surface.
-    branches: [main, staging, development]
+    # Two long-lived branches, and `staging` is deliberately not one of them any more. The model is
+    # now feature/* -> development -> main: `development` is where work lands and deploys to UAT,
+    # `main` is production. `staging` sat between them as a third promotion step that nothing was
+    # ever promoted through — it last moved on 13 August — and a branch that CI builds but nobody
+    # merges to is a branch that goes stale and then fails confusingly. Retired rather than deleted:
+    # the ref still exists, it is simply no longer part of the flow. See
+    # docs/Infrastructure/ENVIRONMENTS.md.
+    branches: [main, development]
   pull_request:
-    # Filtering this on `main` alone was the sharper half of the same gap: `development` is the
-    # repository's default branch, so a pull request opens against it by default — and none of those
-    # were being built at all.
-    branches: [main, staging, development]
+    # `development` is the repository's default branch, so a pull request opens against it by
+    # default. Both are built, and a pull request builds and tests only — it never deploys. The two
+    # deploy workflows trigger on push to these branches, which a pull request is not.
+    branches: [main, development]
   workflow_dispatch: # manual "Run workflow" button — for re-runs after infra failures
 
 concurrency:
@@ -94,6 +99,11 @@ jobs:
           # the PostgreSQL overlay used, which would make this step pass or fail for the wrong cause.
           MSSQL_SA_PASSWORD: Ci-Not-A-Real-Password1
           MSSQL_PID: Developer
+          # Required by docker-compose.prod.yml rather than defaulted, so that production can never
+          # inherit a local or UAT database name. Naming the Production database here is what proves
+          # the requirement is satisfiable; the step asserts the file interpolates, not that this
+          # database exists.
+          GYMOS_DB: GymOS_Production
           GYMOS_JWT_SIGNING_KEY: ci-not-a-real-signing-key-at-least-32-bytes
           API_IMAGE: gymos-api:ci
           GYMOS_MIGRATOR_PASSWORD: Ci-Not-A-Real-Migrator1

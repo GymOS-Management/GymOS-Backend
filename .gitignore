@@ -29,16 +29,28 @@ node_modules/
 # Docker local state
 .docker-data/
 
-# Docker environment — never commit real credentials
+# Docker environment — never commit real credentials.
+#
+# `.env.*` rather than the narrower `.env.local`/`.env.*.local` it replaces: an `.env.uat` or
+# `.env.production` written while debugging a deployment is exactly the file that must never be
+# committed, and the old pattern let both through. `.env.example` is re-included because it carries
+# placeholders only, and is the one file here that documents what the others must contain.
 .env
-.env.local
-.env.*.local
+.env.*
 !.env.example
 
-# Local agent/tooling state — machine-specific, and .neon can carry database details
+# Local configuration overlays. appsettings.json and appsettings.Development.json ARE committed —
+# they hold non-secret development configuration by design — but a `.local` overlay is where a
+# developer puts a value that is theirs alone.
+appsettings.*.local.json
+
+# Visual Studio per-user state: window layout, startup project, the last debug target. Machine- and
+# person-specific, and never meaningful to anyone else.
+*.user
+
+# Local agent/tooling state — machine-specific.
 .agents/
 .claude/
-.neon
 skills-lock.json
 
 # Scratch for the superpowers subagent-driven-development workflow: per-plan ledgers, task briefs,

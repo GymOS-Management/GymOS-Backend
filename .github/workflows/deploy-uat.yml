@@ -1,0 +1,172 @@
+# Deploy to UAT.
+#
+# STATUS: UNVERIFIED. This workflow has never run against real infrastructure, because there is none
+# yet -- no Azure resources exist for GymOS at the time of writing. It is committed so the pipeline
+# and its secret contract are reviewable before anyone provisions anything, not because it works.
+#
+# It is gated on the repository variable UAT_DEPLOY_ENABLED. Until that is set to 'true', every job
+# below is skipped with a notice, so merging to `development` does not produce a red build for
+# infrastructure that does not exist. Flipping the variable is what turns this on.
+#
+# Read docs/Infrastructure/ENVIRONMENTS.md before enabling it. The short version:
+#   development -> UAT (this file)          main -> Production (deploy-production.yml)
+#   UAT talks only to GymOS_UAT. It has no access to the Production connection string, because the
+#   secrets live in separate GitHub Environments and this workflow only requests one of them.
+name: Deploy to UAT
+
+on:
+  push:
+    branches: [development]
+  # Manual runs, for redeploying the same commit after an infrastructure fix.
+  workflow_dispatch:
+
+# Never two deployments to the same environment at once. Not cancel-in-progress: interrupting a
+# migration halfway is worse than queueing behind it.
+concurrency:
+  group: deploy-uat
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write # GHCR, per the image reference docker-compose.prod.yml already documents
+
+jobs:
+  # A separate job purely so the skip is visible in the UI rather than being an invisible `if` on
+  # every step. A run that did nothing should say it did nothing.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        run: |
+          if [ "${{ vars.UAT_DEPLOY_ENABLED }}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::UAT deployment is not enabled. Set the repository variable UAT_DEPLOY_ENABLED=true once the UAT infrastructure exists. See docs/Infrastructure/ENVIRONMENTS.md."
+          fi
+
+  build:
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tagged by commit SHA, never `latest`. The Production workflow deploys a SHA that has already
+      # been through UAT, and "whatever latest points at now" cannot express that.
+      - id: meta
+        run: echo "image=ghcr.io/${{ github.repository_owner }}/gymos-api:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Host/GymOS.WebApi/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+
+  # Migrations are their own job, before the app is deployed, and run as the migrator principal.
+  # This is the same split the local stack uses: the API cannot migrate in any environment, because
+  # the principal it connects as holds no DDL rights (R14).
+  migrate:
+    needs: [preflight, build]
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: UAT # scopes the secrets below to this environment, and nothing else can request them
+    steps:
+      - name: Apply pending migrations
+        env:
+          # The migrator principal, not the app principal. Set in the UAT GitHub Environment.
+          MIGRATOR_CONNECTION_STRING: ${{ secrets.GYMOS_MIGRATOR_CONNECTION_STRING }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${MIGRATOR_CONNECTION_STRING:-}" ]; then
+            echo "::error::GYMOS_MIGRATOR_CONNECTION_STRING is not set in the UAT environment."
+            exit 1
+          fi
+
+          # Fail before connecting if the string does not name GymOS_UAT. DatabaseEnvironmentGuard
+          # enforces the same pairing inside the application; this catches it one step earlier, where
+          # the failure is a red pipeline rather than a crash-looping container. Matched on the
+          # database name only -- the string itself is never echoed, because it carries a password.
+          if ! printf '%s' "$MIGRATOR_CONNECTION_STRING" | grep -qiE '(^|;)[[:space:]]*(Database|Initial Catalog)[[:space:]]*=[[:space:]]*GymOS_UAT[[:space:]]*(;|$)'; then
+            echo "::error::The UAT migrator connection string does not target GymOS_UAT. Refusing to migrate."
+            exit 1
+          fi
+
+          # Database:MigrateOnly is an existing host mode: apply migrations, log, exit 0. Nothing else
+          # runs -- no seeding, no request serving. Reused here rather than reimplemented with
+          # `dotnet ef`, so UAT applies migrations through exactly the code path local development does.
+          docker run --rm \
+            -e ASPNETCORE_ENVIRONMENT=Staging \
+            -e Database__MigrateOnly=true \
+            -e ConnectionStrings__Database="$MIGRATOR_CONNECTION_STRING" \
+            "${{ needs.build.outputs.image }}"
+
+  deploy:
+    needs: [preflight, build, migrate]
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: UAT
+    steps:
+      # ===============================================================================================
+      # TODO -- NOT IMPLEMENTED. This is the one step that needs infrastructure that does not exist.
+      #
+      # Deliberately left as a failing placeholder rather than a plausible-looking `azure/webapps-deploy`
+      # block with invented resource names: a deploy step that references a resource group and app name
+      # nobody created is not closer to working, it just fails later and less clearly.
+      #
+      # When the hosting decision is made, this becomes roughly ten lines. For Azure Container Apps:
+      #   - azure/login@v2 with AZURE_CREDENTIALS (or federated OIDC, which needs no stored secret)
+      #   - az containerapp update --name <app> --resource-group <rg> --image ${{ needs.build.outputs.image }}
+      # For App Service for Containers, azure/webapps-deploy@v3 with the same image reference.
+      #
+      # ASPNETCORE_ENVIRONMENT must be Staging on the target, and ConnectionStrings__Database must be
+      # the UAT *app* principal string -- not the migrator one used above.
+      # ===============================================================================================
+      - name: Deploy application
+        run: |
+          echo "::error::Deploy step is not implemented -- no UAT hosting resource exists yet. See the comment in this file and docs/Infrastructure/ENVIRONMENTS.md."
+          exit 1
+
+  smoke:
+    needs: [preflight, deploy]
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: UAT
+    steps:
+      # Readiness, not liveness. /health/ready reports unhealthy while migrations are pending, so it
+      # is the endpoint that actually proves the deployment and the database agree -- /health/live
+      # would pass on an app that cannot serve correct data.
+      - name: Wait for readiness
+        env:
+          BASE_URL: ${{ vars.UAT_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::Repository variable UAT_BASE_URL is not set, so readiness cannot be checked."
+            exit 1
+          fi
+
+          for attempt in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/health/ready" || echo 000)
+            echo "attempt $attempt: /health/ready -> $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 10
+          done
+
+          echo '::error::UAT did not become ready.'
+          exit 1

@@ -166,7 +166,7 @@ services:
 
     environment:
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-}
-      GYMOS_DB: ${GYMOS_DB:-gymos}
+      GYMOS_DB: ${GYMOS_DB:-GymOS_Local}
       GYMOS_MIGRATOR_PASSWORD: ${GYMOS_MIGRATOR_PASSWORD:-}
       GYMOS_APP_PASSWORD: ${GYMOS_APP_PASSWORD:-}
 
@@ -237,7 +237,7 @@ services:
       # SetGymFeaturesCommand retries on exactly one constraint name and must not retry on any
       # other, so the message has to be in the language the parser expects.
       ConnectionStrings__Database: >-
-        Server=mssql,1433;Database=${GYMOS_DB:-gymos};User Id=gymos_app;Password=${GYMOS_APP_PASSWORD:-};Encrypt=True;TrustServerCertificate=${MSSQL_TRUST_SERVER_CERTIFICATE:-false};Current
+        Server=mssql,1433;Database=${GYMOS_DB:-GymOS_Local};User Id=gymos_app;Password=${GYMOS_APP_PASSWORD:-};Encrypt=True;TrustServerCertificate=${MSSQL_TRUST_SERVER_CERTIFICATE:-false};Current
         Language=us_english
 
       # ── Deliberately ABSENT from this file: Security__Jwt__SigningKey ──────────────────────
@@ -346,7 +346,7 @@ services:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       Database__MigrateOnly: 'true'
       ConnectionStrings__Database: >-
-        Server=mssql,1433;Database=${GYMOS_DB:-gymos};User Id=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-};Encrypt=True;TrustServerCertificate=${MSSQL_TRUST_SERVER_CERTIFICATE:-false};Current
+        Server=mssql,1433;Database=${GYMOS_DB:-GymOS_Local};User Id=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-};Encrypt=True;TrustServerCertificate=${MSSQL_TRUST_SERVER_CERTIFICATE:-false};Current
         Language=us_english
 
     depends_on:

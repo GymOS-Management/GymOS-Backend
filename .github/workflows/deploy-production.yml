@@ -1,0 +1,185 @@
+# Deploy to Production.
+#
+# STATUS: UNVERIFIED. Like deploy-uat.yml, this has never run -- no Azure resources exist for GymOS
+# yet. It is committed so the pipeline and its secret contract can be reviewed before anyone
+# provisions anything.
+#
+# Gated on the repository variable PRODUCTION_DEPLOY_ENABLED. Until that is 'true', every job is
+# skipped with a notice, so merging to `main` does not produce a red build for absent infrastructure.
+#
+# HOW THIS DIFFERS FROM UAT, and why each difference exists:
+#
+#   1. It deploys an image that already exists rather than building a new one. The artifact that goes
+#      to production is the one UAT tested; rebuilding from the same source would produce a different
+#      image and quietly discard that evidence.
+#   2. Migrations require a manual approval gate, via the `Production` GitHub Environment's required
+#      reviewers. A schema change to the production database is a decision, not a consequence of a
+#      merge.
+#   3. It uses only Production secrets. The UAT connection string is not available to this workflow --
+#      GitHub Environments scope secrets, and this workflow requests `Production` and never `UAT`.
+#   4. It refuses to migrate anything that is not GymOS_Production, and refuses GymOS_UAT by name.
+#
+# Read docs/Infrastructure/ENVIRONMENTS.md before enabling.
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Commit SHA to deploy (must already be built and tested in UAT)'
+        required: false
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read # pulls the existing image; deliberately cannot push
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+      image: ${{ steps.check.outputs.image }}
+    steps:
+      - id: check
+        run: |
+          set -euo pipefail
+
+          if [ "${{ vars.PRODUCTION_DEPLOY_ENABLED }}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Production deployment is not enabled. Set the repository variable PRODUCTION_DEPLOY_ENABLED=true once the Production infrastructure exists. See docs/Infrastructure/ENVIRONMENTS.md."
+          fi
+
+          # A specific SHA if one was given, otherwise the commit being pushed to main. Never
+          # `latest`: production must deploy an identifiable build.
+          tag="${{ github.event.inputs.image_tag }}"
+          if [ -z "$tag" ]; then tag="${{ github.sha }}"; fi
+          echo "image=ghcr.io/${{ github.repository_owner }}/gymos-api:$tag" >> "$GITHUB_OUTPUT"
+
+  # Asserts the image exists before the approval gate, so a reviewer is never asked to approve a
+  # deployment that cannot happen. Cheap, and it catches the common case: main moved on without UAT
+  # ever building this commit.
+  verify-image:
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Confirm the image was built and tested in UAT
+        run: |
+          set -euo pipefail
+          image="${{ needs.preflight.outputs.image }}"
+
+          if ! docker manifest inspect "$image" > /dev/null 2>&1; then
+            echo "::error::$image does not exist. Production deploys an image UAT already tested; this commit has no such image. Merge through development first, or pass image_tag for a SHA that does."
+            exit 1
+          fi
+
+          echo "Found $image"
+
+  migrate:
+    needs: [preflight, verify-image]
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    # The approval gate. Configure required reviewers on the `Production` environment in GitHub --
+    # this line is what makes the run pause for them, and what scopes the secrets below so no other
+    # workflow or environment can read them.
+    environment: Production
+    steps:
+      - name: Apply pending migrations
+        env:
+          MIGRATOR_CONNECTION_STRING: ${{ secrets.GYMOS_MIGRATOR_CONNECTION_STRING }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${MIGRATOR_CONNECTION_STRING:-}" ]; then
+            echo "::error::GYMOS_MIGRATOR_CONNECTION_STRING is not set in the Production environment."
+            exit 1
+          fi
+
+          # Refuse UAT by name, explicitly and first, so the failure says which mistake was made
+          # rather than a generic mismatch. This is the pairing the environment model cares most about.
+          if printf '%s' "$MIGRATOR_CONNECTION_STRING" | grep -qiE '(^|;)[[:space:]]*(Database|Initial Catalog)[[:space:]]*=[[:space:]]*GymOS_UAT[[:space:]]*(;|$)'; then
+            echo "::error::The Production migrator connection string targets GymOS_UAT. Refusing to migrate."
+            exit 1
+          fi
+
+          if ! printf '%s' "$MIGRATOR_CONNECTION_STRING" | grep -qiE '(^|;)[[:space:]]*(Database|Initial Catalog)[[:space:]]*=[[:space:]]*GymOS_Production[[:space:]]*(;|$)'; then
+            echo "::error::The Production migrator connection string does not target GymOS_Production. Refusing to migrate."
+            exit 1
+          fi
+
+          # Migrations only. No seeding, no request serving, and nothing that drops or recreates:
+          # `Database:MigrateOnly` runs EF's Migrate and exits, which applies pending migrations and
+          # never deletes. There is no reset path into production, by construction -- reset-local-db.ps1
+          # refuses any database but GymOS_Local, and nothing in this repository can drop a database
+          # over the network.
+          docker run --rm \
+            -e ASPNETCORE_ENVIRONMENT=Production \
+            -e Database__MigrateOnly=true \
+            -e ConnectionStrings__Database="$MIGRATOR_CONNECTION_STRING" \
+            "${{ needs.preflight.outputs.image }}"
+
+  deploy:
+    needs: [preflight, migrate]
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      # ===============================================================================================
+      # TODO -- NOT IMPLEMENTED, for the same reason as in deploy-uat.yml: no hosting resource exists,
+      # and inventing resource names here would produce a workflow that looks finished and is not.
+      #
+      # When the hosting decision is made:
+      #   - azure/login@v2 (federated OIDC preferred -- no long-lived credential in GitHub at all)
+      #   - Container Apps: az containerapp update --image ${{ needs.preflight.outputs.image }}
+      #     App Service:    azure/webapps-deploy@v3, ideally into a staging slot then swapped, so a
+      #                     failed deployment is a slot that never took traffic.
+      #
+      # On the target: ASPNETCORE_ENVIRONMENT=Production, and ConnectionStrings__Database set to the
+      # Production *app* principal string -- never the migrator one used above, which holds DDL rights.
+      # ===============================================================================================
+      - name: Deploy application
+        run: |
+          echo "::error::Deploy step is not implemented -- no Production hosting resource exists yet. See the comment in this file and docs/Infrastructure/ENVIRONMENTS.md."
+          exit 1
+
+  smoke:
+    needs: [preflight, deploy]
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Wait for readiness
+        env:
+          BASE_URL: ${{ vars.PRODUCTION_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::Repository variable PRODUCTION_BASE_URL is not set, so readiness cannot be checked."
+            exit 1
+          fi
+
+          for attempt in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/health/ready" || echo 000)
+            echo "attempt $attempt: /health/ready -> $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 10
+          done
+
+          echo '::error::Production did not become ready. Roll back to the previous image.'
+          exit 1

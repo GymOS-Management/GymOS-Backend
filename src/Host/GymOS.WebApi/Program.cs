@@ -168,6 +168,23 @@ try
 
     var app = builder.Build();
 
+    // Before anything opens a connection, and before the migrator branch below: does this host's
+    // environment match the database it is pointed at? Development owns GymOS_Local, Staging owns
+    // GymOS_UAT, Production owns GymOS_Production, and no host may open another environment's
+    // database. Placed above `Database:MigrateOnly` deliberately — the migrator applies DDL, so it is
+    // the process that must least be allowed to do it to the wrong environment.
+    //
+    // Fatal, like R14's validator, and for a comparable reason: a host serving the wrong environment
+    // is not a degraded service, it is correct behaviour applied to the wrong data, and nothing
+    // downstream will notice. See DatabaseEnvironmentGuard for why it denies cross-environment
+    // pairings rather than prescribing a database per environment.
+    DatabaseEnvironmentGuard.Validate(
+        app.Environment.EnvironmentName,
+        app.Configuration.GetConnectionString("Database")
+            ?? throw new InvalidOperationException(
+                "Connection string 'Database' is not configured. Set ConnectionStrings:Database via "
+                    + "appsettings, environment (ConnectionStrings__Database), or the secret store."));
+
     // Startup work, in the order the next step depends on the previous one.
     //
     // Migrations are NOT this process's job in any environment: the one-shot `migrator` service

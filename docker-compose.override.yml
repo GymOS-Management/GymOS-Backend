@@ -70,17 +70,27 @@ services:
       #Security__Jwt__SigningKey: ${GYMOS_JWT_SIGNING_KEY}
       ASPNETCORE_ENVIRONMENT: Development
 
-      # Set GYMOS_DB_CONNECTION in .env to point the API at an external shared database (e.g. a
-      # team dev instance, or an Azure SQL development database) instead of the local sidecar.
-      # Unset, it falls back to the container, connecting as gymos_app — which owns nothing and
-      # cannot disable a security policy, unlike the sa login.
+      # The local sidecar, and deliberately nothing else.
       #
-      # TrustServerCertificate=True here and nowhere else: the sidecar generates a self-signed
-      # certificate on first boot, so verification cannot succeed against it. Production leaves it
-      # off and verifies for real.
+      # **`GYMOS_DB_CONNECTION` used to be honoured here and is not any more.** It existed so a
+      # developer could point the local API at a shared external database — a team dev instance, and
+      # in practice a free Neon PostgreSQL one. That is now exactly the thing the environment model
+      # forbids: local development talks to GymOS_Local, UAT to GymOS_UAT, production to
+      # GymOS_Production, and there is no fourth database and no path between them. An override that
+      # silently redirected the local stack somewhere shared is how a developer ends up writing to
+      # an environment they did not mean to, and the redirect left no trace in the compose file.
+      #
+      # A developer who genuinely needs a different local target changes this line in their working
+      # copy, which is visible in `git diff` rather than invisible in `.env`. Anything beyond that is
+      # a deployment, and deployments do not run from this overlay.
+      #
+      # Connects as gymos_app — which owns nothing and cannot disable a security policy, unlike the
+      # sa login. TrustServerCertificate=True here and nowhere else: the sidecar generates a
+      # self-signed certificate on first boot, so verification cannot succeed against it. Production
+      # leaves it off and verifies for real.
       ConnectionStrings__Database: >-
-        ${GYMOS_DB_CONNECTION:-Server=mssql,1433;Database=${GYMOS_DB:-gymos};User Id=gymos_app;Password=${GYMOS_APP_PASSWORD:-Gymos_dev_app_password1};Encrypt=True;TrustServerCertificate=True;Current
-        Language=us_english}
+        Server=mssql,1433;Database=${GYMOS_DB:-GymOS_Local};User Id=gymos_app;Password=${GYMOS_APP_PASSWORD:-Gymos_dev_app_password1};Encrypt=True;TrustServerCertificate=True;Current
+        Language=us_english
 
       # Off, here too: migrations are the migrator service's job now (see its definition below),
       # so "one command" (`docker compose up -d`) still brings up a fresh clone fully migrated —
@@ -142,7 +152,7 @@ services:
       # appears here — the migrator owns the schemas as gymos_migrator, created by
       # docker/sqlserver/initdb/10-principals.sql before this service runs.
       ConnectionStrings__Database: >-
-        Server=mssql,1433;Database=${GYMOS_DB:-gymos};User Id=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-Gymos_dev_migrator_password1};Encrypt=True;TrustServerCertificate=True;Current
+        Server=mssql,1433;Database=${GYMOS_DB:-GymOS_Local};User Id=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD:-Gymos_dev_migrator_password1};Encrypt=True;TrustServerCertificate=True;Current
         Language=us_english
 
   # ══════════════════════════════════════════════════════════════════════════════════════════════

@@ -9,9 +9,16 @@
        this backend is one deployable. Feature modules get a sibling "Modules" folder when
        src/Modules/ has its first project. -->
 
-  <!-- Two files that belong to no project, so nothing else would surface them. Solution items rather
-       than a folder built to hold two things. -->
-  <File Path="docker/postgres/initdb/00-extensions.sql" />
+  <!-- Files that belong to no project, so nothing else would surface them. Solution items rather
+       than a folder built to hold a handful of things.
+
+       The SQL Server migration replaced docker/postgres/initdb/00-extensions.sql, and this entry
+       went on pointing at it after the file was deleted — a solution item referencing a path that
+       does not exist. The two scripts below are its successors, and they earn their place: db-init
+       runs them before any migration, so they are where the database, its collation, and both
+       principals come from. -->
+  <File Path="docker/sqlserver/initdb/00-database.sql" />
+  <File Path="docker/sqlserver/initdb/10-principals.sql" />
   <File Path="docs/Infrastructure/DOCKER.md" />
 
   <Folder Name="/Host/">

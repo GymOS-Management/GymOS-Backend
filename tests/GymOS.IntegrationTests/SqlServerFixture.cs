@@ -207,6 +207,24 @@ public sealed class SqlServerFixture : IAsyncLifetime
 
     private async Task<string> CreateUnmigratedDatabaseNamedAsync(string databaseName)
     {
+        // The suite may never name an environment database. It already cannot reach one — every
+        // database here is created inside a throwaway Testcontainers instance, so `GymOS_Production`
+        // asked for from a test would be a new empty database in a container, not the real thing.
+        //
+        // The assertion is still worth its line, because that reasoning depends on the container and
+        // the container is one refactor away from being an environment variable. `DatabaseEnvironment-
+        // Guard` stops a *deployed* host opening the wrong database; this stops the test suite ever
+        // being the thing that names one, so the two together leave no path in. It throws rather than
+        // sanitising: a test that wants a managed name has a bug in the test, and quietly renaming it
+        // would hide that.
+        if (DatabaseEnvironmentGuard.IsManaged(databaseName))
+        {
+            throw new InvalidOperationException(
+                $"The integration suite must never create or open '{databaseName}': it is one of the "
+                    + "three environment databases (GymOS_Local, GymOS_UAT, GymOS_Production). Tests use "
+                    + "generated per-test database names inside the Testcontainers instance.");
+        }
+
         // CREATE DATABASE cannot run inside a multi-statement batch that also uses it, and it must
         // not run in a transaction — hence its own round trip against master.
         //

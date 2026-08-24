@@ -92,7 +92,7 @@ services:
       # public CA and this simply works; against a self-hosted instance, install a real certificate
       # rather than reaching for TrustServerCertificate here.
       ConnectionStrings__Database: >-
-        Server=${MSSQL_HOST:-mssql},${MSSQL_PORT_INTERNAL:-1433};Database=${GYMOS_DB:-gymos};User
+        Server=${MSSQL_HOST:-mssql},${MSSQL_PORT_INTERNAL:-1433};Database=${GYMOS_DB:?GYMOS_DB must be set for production and must name the Production database, never GymOS_Local or GymOS_UAT};User
         Id=gymos_app;Password=${GYMOS_APP_PASSWORD};Encrypt=True;TrustServerCertificate=False;Current
         Language=us_english
 
@@ -149,7 +149,7 @@ services:
       # secret.
       GYMOS_MIGRATOR_PASSWORD: '${GYMOS_MIGRATOR_PASSWORD:?GYMOS_MIGRATOR_PASSWORD must be set for production}'
       ConnectionStrings__Database: >-
-        Server=${MSSQL_HOST:-mssql},${MSSQL_PORT_INTERNAL:-1433};Database=${GYMOS_DB:-gymos};User
+        Server=${MSSQL_HOST:-mssql},${MSSQL_PORT_INTERNAL:-1433};Database=${GYMOS_DB:?GYMOS_DB must be set for production and must name the Production database, never GymOS_Local or GymOS_UAT};User
         Id=gymos_migrator;Password=${GYMOS_MIGRATOR_PASSWORD};Encrypt=True;TrustServerCertificate=False;Current
         Language=us_english
 

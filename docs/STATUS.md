@@ -1,6 +1,56 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-15 · **The database-roles increment's final review is fixed: invoice
+**Last updated:** 2026-08-24 · **The backend has been migrated from PostgreSQL 17 to SQL Server 2022,
+on the branch `feature/sqlserver-migration`, and the ADR that authorises it is still only *proposed*.**
+Two commits by Konstantinos (`4b29293`, a deliberate non-building checkpoint, and `002740f`, which
+completes it) replace the Npgsql provider, every runtime adapter, all seventeen migrations, the Docker
+stack, and the whole integration harness. The design does not move: single database, shared schema,
+`tenant_id` + row-level security, per-module schemas, month-partitioned audit, the outbox, and
+optimistic concurrency on every mutable aggregate are all intact — what changes is the mechanism under
+each of them (`sp_getapplock` for advisory locks, `sp_set_session_context` for the tenant session,
+procedures `WITH EXECUTE AS OWNER` for `SECURITY DEFINER`, `UPDLOCK`/`REPEATABLEREAD` for
+`FOR UPDATE`/`FOR SHARE`, a real `rowversion` column for `xmin`, a CI database collation for `ILIKE`).
+**`contracts/openapi-v1.json` has no diff**, so no console or mobile caller changes.
+
+**Three things are owed before this can merge, and none of them is code.** First, **ADR-54 is
+`Proposed`, not approved** (`GymOS-Specification/ADR-CHANGELOG.md`): the architecture is frozen and
+names PostgreSQL in all four documents, so implementation has run ahead of the freeze protocol
+(`ENGINEERING_PLAYBOOK.md` step 2). The ADR is drafted and enumerates what it supersedes, what has no
+SQL Server counterpart, and what is therefore owed — but **its "why" is a placeholder**: no commit,
+doc, or spec in the branch states the decisive business reason, and the author has to fill that in
+before anyone can approve it. Second, **the branch has had no review**. Third, **it is cut from
+`development`, not `main`** — 62 commits ahead of `main`, of which **60 are the R14/tenancy work from
+2026-08-15 that never reached `main`**, so merging it to `main` lands the whole R14 increment at the
+same time. `development` is the correct target.
+
+**Gates, as reported by the author in `002740f` and NOT independently re-verified here:** restore,
+build, `dotnet format --verify-no-changes` and test all green — **1,420 tests, 0 failures**, including
+**314 integration tests** against SQL Server 2022 via Testcontainers — and the composed stack boots
+from a clean checkout with the seeded administrator signing in. **Since partly re-verified, and the SDK
+gap turned out to have a workaround.** `global.json` pins SDK **10.0.302** (`rollForward:
+latestFeature`) and this machine carries only **10.0.301**, so nothing runs locally — but the
+**`mcr.microsoft.com/dotnet/sdk:10.0.302`** container is the pinned SDK exactly, and running the
+toolchain in there against the mounted repository gave **build 0 warnings / 0 errors**,
+**`dotnet format --verify-no-changes` exit 0**, and **1,137 unit tests passed, 0 failed**. Pin that tag
+rather than floating `10.0`, which carries 10.0.400 and disagrees about formatting — the command and
+that trap are under "Known open items". The pin predates the branch (`fd7763e`); it is an environment
+gap, not a regression.
+**The 314 integration tests are still unrun — run them before promoting anything.**
+
+**One defect found reviewing the branch, not by running it:**
+`src/Host/GymOS.WebApi/appsettings.Development.json` **was never migrated** — it still carries
+`Host=localhost;Port=5432;…;Username=gymos_app;Password=gymos_dev_app_password`, which is Npgsql
+keyword syntax. `Microsoft.Data.SqlClient` rejects `Host` and `Username` outright, so
+`dotnet run --project src/Host/GymOS.WebApi` — and Visual Studio F5 on the API project — fails at
+startup on this branch. Nothing caught it because the integration suite builds its own connection
+strings in `SqlServerFixture` and the containerised API takes its own from
+`docker-compose.override.yml`; the host-run path is the only consumer of that file, and it is exactly
+the path "Fresh-machine setup" below documents. **Fixed 2026-08-24** — the file now carries the
+container's own app-principal string with `localhost,1433` in place of `mssql,1433`, and the old value
+was proved rejected (`SqlConnectionStringBuilder` → "Keyword not supported: 'host'") while the new one
+parses. Four smaller items remain open under "Known open items".
+
+**Previously (2026-08-15, the roles' final review):** **The database-roles increment's final review is fixed: invoice
 issuance and audit partitioning work again as a role with no DDL rights.** Taking DDL away from the
 API process left two plpgsql functions — `platform.next_invoice_number` and
 `platform.ensure_audit_log_partitions` — issuing DDL as the *calling* role, so the first invoice of
@@ -216,7 +266,7 @@ before resuming work on any machine.
 
 | Milestone | State |
 |---|---|
-| Architecture (ADRs 1–49, frozen) + amendments (ADR-50 .NET 10, ADR-51 superseded, ADR-52 repo map) | ✅ in GymOS-Specification |
+| Architecture (ADRs 1–49, frozen) + amendments (ADR-50 .NET 10, ADR-51 superseded, ADR-52 repo map, ADR-53 email sender, **ADR-54 SQL Server — `Proposed`, not approved**) | ✅ in GymOS-Specification · ⬅ **ADR-54 needs its rationale written and then approval; the migration is already implemented** |
 | **M0 — engineering foundation** (skeleton, architecture/package law, kernel + CQRS dispatcher, PostgreSQL/EF/outbox, Docker, logging/correlation/OTel, Testcontainers, CI) | ✅ complete |
 | **M1.1 — identity domain** (User/Role/Permission/RefreshToken aggregates, platform schema migration, declare-and-validate seeder) | ✅ complete — 69 tests green |
 | **M1.2 — auth services & endpoints** (Argon2id, JWT + rotating refresh tokens, `/api/v1/auth`, SuperAdmin seed) | ✅ complete — 159 tests green, verified live |
@@ -246,6 +296,7 @@ before resuming work on any machine.
 | **Solution view + F5** | ✅ **merged** (`053f4d6`, `0d56184`) — Solution Explorer regrouped by role (Host/Platform/Shared/Tests, docker-compose at the root); F5 now starts postgres + api + **mailpit** with email wired, so the invitation flow works with nothing started by hand. No project renamed, moved, or re-referenced |
 | **R14 — tenant isolation mechanism** (`ITenantContext`/`ITenantContextSetter`, `TenantSessionInterceptor`, `TenantIsolationValidator`, route-based `TenantResolutionMiddleware`) | ✅ **mechanism built and tested, committed locally on `development`** (not yet pushed to `origin` — pushing is the maintainer's call) — **303 integration / 1401 total tests green**, 0 build warnings, `dotnet format` clean · rules: **`docs/BusinessRules/TenantIsolation.md`** · design: `docs/superpowers/specs/2026-08-14-r14-tenant-isolation-design.md` · **R14 has a subject and a passing validation for the first time, and no production table is tenant-scoped yet** — Members is next and will be the first · three open items originally recorded under "Known open items" — ~~the deployment connects to PostgreSQL as a superuser (voids `FORCE`)~~ **closed by the next row**, no gym-scoped grant can be issued through the API yet, and `TenantScope` is owed rather than built |
 | **Database roles (R14 close-out)** — three roles replacing the single superuser (`gymos_admin`/`gymos_migrator`/`gymos_app`), `docker/postgres/initdb/10-roles.sql`, a one-shot `migrator` compose service, `TenantIsolationValidator`'s role check made unconditional | ✅ **built and tested, committed locally on `development`** (not yet pushed) — **311 integration / 1409 total tests green**, `ArchitectureTests` **153**, 0 build warnings, `dotnet format` clean · `docker compose down -v && docker compose up -d` proven to bring up a working stack from an empty volume, migrator exits `0`, three roles present with the correct attributes · design: `docs/superpowers/specs/2026-08-15-database-roles-design.md` · rules: **`docs/BusinessRules/TenantIsolation.md`** · runbook: **`docs/runbooks/managed-postgres-roles.md`** (Azure, not yet provisioned against) · **the superuser open item is closed**; the gym-scoped-grant and `TenantScope` open items are unchanged by this increment |
+| **PostgreSQL → SQL Server migration (ADR-54)** — provider and packages, every runtime adapter, all seventeen migrations replaced by two, the Docker stack, and the integration harness | ⚠️ **built on `feature/sqlserver-migration`, unmerged and unreviewed** (`4b29293`, `002740f`, Konstantinos, 2026-08-24) — author reports **1,420 tests / 314 integration green** and a booting stack; **not re-verified here** (SDK 10.0.302 missing on this machine) · `contracts/openapi-v1.json` unchanged, so no console/mobile caller moves · **ADR-54 is `Proposed`** and its rationale is a placeholder · branch is cut from `development` and carries the 60 R14 commits with it · console side: `GymOS-Platform` `2c45888` (E2E suite only) · ⬅ **review owed, ADR approval owed** · one host-run defect (`appsettings.Development.json` left on the PostgreSQL string) found and **fixed 2026-08-24** |
 | M6+ — per approved roadmap (monitoring, settings) | next |
 
 ## M1.2 as built
@@ -1807,6 +1858,157 @@ Whole solution — `SharedKernel` 131 · `Platform.Domain.UnitTests` 434 ·
 `Platform.Infrastructure.UnitTests` 67 · `ArchitectureTests` 153 · `IntegrationTests` 312 —
 **1410 passed, 0 failed**.
 
+## SQL Server migration as built (ADR-54, `feature/sqlserver-migration`, 2026-08-24)
+
+**Not merged, not reviewed, and authorised by an ADR that is still `Proposed`.** Two commits:
+`4b29293` is an explicit non-building checkpoint (four test files still named
+`PostgresException`/`PostgresErrorCodes`), `002740f` completes it. Read both commit messages before the
+code — they are unusually good, and each of the engine differences below is written up where it bites
+rather than in a summary.
+
+**Provider and packages.** Npgsql, `Npgsql.EntityFrameworkCore.PostgreSQL`, `Npgsql.OpenTelemetry` and
+`Testcontainers.PostgreSql` are gone; `Microsoft.EntityFrameworkCore.SqlServer`,
+`Microsoft.Data.SqlClient`, `OpenTelemetry.Instrumentation.SqlClient` and `Testcontainers.MsSql` replace
+them. `docs/Engineering/DEPENDENCY_POLICY.md` and `ForbiddenPackagesTests` were updated **in the same
+commits**, per the standing rule — Npgsql is out of the approved list and out of `ProviderSdkPrefixes`.
+A licensing improvement in passing: the Npgsql family shipped under the PostgreSQL licence, the
+replacements under MIT. The migrations history table moves to the `platform` schema so the migrator
+principal can write it. **`EnableRetryOnFailure` is deliberately off** — see "Known open items".
+
+**Runtime adapters.** Advisory and job locks → `sp_getapplock` (Transaction and Session owners);
+database clock → `SYSUTCDATETIME()`; tenant session → `sp_set_session_context`;
+`next_invoice_number` and `ensure_audit_log_partitions` → stored procedures `WITH EXECUTE AS OWNER`,
+because SQL Server functions cannot issue DDL and the app principal holds none; `FOR UPDATE`/`FOR SHARE`
+→ `UPDLOCK`/`REPEATABLEREAD` hints; `ON CONFLICT DO NOTHING` → `INSERT … WHERE NOT EXISTS` under
+`UPDLOCK, HOLDLOCK`; `ILIKE` → `LIKE` against a `Latin1_General_100_CI_AS` database.
+
+**Types.** `jsonb` → `nvarchar(max)`; `numeric` → `decimal`; `xmin` → a real `rowversion` column
+surfaced as `ulong` through `NumberToBytesConverter`, declared once in
+`ConcurrencyConventions.HasGymOSRowVersion()` and asserted for every mutable entity by
+`ConcurrencyModelTests` — under PostgreSQL the declaration was free, so getting it wrong now means a
+table with no concurrency control at all. The API's version token stays an opaque decimal string, which
+is why `contracts/openapi-v1.json` has no diff. `AreNullsDistinct(false)` is dropped because SQL Server
+already treats NULLs as equal in a unique index.
+
+**Migrations.** The seventeen Npgsql migrations are **deleted rather than converted**, replaced by a
+scaffolded `InitialSqlServer` and a hand-written `RuntimeDatabaseProgrammability` carrying the RLS
+predicate, invoice numbering, and the audit-log partition function, scheme and maintenance procedure.
+`002740f` restored four pieces of hand-written DDL that deleting the old migrations had silently
+dropped: the plan-price, MRR-currency and idempotency-claim unique indexes, and the single-currency
+CHECK on invoices.
+
+**Docker.** SQL Server 2022 Developer replaces PostgreSQL 17. The image has no
+`docker-entrypoint-initdb.d`, so initialisation is an explicit idempotent **`db-init`** service that the
+migrator gates on — and unlike the PostgreSQL scripts it replaces, it runs on every `up` rather than
+only against an empty data directory, so **changing a password in `.env` does not rotate it**. pgAdmin
+is removed rather than swapped (it cannot speak to SQL Server), leaving the `tools` profile empty;
+Mailpit is unaffected, having been profile-less since ADR-53.
+
+**Roles.** The three-principal split survives intact: `sa` for humans only, `gymos_migrator`
+(`db_ddladmin` + reader/writer + `ALTER ANY SECURITY POLICY`, one-shot `migrator` service),
+`gymos_app` (reader/writer and nothing else). `TenantIsolationValidator` refuses to boot on a principal
+holding `sysadmin`, `db_owner`, `db_securityadmin`, `ALTER ANY SECURITY POLICY` or `CONTROL`, which is
+what makes the split load-bearing rather than hygienic. **`FORCE ROW LEVEL SECURITY` has no counterpart
+and needs none:** a SQL Server security policy filters the table owner and `sa` too, where a PostgreSQL
+owner bypassed RLS unless forced. This is strictly stronger than what it replaces.
+
+**Five engine differences, four of them found by running the stack.** `READ_COMMITTED_SNAPSHOT` is on,
+because SQL Server's READ COMMITTED takes shared locks and `SetGymFeaturesCommand`/`SetPlanFeatureCommand`
+deadlocked through `plan_features` — a table neither locks on purpose — returning a 500 from the
+concurrency test; RCSI is also the Azure SQL default, so development and production now agree, and the
+explicit hints still block exactly where they ask to. `gymos_app` needs `VIEW DEFINITION ON
+SCHEMA::platform`, because catalog views are permission-filtered and `sys.security_predicates` otherwise
+reads as empty on the app connection, failing the isolation check closed for a reason that was not true.
+The container needs `CAP_NET_BIND_SERVICE` — not to bind a port, but because the kernel refuses to exec
+a binary whose file capabilities fall outside the bounding set. `CREATE LOGIN` will not take a
+parameterised password, so it is built with `QUOTENAME(…, quote)` and **a bootstrap password may not
+contain a single quote**. The fifth is **not written up anywhere and should be**: the database-wide CI
+collation makes the client-supplied `idempotency_key` match case-insensitively, where `lc-collate=C`
+compared it byte-for-byte. Negligible for random keys; it is still a behaviour change.
+
+**Two traps recorded in the commits, both worth carrying forward.** EF Core silently adds
+`WHERE [tenant_id] IS NOT NULL` to a unique index over a nullable column, which would have exempted
+every platform-scope role from the constraint meant to catch duplicates — `HasFilter(null)` suppresses
+it, and **any future such index needs the same**. And `sys.database_principals` is permission-filtered,
+so a migration guarded on seeing `gymos_app` skips its GRANT without error; grants therefore live in
+bootstrap as `GRANT EXECUTE ON SCHEMA::platform`, which is also the `ALTER DEFAULT PRIVILEGES` analogue
+for future modules.
+
+**Test infrastructure.** `PostgresFixture` → `SqlServerFixture` (+ `TestDatabase`, `MigrateOnlyTests`).
+Databases are created with small explicit files under SIMPLE recovery and the buffer pool is bounded,
+because a hundred default-sized databases in one instance was enough to make the engine stop answering
+mid-query and fail thirty tests in suites that had nothing to do with it. **No test was skipped or
+deleted to make the suite pass** — checked: the diff adds no `Skip =` and no `TODO`/`FIXME`.
+
+**Console side.** `GymOS-Platform` `2c45888`, confined to the E2E suite: `seed-analytics.sql` rewritten
+(`generate_series` → recursive CTE, `gen_random_uuid` → `NEWID`, dates off `SYSUTCDATETIME` so a
+non-UTC container cannot drift a day), `global-setup.ts` shells `sqlcmd -b` instead of `psql`, and CI
+gained a step to apply the backend's own initdb scripts because the mssql image builds neither database
+nor principals from environment variables. The app itself is untouched.
+
+**Gate numbers — the author's, from `002740f`, not re-measured here:** restore, build,
+`dotnet format --verify-no-changes` and test green; **1,420 passed, 0 failed**, of which **314
+integration** against SQL Server 2022 via Testcontainers; the composed stack boots from a clean checkout
+and the seeded administrator signs in. Not reproducible with a local SDK: `global.json` pins
+**10.0.302** and only **10.0.301** is installed. Reproduced instead in the
+`mcr.microsoft.com/dotnet/sdk:10.0.302` container — the pinned SDK exactly: **build 0/0, `dotnet
+format` exit 0, 1,137 unit tests green**. **The 314 integration tests remain unrun — run them before
+promoting.**
+
+## Environment model as built (2026-08-24, same branch)
+
+**Three environments, three databases, and four independent things enforcing the separation.**
+Documented in full in **`docs/Infrastructure/ENVIRONMENTS.md`** — read that, not this summary.
+`Development`→`GymOS_Local`, `Staging`→`GymOS_UAT`, `Production`→`GymOS_Production`; the name is what
+makes the pairing checkable, which is the whole reason they are not one name on three servers.
+
+**`DatabaseEnvironmentGuard`** (`Platform.Infrastructure/Persistence`) runs in `Program.cs` above the
+`Database:MigrateOnly` branch, so it covers the migrator too — the process that applies DDL is the one
+that must least be allowed to do it to the wrong environment. It **denies cross-environment pairings**
+rather than prescribing a database per environment, and that is not laziness: the integration suite
+boots the real host as `Development`, `Staging` **and** `Production` against generated Testcontainers
+databases (`OpenApiExposureTests` pins what an operator gets by doing nothing), so a prescriptive rule
+would have needed a bypass switch that production could also set. Messages name the environment, the
+database found and the database expected, and **never the connection string** — it carries a password.
+Verified live in both directions: a `Production` host and a `Staging` host each refused `GymOS_Local`
+and died before migrating, and `Development`+`GymOS_Local` booted to `/health/ready` 200.
+
+The other three layers: **`SqlServerFixture`** refuses to create or open any managed name, so the suite
+cannot be the thing that names one; **`Assert-LocalDatabaseTarget`** (`scripts/GymOS.LocalDatabase.psm1`)
+is stricter still, requiring `GymOS_Local` on a *local server* — which is what catches a database called
+`GymOS_Local` sitting on the UAT server, where the name alone would pass; and the **deploy workflows**
+grep the migrator connection string for the expected database before connecting.
+
+**`GYMOS_DB` is now required in `docker-compose.prod.yml`** (`${GYMOS_DB:?…}`), so production cannot
+inherit a default. Proven both ways: prod interpolates with it, and refuses without it.
+
+**Scripts** (`scripts/`, all three ASCII-only — PowerShell 5.1 reads `.psm1` as ANSI and mangled
+em-dashes broke the parse first time): `populate-all.ps1` and `reset-local-db.ps1`, sharing one guard.
+Verified end to end against a live stack: reset drops, `db-init` rebuilds, the migrator applies, and
+populate seeds — `1` user, `5` roles, `16` permissions, `12` features, and the seeded administrator
+signs in (HTTP 200). Idempotent: a second `populate-all` left all four counts identical.
+
+**Four defects found by running these rather than by reading them**, each fixed and re-verified:
+`SET SINGLE_USER` raced the API's reconnect, so the drop failed *and left the database stuck in
+SINGLE_USER* (now stops the API first, with a T-SQL `TRY/CATCH` that restores `MULTI_USER`); `THROW`
+needs a preceding `;`; `docker compose` writes progress to **stderr**, which Windows PowerShell turns
+into terminating errors under `$ErrorActionPreference='Stop'` whenever a caller merges streams (hence
+`Invoke-Native`, which fails on exit code instead); and reset passed `-SkipStack` to populate after
+stopping the API, so it reported "freshly built and populated" against a database with **zero** users,
+roles and features. That last one is the one worth remembering: nothing failed, it simply was not true.
+
+**Branches: `staging` is retired.** CI now builds `[main, development]`. It sat between them as a third
+promotion step nothing was ever promoted through — it last moved on 13 August. The ref still exists.
+**Only this repository was changed**; the other six still trigger on `staging`.
+
+**Deployment is prepared and UNVERIFIED.** `deploy-uat.yml` (push to `development`) and
+`deploy-production.yml` (push to `main`) are committed, valid YAML, and **gated off** behind the
+repository variables `UAT_DEPLOY_ENABLED` / `PRODUCTION_DEPLOY_ENABLED`, so merging changes nothing
+while no infrastructure exists. Production deploys the SHA-tagged image UAT already tested rather than
+rebuilding, and its migrate job sits behind the `Production` GitHub Environment's required reviewers.
+**The `deploy` step in both is a deliberately failing placeholder** — no Azure resource exists, and an
+`azure/webapps-deploy` block against invented resource names would look finished and fail later.
+
 ## Standing rules (non-negotiable, enforced)
 
 - **Architecture is frozen.** Deviations need a superseding ADR in
@@ -1838,37 +2040,45 @@ Just to run it — nothing but Docker required:
 ```
 git clone https://github.com/GymOS-Management/GymOS-Backend
 cd GymOS-Backend
-docker compose up -d               # PostgreSQL + migrator + API + mailpit, :5080
-                                   # migrator applies migrations and exits 0, then api starts
+docker compose up -d               # SQL Server 2022 + db-init + migrator + API + mailpit, :5080
+                                   # db-init creates the database, both principals and the two schemas
+                                   # and exits 0; migrator then applies migrations and exits 0; then api
                                    # sign in: admin@gymos.local / gymos-dev-admin-password
 ```
 
-**On an existing clone, `docker compose down -v` is required first, and it destroys the data.**
-`docker/postgres/initdb/10-roles.sql` — which creates `gymos_migrator` and `gymos_app` — is an initdb
-script, and initdb scripts run exactly once, only against an empty data directory. A volume created
-before this increment has no such roles in it, so the API's `gymos_app` connection (or the migrator's
-`gymos_migrator` one) fails outright rather than falling back to anything. There is no in-place upgrade
-path for this; wiping the volume is the fix, and it is exactly as destructive as it sounds — confirm you
-do not need whatever is in it first.
+**On a clone from before 2026-08-24 (the SQL Server migration), `docker compose down -v` first.** Not
+for the reason the PostgreSQL version needed it: the volume is a *different* volume
+(`gymos-postgres-data` → `gymos-mssql-data`), so the old data is simply no longer mounted rather than
+in the way. What does need clearing is any still-running `gymos-postgres` container and, more
+importantly, **your `.env`**.
 
-**A stale `.env` carrying the old `POSTGRES_USER=gymos` produces a confusing first-boot failure.**
-`docker-compose.yml`'s postgres healthcheck runs `pg_isready -U ${POSTGRES_USER:-gymos_admin} …`, so an
-old `.env` that still sets `POSTGRES_USER=gymos` makes the healthcheck probe a role that
-`10-roles.sql` never creates (the roles it creates are `gymos_migrator` and `gymos_app`; `gymos_admin`
-comes from `POSTGRES_USER` itself) — postgres reports unhealthy, `api` and `migrator` never leave
-`Created` waiting on `depends_on: service_healthy`, and nothing in the logs says ".env" anywhere. Delete
-or update any pre-existing `.env` that still names `gymos` before bringing the stack up.
+**A stale `.env` is the likeliest first-boot failure, and there are two distinct ways it bites.** The
+`POSTGRES_*` variables are now unread, so an old `.env` full of them is inert and misleading rather than
+harmful. The two that do break things: **`GYMOS_DB_CONNECTION` pointing at the team's shared Neon
+PostgreSQL instance** is now a connection string in the wrong dialect — `Microsoft.Data.SqlClient`
+rejects `Host=`/`Username=` outright — so clear it or replace it with a `Server=…,1433;…` string; and
+any password you set yourself must satisfy **SQL Server's complexity policy** (8+ characters, three of
+upper/lower/digit/symbol), because the engine refuses to start at all if the `sa` password fails it and
+`CREATE LOGIN` refuses the others. **A bootstrap password may also not contain a single quote** —
+`sqlcmd -v` substitution is textual, so the quote breaks the statement before the server can escape it.
+It fails loudly at first boot (`db-init` runs with `-b` and exits non-zero, and compose then refuses to
+start the migrator or the API behind it).
+
+**`db-init` is idempotent and runs on every `up`, unlike the initdb scripts it replaces** — which also
+means **changing a password in `.env` does not rotate it**. Rotate with `ALTER LOGIN`, or
+`docker compose down -v` for a throwaway environment.
 
 To work on it — API on the host, database in a container:
 
 ```
 dotnet tool restore                # pinned dotnet-ef
-docker compose up -d postgres      # PostgreSQL 17 only — creates gymos_migrator/gymos_app too
-dotnet test GymOS.Backend.slnx     # expect 1409 green (needs Docker) — see the test-host warning below
+docker compose up -d db-init       # brings mssql up with it, then creates the database + principals
+                                   # `up -d mssql` alone is NOT enough: no database, no logins
+dotnet test GymOS.Backend.slnx     # expect 1420 green (needs Docker) — see the test-host warning below
 
 # Migrations no longer apply on API start-up in any environment (Database:MigrateOnStartup is false
-# everywhere) — run them once by hand, as the migrator role, before the first `dotnet run`:
-dotnet ef database update --connection "Host=localhost;Port=5432;Database=gymos;Username=gymos_migrator;Password=gymos_dev_migrator_password" \
+# everywhere) — run them once by hand, as the migrator principal, before the first `dotnet run`:
+dotnet ef database update --connection "Server=localhost,1433;Database=gymos;User Id=gymos_migrator;Password=Gymos_dev_migrator_password1;Encrypt=True;TrustServerCertificate=True" \
     --project src/Platform/GymOS.Platform.Infrastructure --startup-project src/Host/GymOS.WebApi
 
 # Optional: an account to sign in with. Without it the seeder warns and creates nothing.
@@ -1879,28 +2089,84 @@ dotnet run --project src/Host/GymOS.WebApi   # seeds only now; migrations alread
 ```
 
 `appsettings.Development.json` connects the host-run API as `gymos_app`, matching the container's own
-connection string — a bare `dotnet run` against the local sidecar exercises the same non-owner role the
-Docker deployment does, not a superuser.
+connection string — so a bare `dotnet run` against the local sidecar exercises the same non-owner
+principal the Docker deployment does, never `sa`. It differs from the container's string in one place
+only: `Server=localhost,1433` rather than `Server=mssql,1433`, because the host reaches the sidecar over
+the published port instead of the compose network. **`db-init` must have run at least once** or neither
+the database nor the login exists.
+
+⚠️ The migration shipped without updating this file — it still held the Npgsql-syntax
+`Host=localhost;Port=5432;…` string, which `Microsoft.Data.SqlClient` rejects outright, so `dotnet run`
+and Visual Studio F5 both failed at startup. **Fixed 2026-08-24**, and the fix is not merged upstream
+yet.
 
 The JWT signing key has a **development-only** value in `appsettings.Development.json`
 (public, in version control, loaded only when `ASPNETCORE_ENVIRONMENT=Development`) —
 the same treatment the dev database password already gets. Every other environment must
 supply `Security:Jwt:SigningKey`; startup fails fast if it is missing or under 32 bytes.
 
-**Port 5432 collision:** if a native PostgreSQL is installed locally it competes with the
-container for 5432 and wins, producing a password authentication failure for whichever role tried to
-connect. Set `POSTGRES_PORT=5433` in `.env` (the containerised API is unaffected — it reaches the
-database over the compose network), or stop the local service.
+**Port 1433 collision:** if a native SQL Server or LocalDB is installed locally it competes with the
+container for 1433 and wins, producing a login failure rather than a port conflict for whichever
+principal tried to connect. Set `MSSQL_PORT=1434` in `.env` (the containerised API is unaffected — it
+reaches the database over the compose network), or stop the local service.
 
 Environment facts: .NET 10 SDK pinned via `global.json` (ADR-50); solution is
 `GymOS.Backend.slnx`; local dev DB credentials live in `appsettings.Development.json`
-matching `docker-compose.override.yml` (dev-only, deliberately public). The postgres volume
-was renamed `gymos-pgdata` → `gymos-postgres-data` in M0.X, so a pre-M0.X local database is
-still on disk but no longer mounted — see DOCKER.md troubleshooting.
+matching `docker-compose.override.yml` (dev-only, deliberately public — but see the warning above:
+the file's connection string was not migrated). **The SDK pin is `10.0.302` with
+`rollForward: latestFeature`, so a machine carrying only `10.0.301` cannot build the solution at all** —
+`dotnet build` exits with "A compatible .NET SDK was not found" before compiling anything. Install
+10.0.302 or later in the same feature band. The data volume is now `gymos-mssql-data`; the PostgreSQL-era
+`gymos-postgres-data` (itself renamed from `gymos-pgdata` in M0.X) is still on disk but no longer
+mounted by anything — see DOCKER.md troubleshooting. There is **no database console in the stack**:
+pgAdmin is gone and the `tools` profile is empty, so use an external client against
+`localhost,1433` — `sa` / `Gymos_dev_sa_password1`, trust the server certificate.
 
 ## Next step (resume here)
 
-### As of 2026-08-15, end of session — read this first
+### As of 2026-08-24 — read this first
+
+`feature/sqlserver-migration` exists in **both** `GymOS-Backend` (`002740f`, 62 commits ahead of `main`)
+and `GymOS-Platform` (`2c45888`). Neither is merged. Nothing has been reviewed. **Do these in order —
+the first two are cheap and the third is what everything else waits on.**
+
+1. **Get ADR-54's rationale from Konstantinos and then approve or reject it.** The ADR is drafted in
+   `GymOS-Specification/ADR-CHANGELOG.md` as **`Proposed`**, with everything it supersedes and everything
+   it leaves owed enumerated — but its "why" is a marked placeholder, because no commit, doc or spec in
+   the branch states one. **Do not approve it by filling that in on his behalf.** If the reason turns out
+   to be weaker than "stay on PostgreSQL", this is the cheapest moment in the project's life to find
+   that out: nothing is merged.
+2. ~~**Fix `src/Host/GymOS.WebApi/appsettings.Development.json`.**~~ **Done 2026-08-24** — it held a
+   PostgreSQL connection string, so `dotnet run` and Visual Studio F5 failed at startup. Verify it with a
+   host run once the SDK is installed; the string itself was proved to parse, but the app was never
+   started with it.
+3. **Run the 314 integration tests.** Everything else is now measured: build 0/0 and 1,137 unit tests
+   green, via the SDK container (see "Known open items" for the command — no local SDK needed, which
+   matters if you are on a machine without admin rights). The integration suite is the one gate still
+   outstanding, it needs a Docker socket inside that container, and it is the suite that would actually
+   exercise the persistence layer the migration replaced. **A local SDK 10.0.302+ is still worth
+   installing** — `dotnet run`, F5 and `dotnet ef` all need one.
+4. **Then review the branch, and review it as a security change.** It moves tenant isolation to a
+   different enforcement primitive, re-derives the three-principal split, adds a metadata-visibility
+   grant to the application principal, and changes string equality database-wide. Those four are exactly
+   where a subtle regression would hide, and R14's whole point is that isolation is provable.
+5. **Merge to `development`, not `main`.** 60 of the 62 commits are the R14/tenancy work from
+   2026-08-15; `main` has never seen them.
+6. **Two small things to fold into the review fixes:** write up the fifth engine difference (the CI
+   collation makes `idempotency_key` match case-insensitively — nothing documents it), and correct
+   `IdempotencyRecordConfiguration`'s XML doc, which still claims the claim index needs a `COALESCE`
+   sentinel and lives in the deleted `AddIdempotencyRecords` migration. Neither is behavioural; both are
+   the kind of comment this repo does not leave wrong.
+
+**Everything owed before 2026-08-24 is still owed**, and none of it is affected by the migration except
+in needing to be re-run against SQL Server: M4.1's multi-agent review gate, M5's whole-branch review,
+F3's review and its unwritten `F3-AS-BUILT.md`, Konstantinos's API-reference increment, audit finding 7
+(concurrent failed logins collide on the user row's version → 409 on `/auth/login`, under-counted
+lockout), then **M6** (monitoring, settings). R14's two open items — no gym-scoped grant can be issued
+through the API, and the gym-scoped-grants design has never been re-read — are unchanged, and R14 still
+has no production tenant-scoped table; Members is next and will be the first.
+
+### Previously, as of 2026-08-15, end of session
 
 Three commits landed today and are **pushed** to `origin/development`: `c86a02c` (two parked
 documentation fixes), `25136f3` (`TenantScope`), `59c9e38` (the gym-scoped-grants design spec).
@@ -2099,6 +2365,143 @@ squarely inside Members' own scope and is the real reason the tenant-resolution 
 been exercised against a real grant.
 
 ## Known open items / honest notes
+
+### From the environment model (2026-08-24) — open
+
+- **Demo data is not implemented, and `populate-all.ps1` says so rather than exiting 0 quietly.**
+  Identity, permissions, the feature catalogue and the SuperAdmin are seeded and usable (verified:
+  `1/5/16/12`), but there are **zero gyms and zero plans**, so the dashboards and the consoles have
+  nothing to show. It has to be a seeder *inside the application*: every object is an aggregate with
+  invariants in code (`Gym.Provision`, `SubscriptionPlan.Create`, `GymSubscription.Assign`,
+  `Invoice.Issue`, `DailyPlatformStats.Record`) and invoice numbers come from a stored procedure the
+  app calls, so INSERTing past all that would produce rows the domain considers impossible. The
+  mechanism is the existing host-mode pattern — a `Seed:DemoData` flag alongside
+  `Database:MigrateOnly`. **Note the domain limit**: Members, trainers, classes, bookings, check-ins
+  and payments do **not exist in code** (Members is a frozen design document), so no seeder can create
+  them and none should pretend to.
+
+- **The unit suites and the build ARE verified; the integration suite is not.** The local SDK gap
+  (pin 10.0.302, installed 10.0.301) was worked around by running the toolchain **inside the
+  `mcr.microsoft.com/dotnet/sdk:10.0` container** against the mounted repository — that image carries
+  **10.0.400**, which satisfies `rollForward: latestFeature`. Anyone stuck without a local SDK can do
+  the same:
+
+  ```
+  docker run --rm -v "/c/Personal Projects/GymOS/GymOS-Backend:/src" -w /src \
+      mcr.microsoft.com/dotnet/sdk:10.0 dotnet test tests/GymOS.ArchitectureTests
+  ```
+
+  Measured this way on the PINNED SDK 10.0.302: **build 0 warnings / 0 errors**, **`dotnet format` exit 0**, and
+  **1,137 unit tests passed, 0 failed** — SharedKernel 131 · BuildingBlocks 74 · Domain 434 ·
+  Application 247 · Infrastructure **98** (was 67; the 31 new `DatabaseEnvironmentGuardTests` cases
+  are the difference) · Architecture 153.
+
+  **Pin the image tag to `10.0.302`, not `10.0`, and this is the important part.** The floating `10.0`
+  tag currently carries **10.0.400** — a higher feature band, which `rollForward: latestFeature`
+  happily accepts. It builds and tests identically, but **`dotnet format --verify-no-changes` disagrees
+  with itself across the two bands**: on 10.0.400 it reports ~150 WHITESPACE errors across files nobody
+  had touched, and on 10.0.302 the same tree is **clean, exit 0**. Measured on both, and on
+  pre-migration `development` too, which fails on 10.0.400 in exactly the same way — so it is the
+  toolchain disagreeing, not the code. Anyone who "fixes" those errors will be reformatting the whole
+  repository to satisfy an SDK CI does not use.
+
+  ```
+  docker run --rm -v "/c/Personal Projects/GymOS/GymOS-Backend:/src" -w /src \
+      mcr.microsoft.com/dotnet/sdk:10.0.302 dotnet format GymOS.Backend.slnx --verify-no-changes
+  ```
+
+  The same applies to installing an SDK locally: **winget offers 10.0.400**, which will build fine and
+  then disagree with CI about formatting. Install 10.0.302, or expect that.
+
+  **One other trap.** Passing `--artifacts-path /tmp/art` puts the test assemblies outside the
+  repository, and `SolutionLocator` walks up from the assembly to find `GymOS.Backend.slnx` — so 8
+  architecture tests fail with a `TypeInitializationException` that has nothing to do with the code.
+  Run them with default output paths.
+
+- **The integration suite (314 tests) has still not been run.** It needs Testcontainers, which needs a
+  Docker socket from inside the SDK container, and that was not judged worth the setup here. The paths
+  it would cover were instead verified by hand against a live stack — migrations, seeding, the
+  environment guard in both directions, and a working sign-in (see the environment-model section) —
+  but that is not a substitute. **Run it before promoting anything.**
+
+- **The deploy workflows have never run.** See the environment-model section above. Still required:
+  choose a hosting target, provision it plus two Azure SQL databases in an EU region, create the two
+  GitHub Environments and their secrets, implement the `deploy` step, flip the enable variables.
+
+- **Only this repository's CI lost the `staging` trigger.** The other six GymOS repositories still
+  build it. Left alone deliberately rather than editing six repos nobody asked about.
+
+### From the SQL Server migration (2026-08-24) — all open, none merged
+
+- ~~**`appsettings.Development.json` was never migrated, so the host-run API does not start.**~~
+  **Fixed 2026-08-24.** It read
+  `Host=localhost;Port=5432;Database=gymos;Username=gymos_app;Password=gymos_dev_app_password`.
+  `Microsoft.Data.SqlClient` rejects `Host` and `Username` as unsupported keywords, so
+  `dotnet run --project src/Host/GymOS.WebApi` and Visual Studio F5 on the API project both fail at
+  startup. **Nothing caught it because nothing exercises that file:** the integration suite builds its
+  own strings in `SqlServerFixture`, and the containerised API takes its own from
+  `docker-compose.override.yml` — so the author's "the composed stack boots and the seeded administrator
+  signs in" is true and still leaves this broken. The intended value, matching the container's own
+  app-principal string:
+  `Server=localhost,1433;Database=gymos;User Id=gymos_app;Password=Gymos_dev_app_password1;Encrypt=True;TrustServerCertificate=True`.
+  **Found by inspection, not by running it** — the SDK pin (10.0.302 vs the 10.0.301 installed) prevented
+  building. Left unfixed deliberately: it is the branch author's file and his call.
+
+- **ADR-54 is `Proposed` and its rationale is a placeholder.** The architecture is frozen and names
+  PostgreSQL across all four specification documents, so this implementation ran ahead of the freeze
+  protocol rather than behind it. The ADR is written and specific about what it supersedes; what it
+  cannot supply is *why*, because nothing in the branch says. **Until that paragraph is written by the
+  author and approved, the migration is unauthorised work, not merely unmerged work.**
+
+- **`EnableRetryOnFailure` is off, and Azure SQL is the production target.** Deliberate and documented
+  (`PlatformInfrastructureServiceCollectionExtensions.cs:42`): `SqlServerRetryingExecutionStrategy`
+  refuses user-initiated transactions, and both `PlatformIdentitySeeder` and `FeatureCatalogSeeder` open
+  one on every boot, so switching it on fails startup rather than hardening it. But
+  `ARCHITECTURE-ADDENDUM.md`'s resilience table **mandates** bounded transient retry, and on Azure SQL
+  transient faults are routine rather than exceptional — so this is a real gap the migration opened, not
+  a formality. Closing it means making every `BeginTransactionAsync` delegate replayable under
+  `Database.CreateExecutionStrategy().ExecuteAsync(…)`, which changes transaction semantics. Tracked as
+  the first follow-up in `docs/runbooks/managed-sqlserver-roles.md`; **it should carry a milestone rather
+  than a runbook note.**
+
+- **Every primary key is now a clustered index over a random GUID.** `id uuid PRIMARY KEY` cost nothing
+  under PostgreSQL's heap tables; EF Core makes a SQL Server primary key clustered, so each insert lands
+  at a random point in the table's physical order and splits pages. Nothing in the migration addresses
+  or mentions it. The remedies are ordinary — a non-clustered primary key over a clustered surrogate, or
+  a lower fill factor — but they are schema decisions, so they belong in a planned increment and not in a
+  hotfix once `audit_logs` and `outbox_messages` are large.
+
+- **Three approved future schemas can no longer be built as written**, and each will surface at its own
+  milestone unless someone plans for it now. `ARCHITECTURE-PLATFORM-CAPABILITIES.md` §5's search v1 is
+  `tsvector` + `pg_trgm` + GIN indexes; SQL Server Full-Text Search covers ranked full-text but **typo
+  tolerance does not survive the move**. `rule_versions.granted_permissions` is a `text[]`, and SQL
+  Server has no array type — it becomes a junction table or JSON when Automation is built. And `jsonb`
+  is now `nvarchar(max)`, which is **not indexable the way a GIN index was**: settings resolution,
+  automation conditions and gateway config each need a persisted computed column and an index on that.
+  All three are recorded in ADR-54; the search one is the largest and the easiest to walk into.
+
+- **The fifth engine difference is undocumented.** The database-wide `Latin1_General_100_CI_AS` collation
+  makes the **client-supplied `idempotency_key` match case-insensitively**, where the PostgreSQL cluster's
+  `lc-collate=C` compared it byte-for-byte. Two keys differing only in case now collide. Negligible in
+  practice for random keys, and the collation itself is deliberate, asserted by a test, and what now
+  provides §2's `citext` slug semantics — but the other four differences got written up where they bite
+  and this one did not. Token hashes are unaffected: the server computes lower-case hex on both sides.
+
+- **`IdempotencyRecordConfiguration`'s XML doc is wrong in both its claims.** It says the unique claim
+  index needs `COALESCE` over the nullable `tenant_id` and lives in the `AddIdempotencyRecords`
+  migration. The sentinel was dropped (SQL Server treats NULLs as equal in a unique index, so the
+  collision the `COALESCE` manufactured is the default) and that migration is deleted. The accurate
+  account is in `20260823193131_RuntimeDatabaseProgrammability.cs:113`.
+
+- **`docs/Infrastructure/DOCKER.md` contradicts itself about Mailpit.** Its header lists five services
+  running today including `mailpit`, and `docker-compose.override.yml` states explicitly that Mailpit has
+  no profile since ADR-53 — but the §1 architecture diagram still lists it under "profiles (off by
+  default)". The compose file is correct; the diagram is stale.
+
+- **`docs/runbooks/managed-sqlserver-roles.md` has never been applied against a real Azure SQL
+  instance.** The same was true of the PostgreSQL runbook it replaces, so this is not a regression — but
+  the new one carries more weight, because Azure SQL has no `sa` and no server-scoped `CREATE LOGIN`, so
+  the initdb scripts **do not run there unchanged**. First real provisioning will be the first test of it.
 
 - ~~**Two documentation items parked at the end of the database-roles increment**, both raised by its
   final re-review, both correctness-neutral and neither fixed because the increment's fix budget was
