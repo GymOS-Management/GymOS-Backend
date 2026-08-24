@@ -84,7 +84,23 @@ jobs:
     if: needs.preflight.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     environment: UAT # scopes the secrets below to this environment, and nothing else can request them
+
+    # This job pulls the image `build` pushed and runs it; it never pushes one. Narrowing the
+    # token to read overrides the workflow-level `packages: write`, which only `build` needs.
+    permissions:
+      contents: read
+      packages: read
     steps:
+      # Each job runs on a clean runner, so `build`'s GHCR login does not reach this one, and the
+      # package is private because the repository is. Without this the `docker run` below fails
+      # with `unauthorized` before a migration is attempted.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Apply pending migrations
         env:
           # The migrator principal, not the app principal. Set in the UAT GitHub Environment.

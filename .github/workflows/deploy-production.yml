@@ -99,6 +99,16 @@ jobs:
     # workflow or environment can read them.
     environment: Production
     steps:
+      # `verify-image` logged in on its own runner; this one is clean and the package is
+      # private, so the `docker run` below would fail with `unauthorized`. The workflow-level
+      # `packages: read` is already the right scope -- it just has to reach Docker.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Apply pending migrations
         env:
           MIGRATOR_CONNECTION_STRING: ${{ secrets.GYMOS_MIGRATOR_CONNECTION_STRING }}
