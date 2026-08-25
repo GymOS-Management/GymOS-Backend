@@ -46,10 +46,16 @@ Neon `ConnectionStrings:Database` that breaks host-run `dotnet run` with `Keywor
 'host'` is not present, so nothing was removed. No `.claude/skills/neon*` exists anywhere in the
 tree or under the user profile here, so there is no Postgres-flavoured steer for an agent to pick up.
 
-**Still unrun, and unchanged by any of the above: the 314-test integration suite.** Docker
-Desktop's Linux engine is not running on this machine (`npipe:////./pipe/dockerDesktopLinuxEngine`
-does not answer), so there is no SQL Server container for `SqlServerFixture` to reach. The 1,137
-unit and architecture tests were verified on the other machine and were not re-run here.
+**The integration suite has now been run here, and it is green: 316 passed, 0 failed, 0
+skipped, in 9m18s.** Release, `--logger trx`, against a Testcontainers-managed
+`mcr.microsoft.com/mssql/server:2022-latest` on Docker engine 29.2.1 — the image was a cold pull.
+**316 rather than the 314 the branch inherited, and both extras are this branch's own:**
+`Version_IsServedAnonymously_AndNamesTheBuildAndEnvironment` and
+`Version_IsAbsentFromTheOpenApiDocument`, which are the only test change it makes. Deliberately run
+*without* `--no-build` and with a unique trx name, because those are §4's two traps; and the count
+was read out of the run rather than inferred from the exit code, which is the only thing that
+distinguishes a pass from trap 1's zero-test exit 0. The 1,137 unit and architecture tests were
+verified on the other machine and were not re-run here.
 
 **§1's three owed items have not moved, and none is code:** the two Entra/SQL grants for
 `gymos-uat-deploy` plus `SCHEMA_DRIFT_ENABLED=true`, required reviewers on the `Production` GitHub
@@ -162,7 +168,9 @@ toolchain in there against the mounted repository gave **build 0 warnings / 0 er
 rather than floating `10.0`, which carries 10.0.400 and disagrees about formatting — the command and
 that trap are under "Known open items". The pin predates the branch (`fd7763e`); it is an environment
 gap, not a regression.
-**The 314 integration tests are still unrun — run them before promoting anything.**
+~~**The 314 integration tests are still unrun — run them before promoting anything.**~~
+**Closed 2026-08-25** — run on the second machine at 316 (the two extras being
+`feature/saas-hardening`'s own `/version` tests), 0 failed. See the top section.
 
 **One defect found reviewing the branch, not by running it:**
 `src/Host/GymOS.WebApi/appsettings.Development.json` **was never migrated** — it still carries
