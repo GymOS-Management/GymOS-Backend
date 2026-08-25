@@ -281,15 +281,60 @@ public sealed class SqlServerFixture : IAsyncLifetime
         return AsAppPrincipal(_container.GetConnectionString(), databaseName);
     }
 
-    /// <summary>Runs one statement batch on its own connection.</summary>
+    /// <summary>SQL Server's "was chosen as the deadlock victim" error.</summary>
+    private const int DeadlockVictim = 1205;
+
+    /// <summary>How many times a setup statement is attempted before the deadlock is treated as real.</summary>
+    private const int SetupAttempts = 5;
+
+    /// <summary>Runs one statement batch on its own connection, retrying if it is deadlocked.</summary>
+    /// <remarks>
+    /// <para><b>1205 is retryable by definition, and SQL Server says so in the message it raises:
+    /// "Rerun the transaction."</b> A deadlock victim is not a failed statement, it is a statement
+    /// that was rolled back so another one could proceed — the only wrong response is to give up.
+    /// Retrying here rather than at each call site means every statement the harness issues to set
+    /// itself up is covered by one policy, including the ones a suite issues mid-run through
+    /// <see cref="CreateDatabaseAsync"/>.</para>
+    ///
+    /// <para><b>Why this was needed.</b> The fixture already avoids the deadlock it could control:
+    /// <c>SET RECOVERY SIMPLE</c> is issued once against <c>model</c> instead of per created
+    /// database, for the reason <see cref="InitializeAsync"/> sets out. That is not sufficient on a
+    /// four-core GitHub runner, where <c>InitializeAsync</c> lost the whole suite twice in a row —
+    /// 306 of 316 tests failing behind one deadlocked setup statement, and the statement that lost
+    /// differing between the two runs. Altering <c>model</c> locks the very template
+    /// <c>CREATE DATABASE</c> reads, so the contention is inherent rather than a bug in the order
+    /// these statements are issued.</para>
+    ///
+    /// <para><b>Retry rather than serialise, deliberately.</b> Serialising the harness's own calls
+    /// would only help if the harness were deadlocking against itself, and it is not:
+    /// <c>InitializeAsync</c> runs before any test, one statement at a time. The other party is the
+    /// instance's own start-up work on a container that has just reported healthy — nothing this
+    /// code can take a lock against, and nothing it can order around.</para>
+    ///
+    /// <para>Only 1205 is retried, and only a bounded number of times: a genuine error in a setup
+    /// statement must still fail the run loudly rather than five times slowly.</para>
+    /// </remarks>
     private static async Task ExecuteAsync(string connectionString, string sql)
     {
-        await using var connection = new SqlConnection(connectionString);
-        await connection.OpenAsync();
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await using var connection = new SqlConnection(connectionString);
+                await connection.OpenAsync();
 
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        await command.ExecuteNonQueryAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = sql;
+                await command.ExecuteNonQueryAsync();
+                return;
+            }
+            catch (SqlException ex) when (ex.Number == DeadlockVictim && attempt < SetupAttempts)
+            {
+                // Linear, not exponential: the contention window here is the instance settling, which
+                // is measured in hundreds of milliseconds, not seconds.
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt));
+            }
+        }
     }
 
     /// <summary>Applies every migration to one database, as the migrator.</summary>
