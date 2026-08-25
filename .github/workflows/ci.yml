@@ -46,6 +46,7 @@ jobs:
       # host project (nothing test-side depends on it at compile time) — a broken
       # Program.cs must fail here, not hide behind green tests.
       - name: Build (full solution, warnings are errors)
+        id: build
         run: dotnet build GymOS.Backend.slnx --configuration Release --no-restore
 
       # Built explicitly, and it has to be. The database project IS listed in GymOS.Backend.slnx —
@@ -59,6 +60,7 @@ jobs:
       # so a migration producing something Azure SQL rejects fails here rather than at deployment.
       # It publishes nothing and touches no database.
       - name: Build the database project (schema validation)
+        id: database
         run: dotnet build database/GymOS.Database/GymOS.Database.sqlproj --configuration Release --nologo
 
       # The dacpac is what schema comparison consumes, so publishing one per green build means any
@@ -73,12 +75,95 @@ jobs:
       - name: Format check
         run: dotnet format GymOS.Backend.slnx --verify-no-changes --no-restore
 
+      # A trx logger, so the summary below can report real counts rather than "tests passed" — and so
+      # a run that executed NO tests is visible rather than green (see the guard in the summary step;
+      # `dotnet test --no-build` has been observed to exit 0 having run nothing at all). The results
+      # also upload as an artifact: a flaky integration test is diagnosed from its own output, and
+      # scrolling a log for it is how a flake becomes "just re-run it".
+      #
+      # No LogFileName: each test project must write its own uniquely-named trx into this directory.
+      # Naming the file pins every project to the same name, so they overwrite each other and the
+      # counts below become "however many tests were in whichever project finished last".
       - name: Tests (unit + architecture + integration via Testcontainers)
-        run: dotnet test GymOS.Backend.slnx --configuration Release --no-build --verbosity normal
+        id: tests
+        run: |
+          dotnet test GymOS.Backend.slnx --configuration Release --no-build --verbosity normal \
+            --logger trx \
+            --results-directory artifacts/test-results
+
+      - name: Upload test results
+        if: always() # the failing run is the one whose results are worth reading
+        uses: actions/upload-artifact@v4
+        with:
+          name: gymos-test-results
+          path: artifacts/test-results/
+          if-no-files-found: warn
 
       - name: Transitive dependency audit (banned packages)
         shell: pwsh
         run: ./build/audit-transitive-packages.ps1
+
+      # The run's own summary, in the job summary rather than only in the log. `if: always()` so a
+      # failed run still says which stage it reached — a summary that appears only on success tells
+      # you nothing on the day you need it.
+      - name: Summary
+        if: always()
+        env:
+          # Read from the steps themselves rather than inferred. An earlier draft printed "Build ✓"
+          # unconditionally, which under `if: always()` meant a failed build reported a successful
+          # one — a summary that can lie is worse than no summary.
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          DATABASE_OUTCOME: ${{ steps.database.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -uo pipefail
+
+          version=$(grep -oPm1 '(?<=<VersionPrefix>)[^<]+' Directory.Build.props || echo 'unknown')
+          dacpac='database/GymOS.Database/bin/Release/GymOS.Database.dacpac'
+
+          # Totals across every trx the run produced, one file per test project.
+          total=0; failed=0
+          for trx in artifacts/test-results/*.trx; do
+            [ -f "$trx" ] || continue
+            t=$(grep -o 'total="[0-9]*"' "$trx" | head -1 | grep -o '[0-9]*' || echo 0)
+            f=$(grep -o 'failed="[0-9]*"' "$trx" | head -1 | grep -o '[0-9]*' || echo 0)
+            total=$((total + ${t:-0})); failed=$((failed + ${f:-0}))
+          done
+
+          # success -> ✓, failure -> ✗, skipped/cancelled -> — (never reached, so neither claim holds).
+          mark() {
+            case "$1" in
+              success) printf '✓' ;;
+              failure) printf '✗' ;;
+              *)       printf '—' ;;
+            esac
+          }
+
+          {
+            echo '## GymOS CI'
+            echo
+            echo '```'
+            printf 'Version:      %s\n' "$version"
+            printf 'Commit:       %s\n' "${GITHUB_SHA:0:12}"
+            printf 'Branch/ref:   %s\n' "$GITHUB_REF_NAME"
+            echo
+            printf 'Build         %s\n' "$(mark "$BUILD_OUTCOME")"
+            printf 'Tests         %s  (%s run, %s failed)\n' "$(mark "$TESTS_OUTCOME")" "$total" "$failed"
+            printf 'Schema        %s  (parsed against Azure SQL)\n' "$(mark "$DATABASE_OUTCOME")"
+            printf 'DACPAC        %s\n' "$([ -f "$dacpac" ] && du -h "$dacpac" | cut -f1 || echo 'not produced')"
+            echo '```'
+            echo
+            if [ "${JOB_STATUS:-}" = 'success' ]; then echo '**Status: CI GREEN**'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # A passing test step that ran nothing is the worst possible outcome: it reports success and
+          # proves nothing. Not hypothetical — `dotnet test --no-build` has been observed to exit 0
+          # having discovered no tests at all, silently. So the count is a gate, not a decoration.
+          if [ "$TESTS_OUTCOME" = 'success' ] && [ "${total:-0}" -eq 0 ]; then
+            echo '::error::The test step succeeded but no tests ran. Treat this as a failure: check that the trx logger produced results and that dotnet test discovered the projects.'
+            exit 1
+          fi
 
       # OpenAPI breaking-change gate (AD-37/R13) is active as of M1.3 and runs inside the
       # test step above: OpenApiContractTests diffs the generated document against the
@@ -148,6 +233,12 @@ jobs:
           fi
           echo 'Production overlay aborted without secrets, as intended.'
 
+      # .dockerignore keeps .git out of the build context, so the image cannot discover its own
+      # commit — it is passed in. Same two arguments the deploy workflows pass, so a CI image and a
+      # deployed image report their identity the same way.
+      - id: buildinfo
+        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build image
         uses: docker/build-push-action@v7
         with:
@@ -157,6 +248,9 @@ jobs:
           load: true # into the local daemon, so compose finds it instead of rebuilding
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIMESTAMP=${{ steps.buildinfo.outputs.timestamp }}
 
       # No --build: compose reuses the image just loaded. This is the acceptance criterion
       # "one command to start" executed literally, from a clean checkout, with no .env file.
@@ -213,6 +307,15 @@ jobs:
             --data '{"email":"admin@gymos.local","password":"gymos-dev-admin-password"}')
           echo "login=$code"
           test "$code" = 200
+
+          # The traceability chain, asserted end to end: the commit CI tagged the image with has to
+          # be the commit the running container reports. It breaks silently otherwise — .dockerignore
+          # excludes .git, so a dropped build-arg leaves /version answering with no commit at all,
+          # and the first person to notice would be whoever is trying to identify a live deployment
+          # during an incident. See src/Host/GymOS.WebApi/BuildInfo.cs.
+          version=$(curl --fail --silent --show-error http://localhost:5080/version)
+          echo "version=$version"
+          echo "$version" | grep -q "\"commit\":\"${GITHUB_SHA}\""
 
       # Hardening is asserted, not assumed. Every line here is a decision documented in
       # DOCKER.md §7, and silently dropping one would otherwise go unnoticed.

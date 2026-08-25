@@ -1,8 +1,10 @@
 # Deploy to Production.
 #
-# STATUS: UNVERIFIED. Like deploy-uat.yml, this has never run -- no Azure resources exist for GymOS
-# yet. It is committed so the pipeline and its secret contract can be reviewed before anyone
-# provisions anything.
+# STATUS: UNVERIFIED, and the only environment that is. This has never run: Production has no Azure
+# resources at all -- no resource group, no database, no hosting resource -- and its `deploy` step is
+# a deliberate failure until one exists. UAT, by contrast, is live (see deploy-uat.yml). This file is
+# committed so the pipeline and its secret contract can be reviewed before anyone provisions
+# anything. The ordered checklist for standing Production up is docs/Infrastructure/AZURE.md §2.
 #
 # Gated on the repository variable PRODUCTION_DEPLOY_ENABLED. Until that is 'true', every job is
 # skipped with a notice, so merging to `main` does not produce a red build for absent infrastructure.
@@ -45,6 +47,10 @@ jobs:
     outputs:
       enabled: ${{ steps.check.outputs.enabled }}
       image: ${{ steps.check.outputs.image }}
+      # The commit being deployed, separately from the image reference. For a workflow_dispatch it is
+      # the SHA the operator named, which is NOT github.sha -- promoting an older build is the whole
+      # point of that input -- so the smoke check below has to compare against this, not the ref.
+      tag: ${{ steps.check.outputs.tag }}
     steps:
       - id: check
         run: |
@@ -62,6 +68,7 @@ jobs:
           tag="${{ github.event.inputs.image_tag }}"
           if [ -z "$tag" ]; then tag="${{ github.sha }}"; fi
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/gymos-api:$tag" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   # Asserts the image exists before the approval gate, so a reviewer is never asked to approve a
   # deployment that cannot happen. Cheap, and it catches the common case: main moved on without UAT
@@ -193,3 +200,72 @@ jobs:
 
           echo '::error::Production did not become ready. Roll back to the previous image.'
           exit 1
+
+      # Proves the promoted artifact is the one now serving. Compared against the SHA this run set
+      # out to deploy -- for a workflow_dispatch that is the operator's chosen build, not the ref --
+      # so a rollout that silently kept the previous revision fails here rather than reading as green.
+      - name: Verify the deployed build is the promoted one
+        env:
+          BASE_URL: ${{ vars.PRODUCTION_BASE_URL }}
+          EXPECTED: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          reported=$(curl --fail --silent --show-error "$BASE_URL/version")
+          echo "$reported"
+
+          if ! echo "$reported" | grep -q "\"commit\":\"${EXPECTED}\""; then
+            echo "::error::Production is serving a different build than this run deployed. Expected commit ${EXPECTED}. See docs/runbooks/DEPLOYMENT-ROLLBACK.md."
+            exit 1
+          fi
+
+  summary:
+    needs: [preflight, verify-image, migrate, deploy, smoke]
+    if: always() && needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Write the deployment summary
+        env:
+          IMAGE_RESULT: ${{ needs.verify-image.result }}
+          MIGRATE_RESULT: ${{ needs.migrate.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+          IMAGE: ${{ needs.preflight.outputs.image }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -uo pipefail
+
+          version=$(grep -oPm1 '(?<=<VersionPrefix>)[^<]+' Directory.Build.props || echo 'unknown')
+
+          mark() {
+            case "$1" in
+              success) printf '✓' ;;
+              failure) printf '✗' ;;
+              *)       printf '—' ;;
+            esac
+          }
+
+          {
+            echo '## GymOS Production Deployment'
+            echo
+            echo '```'
+            printf 'Version:      %s\n' "$version"
+            printf 'Commit:       %s\n' "$TAG"
+            printf 'Environment:  Production\n'
+            printf 'Database:     GymOS_Production\n'
+            printf 'Image:        %s  (promoted, not rebuilt)\n' "$IMAGE"
+            echo
+            printf 'Image found   %s\n' "$(mark "$IMAGE_RESULT")"
+            printf 'Migrate       %s\n' "$(mark "$MIGRATE_RESULT")"
+            printf 'Deploy        %s\n' "$(mark "$DEPLOY_RESULT")"
+            printf 'Health        %s\n' "$(mark "$SMOKE_RESULT")"
+            echo '```'
+            echo
+            if [ "$SMOKE_RESULT" = 'success' ]; then
+              echo '**Status: PRODUCTION LIVE**'
+            else
+              echo '**Status: NOT LIVE — see the failed job. Rollback: `docs/runbooks/DEPLOYMENT-ROLLBACK.md`.**'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

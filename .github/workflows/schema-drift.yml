@@ -1,0 +1,166 @@
+# Schema drift detection — UAT. READ-ONLY, and structurally incapable of being otherwise.
+#
+# WHAT THIS ANSWERS: does GymOS_UAT still match the schema in Git? The database project
+# (database/GymOS.Database) is the declarative record of what the EF migrations produce; this
+# workflow builds it into a dacpac and asks SqlPackage what would have to change for UAT to match.
+# It reports. It never publishes, and there is no flag on this workflow that makes it publish —
+# scripts/schema-compare.ps1 only ever invokes /Action:DeployReport and /Action:Script.
+#
+# WHY IT EXISTS: EF migrations are the only mechanism that changes a GymOS database, which is a
+# rule, and a rule is not a control. A hand-applied index during an incident, an ALTER run to test
+# something, a migration applied to UAT from a branch that never merged — each leaves the database
+# and the repository disagreeing, and every one of them is invisible until a deployment behaves
+# differently in production than it did in UAT. This is the control.
+#
+# HOW IT AUTHENTICATES: federated OIDC, then a Microsoft Entra access token for the SQL resource.
+# There is no connection string and no password anywhere in this file, and none is needed — which
+# is the whole reason it waited for the Entra grant rather than shipping with a new secret. See
+# docs/Infrastructure/AZURE.md for the two grants this requires.
+#
+# HOW IT FAILS: on drift it annotates and, by default, does NOT fail the run. Flip the repository
+# variable SCHEMA_DRIFT_ENFORCING to 'true' once a few runs have proved it quiet — a check that
+# starts out red teaches everyone to ignore it. A comparison that could not run at all always
+# fails, because "no answer" must never read as "no drift".
+name: Schema drift (UAT)
+
+on:
+  # Weekday mornings. Drift is not produced by commits — it is produced by someone touching the
+  # database — so a schedule catches it and a push trigger alone would not.
+  schedule:
+    - cron: '0 6 * * 1-5'
+  workflow_dispatch:
+  # …and on the commits that could legitimately change the answer, so the report is fresh when a
+  # migration lands rather than up to a day stale.
+  push:
+    branches: [development]
+    paths:
+      - 'database/**'
+      - 'src/Platform/GymOS.Platform.Infrastructure/Persistence/Migrations/**'
+      - 'scripts/schema-compare.ps1'
+      - '.github/workflows/schema-drift.yml'
+
+concurrency:
+  group: schema-drift
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Same shape as the deploy workflows: the skip is a visible job rather than an invisible `if`,
+  # so a run that did nothing says so.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        run: |
+          if [ "${{ vars.SCHEMA_DRIFT_ENABLED }}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Schema drift detection is not enabled. It needs an Entra admin on the UAT SQL server and read access for the deploy identity — see docs/Infrastructure/AZURE.md — then set the repository variable SCHEMA_DRIFT_ENABLED=true."
+          fi
+
+  compare:
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    # Scopes AZURE_* to UAT and produces the OIDC subject Entra trusts. Removing this line breaks
+    # authentication rather than merely widening scope — the subject carries the environment name.
+    environment: UAT
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      id-token: write # the OIDC token azure/login exchanges; nothing else in this run can mint one
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET (pinned by global.json)
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      # SqlPackage is a local tool (dotnet-tools.json), pinned like dotnet-ef. Nothing is installed
+      # ad hoc, so the comparison runs the same version here and on a developer's machine.
+      - name: Restore local tools (sqlpackage)
+        run: dotnet tool restore
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # A token for the SQL resource, valid for about an hour and for this run only. Masked before
+      # it can reach a log: `set -x`, a failing command echoing its arguments, or a later `echo`
+      # would otherwise publish a live credential into a world-readable build log.
+      - id: token
+        name: Mint a database access token
+        run: |
+          set -euo pipefail
+          token=$(az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      # The server and database are named here because there is no infrastructure-as-code for UAT
+      # yet — infrastructure/bicep/ is a skeleton, not the source of truth. Keep them in step with
+      # the resource group, exactly as the deploy workflow's `az containerapp` lines are kept.
+      #
+      # No credential in this string, deliberately: authentication is the token above. The database
+      # is GymOS_UAT and nothing here can point it at GymOS_Production — the name is a literal, not
+      # a variable, so no misconfigured setting can move it.
+      - id: compare
+        name: Compare the schema (read-only)
+        continue-on-error: true # the verdict is interpreted below; see SCHEMA_DRIFT_ENFORCING
+        shell: pwsh
+        run: |
+          ./scripts/schema-compare.ps1 `
+            -ConnectionString 'Server=tcp:gymos-uat.database.windows.net,1433;Database=GymOS_UAT;Encrypt=True' `
+            -AccessToken '${{ steps.token.outputs.token }}' `
+            -GitHubSummary
+
+          # Guarded rather than bare: the script's own `exit` may already have set the process code,
+          # leaving $LASTEXITCODE unset here, and `exit $null` is itself an error.
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      # Uploaded whatever the verdict: on drift the script is what a human reads to decide, and on
+      # a clean run the report is the evidence that the run actually compared something.
+      - name: Upload the drift report and the script it did not run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gymos-schema-drift
+          path: artifacts/schema-compare/
+          if-no-files-found: warn
+
+      # Exit codes from the script: 0 clean, 2 drift, anything else means it could not compare.
+      # The third case always fails the run — a comparison that did not happen is not a pass.
+      - name: Interpret the verdict
+        env:
+          OUTCOME: ${{ steps.compare.outcome }}
+        run: |
+          set -uo pipefail
+
+          if [ "$OUTCOME" = 'success' ]; then
+            echo 'No drift: GymOS_UAT matches the schema in Git.'
+            exit 0
+          fi
+
+          # The script writes verdict.txt last, so its absence means the comparison never finished.
+          # Distinguishing that from drift is the point: "no answer" must never read as "no drift".
+          if [ ! -f artifacts/schema-compare/verdict.txt ]; then
+            echo '::error::The schema comparison could not run. This is not a clean result — it is no result. Check the Azure login and the database grant (docs/Infrastructure/AZURE.md).'
+            exit 1
+          fi
+
+          if [ "${{ vars.SCHEMA_DRIFT_ENFORCING }}" = 'true' ]; then
+            echo '::error::Schema drift detected between GymOS_UAT and the repository. See the job summary and the uploaded report. The fix is an EF migration, never the generated script.'
+            exit 1
+          fi
+
+          echo '::warning::Schema drift detected between GymOS_UAT and the repository. Not failing the run: SCHEMA_DRIFT_ENFORCING is not set. See the job summary and the uploaded report.'

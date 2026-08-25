@@ -2,20 +2,38 @@
 
 Three environments, three databases, and no path between them. This document is the whole model.
 
-> **Status.** Everything under "Local development" is built. Everything under "UAT" and
-> "Production" is **prepared but unverified**: no Azure resources exist for GymOS yet, so the deploy
-> workflows are committed, gated off, and have never run. Sections say so where it applies rather
-> than at the end.
+> **Status, 2026-08-25.** Local development and **UAT are live**. UAT runs on Azure SQL `GymOS_UAT`
+> and Container App `gymos-uat-api` in resource group `GymOS-UAT` (`swedencentral`); a push to
+> `development` builds, migrates, deploys and smoke-tests with no human step, authenticated by
+> federated OIDC with no stored deployment secret. **Production has no Azure resources at all**: its
+> workflow is committed, gated off, and its `deploy` step is a deliberate failure. Sections say which
+> applies where rather than leaving it to the end. The resource inventory is
+> [`AZURE.md`](AZURE.md).
 
 ---
 
 ## 1. The model
 
+Four stages, three of which own a database. CI owns none, deliberately — its databases are
+throwaway Testcontainers instances, so no CI run can reach an environment's data.
+
+```
+Development  ─────▶  CI  ─────▶  UAT  ─────▶  Production
+   local          every push    development      main
+  compose        and every PR     branch        branch
+GymOS_Local     (throwaway DBs)  GymOS_UAT   GymOS_Production
+```
+
 | | Environment name | Database | Deployed from | Who uses it |
 |---|---|---|---|---|
 | **Local** | `Development` | `GymOS_Local` | nothing — Docker Compose on the developer's machine | one developer |
+| **CI** | (per-test) | generated, throwaway | every push and pull request | nobody; automated gates only |
 | **UAT** | `Staging` | `GymOS_UAT` | `development` branch | QA, integration testing, pre-production validation |
 | **Production** | `Production` | `GymOS_Production` | `main` branch | real users |
+
+`Staging` is the framework's name for the deployed non-production environment, and UAT is what the
+environment is called. Same thing: `ASPNETCORE_ENVIRONMENT=Staging` selects
+`appsettings.Staging.json`, and `DatabaseEnvironmentGuard` pairs `Staging` with `GymOS_UAT`.
 
 ```
     feature/*  --PR-->  development  ------------>  UAT app  ---->  GymOS_UAT
@@ -26,6 +44,9 @@ Three environments, three databases, and no path between them. This document is 
 
     developer's machine  -->  docker compose  ---->  local API --->  GymOS_Local
 ```
+
+**One image crosses those arrows, never two.** Production deploys the exact artifact UAT tested,
+tagged by commit SHA; it never rebuilds. See [`../Architecture/DEPLOYMENT.md`](../Architecture/DEPLOYMENT.md) §2.
 
 There is no fourth database, and `staging` is no longer a branch in the flow — see §8.
 
@@ -251,7 +272,7 @@ migration pause for a human.
 
 ---
 
-## 7. UAT and Production deployment — prepared, not working
+## 7. UAT and Production deployment — UAT live, Production prepared
 
 `deploy-uat.yml` (on push to `development`) and `deploy-production.yml` (on push to `main`).
 
@@ -260,17 +281,27 @@ Production **does not rebuild** — it deploys the image UAT already tested, bec
 the same source produces a different artifact and discards that evidence. It refuses to run at all
 if no such image exists.
 
-**The `deploy` step in both is a deliberately failing placeholder.** No Azure resource exists to
-deploy to, and writing an `azure/webapps-deploy` block against invented resource names would produce
-a workflow that looks finished, fails later, and fails less clearly. Each file's comment says what
-the ten lines become for Container Apps and for App Service.
+Both verify the deployment twice: **`/health/ready`** must answer 200 (never `/health/live`, which
+passes on an app that cannot serve correct data), and then **`/version`** must report the commit the
+run deployed. The second catches a rollout that was accepted and silently kept the previous revision
+— the difference between "it is up" and "it is running this commit".
 
-**Still required before either can work:** decide the hosting target; provision it plus two Azure SQL
-databases in an EU region (GDPR — confirm data residency with counsel); create the two GitHub
-Environments with the secrets above; implement the `deploy` step; flip the `*_DEPLOY_ENABLED`
-variable. Note that SQL Server Developer edition is free but **non-production only**, so
-`docker-compose.prod.yml` requires `MSSQL_PID` to name a licensed edition — Azure SQL folds licensing
-into the service price, which usually makes it cheaper than a VM for a small workload.
+**UAT is implemented and running.** `deploy-uat.yml` deploys to Container App `gymos-uat-api` in
+resource group `GymOS-UAT`, and `UAT_DEPLOY_ENABLED` is what turns it on.
+
+**Production's `deploy` step is still a deliberately failing placeholder.** No Azure resource exists
+to deploy to, and writing an `azure/webapps-deploy` block against invented resource names would
+produce a workflow that looks finished, fails later, and fails less clearly. The file's comment says
+what the ten lines become for Container Apps and for App Service.
+
+**Still required before Production can work:** a resource group and an Azure SQL `GymOS_Production`
+in an EU region (GDPR — confirm data residency with counsel); the role split applied per the roles
+runbook; a hosting resource; the `Production` GitHub Environment with its secrets **and required
+reviewers**; a federated credential carrying `environment:Production`; the `deploy` step; then
+`PRODUCTION_DEPLOY_ENABLED`. The ordered checklist is [`AZURE.md`](AZURE.md) §2. Note that SQL Server
+Developer edition is free but **non-production only**, so `docker-compose.prod.yml` requires
+`MSSQL_PID` to name a licensed edition — Azure SQL folds licensing into the service price, which
+usually makes it cheaper than a VM for a small workload.
 
 ---
 
@@ -344,7 +375,14 @@ message: it names the environment, the database it found, and the one it expecte
 
 ## 11. Related
 
+- `docs/Architecture/DEPLOYMENT.md` — the pipeline stage by stage, artifact promotion, the approval gate
+- `docs/Architecture/DATABASE.md` — EF migrations vs the database project, and drift detection
+- `docs/Architecture/SECURITY.md` — principals, isolation, and where each kind of secret belongs
+- `docs/Infrastructure/AZURE.md` — the resource inventory, and what only a human can create
 - `docs/Infrastructure/DOCKER.md` — the compose topology, hardening, and per-service detail
 - `docs/BusinessRules/TenantIsolation.md` — R14, the principals, and what the policy enforces
 - `docs/runbooks/managed-sqlserver-roles.md` — applying the role split to a managed instance
+- `docs/runbooks/DEPLOYMENT-ROLLBACK.md` — rolling back an image, and why the database does not follow
+- `docs/runbooks/DATABASE-RECOVERY.md` — restores, drift reconciliation, and what is not rehearsed yet
+- `docs/runbooks/INCIDENT-RESPONSE.md` — what to read first when something deployed is wrong
 - `GymOS-Specification/ADR-CHANGELOG.md` — **ADR-54** (SQL Server) and AD-11 (Azure-first)

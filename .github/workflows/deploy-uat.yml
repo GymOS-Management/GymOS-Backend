@@ -1,12 +1,12 @@
 # Deploy to UAT.
 #
-# STATUS: UNVERIFIED. This workflow has never run against real infrastructure, because there is none
-# yet -- no Azure resources exist for GymOS at the time of writing. It is committed so the pipeline
-# and its secret contract are reviewable before anyone provisions anything, not because it works.
+# STATUS: LIVE since 2026-08-24. This deploys to Azure SQL `GymOS_UAT` on
+# gymos-uat.database.windows.net and Container App `gymos-uat-api` in resource group GymOS-UAT
+# (swedencentral), authenticated by federated OIDC with no stored deployment secret.
 #
-# It is gated on the repository variable UAT_DEPLOY_ENABLED. Until that is set to 'true', every job
-# below is skipped with a notice, so merging to `development` does not produce a red build for
-# infrastructure that does not exist. Flipping the variable is what turns this on.
+# It is gated on the repository variable UAT_DEPLOY_ENABLED. With that unset every job below is
+# skipped with a notice -- which is how this file lived before the infrastructure existed, and the
+# switch is kept so a broken environment can be taken out of the flow without reverting a workflow.
 #
 # Read docs/Infrastructure/ENVIRONMENTS.md before enabling it. The short version:
 #   development -> UAT (this file)          main -> Production (deploy-production.yml)
@@ -68,6 +68,13 @@ jobs:
       - id: meta
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/gymos-api:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
+      - id: buildinfo
+        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      # The build arguments are what make the image self-identifying: .dockerignore excludes .git,
+      # so the build cannot read the commit from a checkout and is told it instead. GIT_SHA is the
+      # same value as the image tag above, deliberately — /version, the OCI image labels and the tag
+      # then all name one commit, which is what the rollback runbook relies on.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -75,6 +82,9 @@ jobs:
           file: src/Host/GymOS.WebApi/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.image }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIMESTAMP=${{ steps.buildinfo.outputs.timestamp }}
 
   # Migrations are their own job, before the app is deployed, and run as the migrator principal.
   # This is the same split the local stack uses: the API cannot migrate in any environment, because
@@ -242,3 +252,72 @@ jobs:
 
           echo '::error::UAT did not become ready.'
           exit 1
+
+      # Readiness proves *something* is serving; this proves it is the something this run built.
+      # A rollout that silently kept the previous revision passes the check above and fails here,
+      # which is the difference between "UAT is up" and "UAT is running this commit".
+      - name: Verify the deployed build is the one this run built
+        env:
+          BASE_URL: ${{ vars.UAT_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          reported=$(curl --fail --silent --show-error "$BASE_URL/version")
+          echo "$reported"
+
+          if ! echo "$reported" | grep -q "\"commit\":\"${GITHUB_SHA}\""; then
+            echo "::error::UAT is serving a different build than this run deployed. Expected commit ${GITHUB_SHA}. Do not treat this run as a successful deployment; see docs/runbooks/DEPLOYMENT-ROLLBACK.md."
+            exit 1
+          fi
+
+  # The run's own report, in one place, whatever happened. A separate job rather than a step so it
+  # runs even when an earlier job failed -- the summary is most useful on the runs that did not work.
+  summary:
+    needs: [preflight, build, migrate, deploy, smoke]
+    if: always() && needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Write the deployment summary
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          MIGRATE_RESULT: ${{ needs.migrate.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+          IMAGE: ${{ needs.build.outputs.image }}
+        run: |
+          set -uo pipefail
+
+          version=$(grep -oPm1 '(?<=<VersionPrefix>)[^<]+' Directory.Build.props || echo 'unknown')
+
+          mark() {
+            case "$1" in
+              success) printf '✓' ;;
+              failure) printf '✗' ;;
+              *)       printf '—' ;;   # skipped or cancelled: never ran, so neither ✓ nor ✗ is true
+            esac
+          }
+
+          {
+            echo '## GymOS UAT Deployment'
+            echo
+            echo '```'
+            printf 'Version:      %s\n' "$version"
+            printf 'Commit:       %s\n' "$GITHUB_SHA"
+            printf 'Environment:  UAT (ASPNETCORE_ENVIRONMENT=Staging)\n'
+            printf 'Database:     GymOS_UAT\n'
+            printf 'Image:        %s\n' "${IMAGE:-not built}"
+            echo
+            printf 'Build         %s\n' "$(mark "$BUILD_RESULT")"
+            printf 'Migrate       %s\n' "$(mark "$MIGRATE_RESULT")"
+            printf 'Deploy        %s\n' "$(mark "$DEPLOY_RESULT")"
+            printf 'Health        %s\n' "$(mark "$SMOKE_RESULT")"
+            echo '```'
+            echo
+            if [ "$SMOKE_RESULT" = 'success' ]; then
+              echo '**Status: UAT READY**'
+            else
+              echo '**Status: NOT DEPLOYED — see the failed job. Rollback: `docs/runbooks/DEPLOYMENT-ROLLBACK.md`.**'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

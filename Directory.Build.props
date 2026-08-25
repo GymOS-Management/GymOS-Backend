@@ -15,6 +15,39 @@
     <Deterministic>true</Deterministic>
     <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
   </PropertyGroup>
+
+  <!--
+    ── Version, and what identifies a build ────────────────────────────────────────────────────
+    VersionPrefix is hand-edited, one line, deliberately. The alternative was a tool that derives
+    a version from git tags (MinVer, GitVersion), which buys automation this project cannot yet
+    spend: nothing outside the repository versions against GymOS, so a release number is a
+    statement about milestones rather than a compatibility contract. Bump the minor when a
+    milestone closes. `dotnet build -p:VersionPrefix=…` overrides it for a one-off.
+
+    The version is NOT what identifies a deployment. The commit is, and it arrives here as
+    SourceRevisionId, which the SDK appends to AssemblyInformationalVersion automatically
+    ("0.9.0+<sha>"). Locally the SDK's SourceLink targets read it from the git checkout. Inside
+    the Docker build there is no checkout — .dockerignore excludes .git deliberately — so the
+    Dockerfile passes it as a build argument, and CI passes the same SHA the image is tagged with.
+    That is the whole traceability chain: image tag = commit = what /version reports.
+
+    Empty when neither applies. An unstamped local build reporting a plausible-looking commit
+    would be worse than one reporting none, so nothing is invented here.
+  -->
+  <PropertyGroup>
+    <VersionPrefix>0.9.0</VersionPrefix>
+  </PropertyGroup>
+
+  <!--
+    Build timestamp, stamped only when the caller supplies one — never generated here. A
+    $([System.DateTime]::UtcNow) in this file would change an assembly's contents on every
+    rebuild, which defeats Deterministic above and invalidates every downstream build cache for
+    no gain. CI passes it; a developer's build reports no timestamp, which is the honest answer.
+  -->
+  <ItemGroup Condition="'$(BuildTimestampUtc)' != ''">
+    <AssemblyMetadata Include="BuildTimestampUtc" Value="$(BuildTimestampUtc)" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- Rule R2: direct clock reads are build errors (BannedApiAnalyzers, RS0030). -->
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />

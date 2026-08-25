@@ -211,14 +211,26 @@ which applies to one and several of which break it.
 
 ## What is not done yet
 
-The CI workflow. Everything it needs is in place — the project builds with `dotnet build`,
-SqlPackage restores as a local tool, and the comparison is one script — but the workflow is not
-written, because it needs a decision first: **which credential it compares with.**
+**The CI workflow is now written** — `.github/workflows/schema-drift.yml` — and the credential
+decision it was waiting on is made: it authenticates with the **existing** deploy identity by
+federated OIDC, then mints a Microsoft Entra access token for the SQL resource. There is no
+connection string and no password anywhere in it, which was the whole point of waiting rather than
+adding a secret.
 
-The deploy workflow authenticates to Azure by federated OIDC with no stored secret
-(`docs/Infrastructure/ENVIRONMENTS.md`). Schema comparison should do the same rather than introduce
-a connection-string secret, which means giving the UAT SQL server an Entra admin and granting the
-deploy identity read access to `GymOS_UAT`. Until that exists, run the comparison locally.
+It stays **read-only** and structurally cannot be otherwise: `/Action:DeployReport` and
+`/Action:Script` only, artifacts uploaded for a human to read, never `/Action:Publish`. There is no
+flag on the workflow or the script that publishes.
 
-Whenever it is written, it must stay **read-only**: `/Action:DeployReport` and `/Action:Script`,
-artifacts uploaded for a human to read, never `/Action:Publish`.
+**What remains is two Azure grants only an administrator can make**: an Entra admin on the UAT SQL
+server, and `db_datareader` plus `VIEW DEFINITION` for `[gymos-uat-deploy]` on `GymOS_UAT`. The exact
+statements are in `docs/Infrastructure/AZURE.md` §3. Until they exist the workflow is gated off by
+the repository variable `SCHEMA_DRIFT_ENABLED` and reports why it skipped; run the comparison locally
+in the meantime.
+
+Once enabled, it annotates drift without failing the run until `SCHEMA_DRIFT_ENFORCING` is set —
+a check that starts out red teaches everyone to ignore it.
+
+One limitation is worth knowing rather than discovering: **an object present in the database and
+absent from this project is not reported at all**, because `DropObjectsNotInSource=False` is required
+for the three uncomparable objects above. `docs/Architecture/DATABASE.md` §4 records the gap, what
+covers it instead, and what closing it would take.

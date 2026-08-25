@@ -89,6 +89,19 @@ WORKDIR /src
 
 COPY src/ src/
 
+# ── Build identity, supplied rather than discovered ────────────────────────────────────────────
+# .dockerignore excludes .git deliberately, so the SDK's SourceLink targets find no checkout here
+# and stamp no commit — an image built this way would answer /version with a version and no
+# identity. The caller passes both instead:
+#
+#   docker build --build-arg GIT_SHA=$(git rev-parse HEAD) \
+#                --build-arg BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ) …
+#
+# Both default to empty, and empty is honest: BuildInfo reports null rather than inventing a value.
+# CI passes the same SHA it tags the image with, which is what ties a running container to a commit.
+ARG GIT_SHA=""
+ARG BUILD_TIMESTAMP=""
+
 # No trimming and no ReadyToRun. Both would be defensible for start-up time, and both are
 # hostile to this application: EF Core builds its model by reflection and Npgsql resolves type
 # handlers dynamically, so a trimmer removes things nothing statically references and the
@@ -105,12 +118,27 @@ RUN dotnet publish src/Host/GymOS.WebApi/GymOS.WebApi.csproj \
         --configuration Release \
         --no-restore \
         --output /app/publish \
-        -p:UseAppHost=false
+        -p:UseAppHost=false \
+        -p:SourceRevisionId="$GIT_SHA" \
+        -p:BuildTimestampUtc="$BUILD_TIMESTAMP"
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════
 # Stage 3 — runtime
 # ═══════════════════════════════════════════════════════════════════════════════════════════
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+
+# Re-declared: an ARG does not cross a stage boundary. These become image metadata, which is how a
+# registry, `docker inspect` and any scanner can answer "what commit is this?" without starting the
+# container. The same values are inside the assembly, and /version reads them from there — this is
+# the copy for tooling that cannot make an HTTP request. Standard OCI keys, so that tooling already
+# knows them.
+ARG GIT_SHA=""
+ARG BUILD_TIMESTAMP=""
+LABEL org.opencontainers.image.title="GymOS API" \
+      org.opencontainers.image.description="The GymOS backend — modular monolith, .NET 10 / SQL Server" \
+      org.opencontainers.image.vendor="Marios Christodoulou" \
+      org.opencontainers.image.revision="$GIT_SHA" \
+      org.opencontainers.image.created="$BUILD_TIMESTAMP"
 
 # curl is the only thing added to the runtime image, and it is added for one reason: the ASP.NET
 # image ships no HTTP client, so without it a container cannot answer "are you healthy?" about

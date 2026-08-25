@@ -70,6 +70,46 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         Assert.Equal("Healthy", await response.Content.ReadAsStringAsync());
     }
 
+    /// <summary>
+    /// Anonymous by design: deployment verification runs before anyone can sign in, and a rollback
+    /// decision must not depend on the identity provider being healthy. The version is asserted
+    /// present rather than equal to a literal — pinning "0.9.0" here would mean every release bump
+    /// breaks a test that is about the endpoint working, not about which release this is.
+    /// </summary>
+    [Fact]
+    public async Task Version_IsServedAnonymously_AndNamesTheBuildAndEnvironment()
+    {
+        HttpResponseMessage response = await _client.GetAsync(new Uri("/version", UriKind.Relative));
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+
+        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        JsonElement root = body.RootElement;
+
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("version").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("environment").GetString()));
+
+        // Present as properties even when this build stamped neither, so a caller reads null rather
+        // than having to distinguish "absent" from "unknown". A test-host build stamps no timestamp.
+        Assert.True(root.TryGetProperty("commit", out _));
+        Assert.True(root.TryGetProperty("builtAt", out _));
+    }
+
+    /// <summary>
+    /// <c>/version</c> is an operational endpoint, not part of the client contract, so it must stay
+    /// out of the published document — exactly like the health endpoints. Asserted because the
+    /// alternative is silent: an <c>ExcludeFromDescription</c> dropped during a refactor would put
+    /// it into <c>contracts/openapi-v1.json</c>, and AD-37's diff gate would then report an API
+    /// change every time an operational detail moved.
+    /// </summary>
+    [Fact]
+    public async Task Version_IsAbsentFromTheOpenApiDocument()
+    {
+        JsonElement document = await GetOpenApiDocumentAsync();
+
+        Assert.False(document.GetProperty("paths").TryGetProperty("/version", out _));
+    }
+
     [Fact]
     public async Task SuppliedCorrelationId_IsEchoedOnTheResponse()
     {
