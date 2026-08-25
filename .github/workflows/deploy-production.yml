@@ -204,6 +204,13 @@ jobs:
       # Proves the promoted artifact is the one now serving. Compared against the SHA this run set
       # out to deploy -- for a workflow_dispatch that is the operator's chosen build, not the ref --
       # so a rollout that silently kept the previous revision fails here rather than reading as green.
+      #
+      # **Polled, not sampled once**, for the reason UAT's equivalent is: readiness is answered by
+      # whichever revision holds traffic, so the outgoing one satisfies it, and a single reading
+      # taken inside the rollout window reports the old build and calls it a failed promotion.
+      # UAT hit exactly that in run 32880733146. Production has **no revision-readiness wait at
+      # all** before this point, so here the poll is the only thing standing between a normal
+      # rollout and a red production deployment.
       - name: Verify the deployed build is the promoted one
         env:
           BASE_URL: ${{ vars.PRODUCTION_BASE_URL }}
@@ -211,13 +218,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          reported=$(curl --fail --silent --show-error "$BASE_URL/version")
-          echo "$reported"
+          for attempt in $(seq 1 20); do
+            reported=$(curl --fail --silent --show-error "$BASE_URL/version" || true)
+            echo "attempt $attempt: ${reported:-<no version response>}"
 
-          if ! echo "$reported" | grep -q "\"commit\":\"${EXPECTED}\""; then
-            echo "::error::Production is serving a different build than this run deployed. Expected commit ${EXPECTED}. See docs/runbooks/DEPLOYMENT-ROLLBACK.md."
-            exit 1
-          fi
+            if printf '%s' "$reported" | grep -q "\"commit\":\"${EXPECTED}\""; then
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "::error::Production is serving a different build than this run deployed. Expected commit ${EXPECTED}. See docs/runbooks/DEPLOYMENT-ROLLBACK.md."
+          exit 1
 
   summary:
     needs: [preflight, verify-image, migrate, deploy, smoke]

@@ -206,20 +206,36 @@ jobs:
 
       # `update` returns once the revision is accepted, not once it serves traffic. Without this the
       # smoke test races the rollout and reads the old revision's health as the new one's.
-      - name: Wait for the new revision to become active
+      #
+      # **The wait has to name the new revision, and the first version of it did not.** Asking for
+      # `[?properties.active]` and taking the first row answers about whichever revision the list
+      # happens to return first, and during a rollout that is the *outgoing* one -- already
+      # `Running`, so the check passed on its first attempt and the race it exists to prevent
+      # happened anyway. That is exactly how run 32880733146 came to read revision `--0000006`'s
+      # health as `--0000007`'s and then 404 on `/version`, which `--0000006` predates.
+      #
+      # Single-revision mode routes traffic to the newest revision once it is ready, so the
+      # condition that actually means "the new build is serving" is `latestReadyRevisionName`
+      # having caught up with `latestRevisionName` -- and that revision reporting `Running`.
+      - name: Wait for the new revision to serve traffic
         run: |
           set -euo pipefail
 
           for attempt in $(seq 1 30); do
-            state=$(az containerapp revision list               --name gymos-uat-api --resource-group GymOS-UAT               --query "[?properties.active].properties.runningState" -o tsv | head -1)
-            echo "attempt $attempt: runningState=${state:-unknown}"
-            if [ "$state" = "Running" ]; then
+            names=$(az containerapp show               --name gymos-uat-api --resource-group GymOS-UAT               --query "[properties.latestRevisionName, properties.latestReadyRevisionName]" -o tsv)
+            latest=$(printf '%s' "$names" | cut -f1)
+            ready=$(printf '%s' "$names" | cut -f2)
+
+            state=$(az containerapp revision show               --name gymos-uat-api --resource-group GymOS-UAT --revision "$latest"               --query "properties.runningState" -o tsv 2>/dev/null || echo unknown)
+
+            echo "attempt $attempt: latest=$latest ready=${ready:-none} runningState=${state:-unknown}"
+            if [ -n "$latest" ] && [ "$latest" = "$ready" ] && [ "$state" = "Running" ]; then
               exit 0
             fi
             sleep 10
           done
 
-          echo "::error::The new revision did not reach Running within five minutes."
+          echo "::error::The new revision did not start serving traffic within five minutes."
           az containerapp logs show --name gymos-uat-api --resource-group GymOS-UAT --tail 100 || true
           exit 1
 
@@ -256,19 +272,31 @@ jobs:
       # Readiness proves *something* is serving; this proves it is the something this run built.
       # A rollout that silently kept the previous revision passes the check above and fails here,
       # which is the difference between "UAT is up" and "UAT is running this commit".
+      #
+      # **Polled, not sampled once.** A single reading cannot tell "the wrong build is deployed"
+      # apart from "the right build is still coming up", and the step above cannot close that gap
+      # on its own: `/health/ready` is answered by whichever revision holds traffic, so the
+      # outgoing one satisfies it. Read once, this step failed run 32880733146 with a 404 from a
+      # revision that predates `/version` -- while the rollout it was measuring went on to
+      # succeed. Polling makes a failure here mean what the message says it means.
       - name: Verify the deployed build is the one this run built
         env:
           BASE_URL: ${{ vars.UAT_BASE_URL }}
         run: |
           set -euo pipefail
 
-          reported=$(curl --fail --silent --show-error "$BASE_URL/version")
-          echo "$reported"
+          for attempt in $(seq 1 20); do
+            reported=$(curl --fail --silent --show-error "$BASE_URL/version" || true)
+            echo "attempt $attempt: ${reported:-<no version response>}"
 
-          if ! echo "$reported" | grep -q "\"commit\":\"${GITHUB_SHA}\""; then
-            echo "::error::UAT is serving a different build than this run deployed. Expected commit ${GITHUB_SHA}. Do not treat this run as a successful deployment; see docs/runbooks/DEPLOYMENT-ROLLBACK.md."
-            exit 1
-          fi
+            if printf '%s' "$reported" | grep -q "\"commit\":\"${GITHUB_SHA}\""; then
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "::error::UAT is serving a different build than this run deployed. Expected commit ${GITHUB_SHA}. Do not treat this run as a successful deployment; see docs/runbooks/DEPLOYMENT-ROLLBACK.md."
+          exit 1
 
   # The run's own report, in one place, whatever happened. A separate job rather than a step so it
   # runs even when an earlier job failed -- the summary is most useful on the runs that did not work.
