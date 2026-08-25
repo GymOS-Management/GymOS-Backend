@@ -121,7 +121,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
         GRANT VIEW DEFINITION ON SCHEMA::platform TO [{AppPrincipal}];
         """;
 
-    private readonly MsSqlContainer _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest")
+    private readonly MsSqlContainer _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest@sha256:ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89")
         // Feature parity with the deployment and with Azure SQL. Testcontainers' default is
         // Developer edition already, but stating it means a change to that default cannot silently
         // move the suite onto Express — where the 10 GB cap and the missing features would surface
@@ -281,15 +281,93 @@ public sealed class SqlServerFixture : IAsyncLifetime
         return AsAppPrincipal(_container.GetConnectionString(), databaseName);
     }
 
+    /// <summary>SQL Server's "was chosen as the deadlock victim" error.</summary>
+    private const int DeadlockVictim = 1205;
+
     /// <summary>Runs one statement batch on its own connection.</summary>
+    /// <remarks>
+    /// A deadlock is printed and then rethrown, deliberately in that order and with no retry. An
+    /// earlier attempt to retry 1205 here was reverted: the deadlock still won after five attempts,
+    /// and because SQL Server's deadlock monitor runs on a roughly five-second cycle, each attempt
+    /// cost seconds merely to be detected — turning a 45-second failure into a 25-minute job
+    /// timeout that reported nothing at all. Failing fast is the better of the two failure modes;
+    /// what it was missing was evidence, which is what <see cref="DumpDeadlockGraphsAsync"/> adds.
+    /// </remarks>
     private static async Task ExecuteAsync(string connectionString, string sql)
     {
-        await using var connection = new SqlConnection(connectionString);
-        await connection.OpenAsync();
+        try
+        {
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
 
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        await command.ExecuteNonQueryAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync();
+        }
+        catch (SqlException ex) when (ex.Number == DeadlockVictim)
+        {
+            await DumpDeadlockGraphsAsync(connectionString);
+            throw;
+        }
+    }
+
+    /// <summary>Prints every deadlock graph the instance has recorded. Never throws.</summary>
+    /// <remarks>
+    /// <para><b>This exists because the counterparty is unknown.</b> The integration suite has
+    /// deadlocked on GitHub runners in <c>InitializeAsync</c> and in <c>CreateDatabaseAsync</c>,
+    /// while passing on developer machines. It was assumed to be the instance settling after
+    /// start-up; that assumption did not survive a run still deadlocking twenty-three minutes in.
+    /// Two fixes were attempted against a cause nobody had named, and the second made things worse.
+    /// So this names it instead of guessing again.</para>
+    ///
+    /// <para>No extended-events session has to be created: SQL Server captures
+    /// <c>xml_deadlock_report</c> into the always-on <c>system_health</c> session by default, and
+    /// the ring buffer still holds it after the victim's exception has surfaced. The graph names
+    /// both parties, their statements and the resource they contended over — which is exactly what
+    /// every guess so far has lacked.</para>
+    ///
+    /// <para>Every failure here is swallowed and printed. A diagnostic that can throw would replace
+    /// the failure being diagnosed, and the deadlock is the more important of the two. If the
+    /// connection lacks <c>VIEW SERVER STATE</c> the message says so rather than disappearing.</para>
+    /// </remarks>
+    private static async Task DumpDeadlockGraphsAsync(string connectionString)
+    {
+        const string RingBufferQuery = """
+            SELECT CONVERT(nvarchar(max), graph.query('.')) AS deadlock_graph
+            FROM (
+                SELECT CONVERT(xml, target_data) AS target_data
+                FROM sys.dm_xe_session_targets AS st
+                JOIN sys.dm_xe_sessions AS s ON s.address = st.event_session_address
+                WHERE s.name = 'system_health' AND st.target_name = 'ring_buffer'
+            ) AS ring
+            CROSS APPLY ring.target_data.nodes('RingBufferTarget/event[@name="xml_deadlock_report"]') AS graphs(graph);
+            """;
+
+        try
+        {
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = RingBufferQuery;
+
+            await using var reader = await command.ExecuteReaderAsync();
+
+            int found = 0;
+            while (await reader.ReadAsync())
+            {
+                Console.WriteLine($"===== deadlock graph {++found} =====");
+                Console.WriteLine(reader.IsDBNull(0) ? "(null)" : reader.GetString(0));
+            }
+
+            Console.WriteLine(found == 0
+                ? "===== no xml_deadlock_report found in system_health's ring buffer ====="
+                : $"===== {found} deadlock graph(s) above =====");
+        }
+        catch (Exception diagnostic)
+        {
+            Console.WriteLine($"===== could not read the deadlock graph: {diagnostic.Message} =====");
+        }
     }
 
     /// <summary>Applies every migration to one database, as the migrator.</summary>
