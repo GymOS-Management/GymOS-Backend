@@ -109,13 +109,27 @@ the fix was a bounded retry on 1205 around the fixture's setup statements: five 
 200ms backoff, that error only. **Written and merged** — `7862f86`, PR #2, and CI on that PR came
 back green with the integration suite at **316 of 316**.
 
-**One honest limit on that green run, and it is worth fixing next: no deadlock occurred during it.**
-The retry logs nothing when it fires, so a silently-retried deadlock and a run that never deadlocked
-leave identical logs. Two failures on the identical tree followed by a pass with the change is
-suggestive, not conclusive, for an intermittent contention bug. The change stands on its own terms
-regardless — the fixture had no retry at all and 1205 is retryable by definition — but **a single
-line of output when the retry fires would turn the next occurrence into evidence** instead of
-silence, and would say whether the deadlock is still happening at all. Not written.
+**That retry is now reverted, and it was a mistake — it did not fix the deadlock, it made the
+failure thirty times slower.** PR #3's CI showed it: the deadlock still occurred, exhausted all five
+attempts and failed anyway, in `CreateDatabaseAsync` called from a test class's own
+`InitializeAsync` — at **22m55s** into the run, which the job's `timeout-minutes: 25` then killed,
+leaving orphan `dotnet` processes. SQL Server's deadlock monitor runs on a ~5-second cycle, so each
+attempt costs seconds merely to be *detected*; five attempts per statement across 39 test classes
+each creating a database turned a **45-second** red into a **25-minute** timeout that reports
+nothing. Exactly the "five times slowly" outcome the code's own comment warned about.
+
+**Reverted rather than tuned, so failure is fast and loud again while the cause is still unknown.**
+One claim from that change does survive scrutiny: all 39 classes declare
+`[Collection(SqlServerCollectionDefinition.Name)]` and xUnit runs a single collection sequentially,
+so the harness is **not** deadlocking against itself and serialising its own calls would change
+nothing. What does not survive is the confidence about the counterparty — it was attributed to the
+instance's start-up work, and these deadlocks are still happening 23 minutes in.
+
+**Next step is evidence, not another plausible fix.** Capture the deadlock graph — an XEvent session
+on the container, or `sys.dm_exec_requests` at the point of failure — so the other party is named.
+`SET DEADLOCK_PRIORITY HIGH` on the harness's setup connections is a reasonable candidate once the
+graph says what it is contending with. **Until then the integration suite fails intermittently on
+GitHub runners in ~45 seconds, and that is the better of the two failure modes.**
 
 ### Also open: `db-init` failed once on the same day and passed on re-run
 
