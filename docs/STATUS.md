@@ -2,10 +2,89 @@
 
 **Last updated:** 2026-08-25 · **The SQL Server migration is merged, UAT is live and deploys
 itself, and the schema is now in Git as a database project.** The ADR that authorises the migration is
-still only *proposed* — that gate has not moved. The top section covers picking the SaaS hardening
-branch up on a second machine; the one after it covers everything that happened after the merge, and
-the paragraphs beyond that describe the migration as it stood on its branch and are kept for their
-reasoning, not their branch state.
+still only *proposed* — that gate has not moved. The top section covers the merge itself and the two
+failures it exposed; the one after it covers picking the branch up on a second machine, then
+everything that happened after the SQL Server merge, and the paragraphs beyond that describe the
+migration as it stood on its branch and are kept for their reasoning, not their branch state.
+
+---
+
+## The rollout window, and two failures the merge exposed (2026-08-25)
+
+**`feature/saas-hardening` is merged (`69cd1d2`, PR #1) and UAT is serving it** —
+`/version` reports commit `69cd1d283a74ce2cb8e73bf9964fdc61ce101a56`, environment `Staging`, and
+both health endpoints answer 200. **The deployment worked. Its verification did not**, and the CI
+run on `development` is red for an unrelated reason. Neither is caused by the branch's content.
+
+### The UAT deploy went green everywhere except its own new gate — fixed here
+
+`smoke` failed at *Verify the deployed build is the one this run built* with a 404 from `/version`,
+after `build`, `migrate`, `deploy` and readiness had all passed. **It was measuring during the
+rollout window.** The deploy job's log shows it plainly:
+
+    latestRevisionName:      gymos-uat-api--0000007
+    latestReadyRevisionName: gymos-uat-api--0000006
+
+Revision `--0000007` was not ready, so `--0000006` — which predates `/version` — still held
+traffic. Three things compounded, and the first is the actual defect:
+
+1. *Wait for the new revision to become active* asked for `[?properties.active]` and took
+   `head -1`, which answers about whichever revision is listed first. During a rollout that is the
+   **outgoing** one, already `Running` — so the step passed on attempt 1 and the race it was
+   written to prevent happened anyway. It now waits for `latestReadyRevisionName` to catch up with
+   `latestRevisionName` **and** that named revision to report `Running`.
+2. `/health/ready` is answered by whichever revision holds traffic, so the old one satisfies it.
+   That is not fixable in the readiness step and does not need to be — see 3.
+3. The `/version` assertion was **read once**. A single sample cannot separate "the wrong build is
+   deployed" from "the right build is still coming up". It now polls for up to 200s, so a failure
+   means what its message says. Production's equivalent got the same change and needed it more:
+   it has **no revision-readiness wait at all**, so there the poll is the only thing between a
+   normal rollout and a red production deployment.
+
+**The mechanism was right and caught a real thing** — at the instant it looked, UAT genuinely was
+serving a different build. Only the sampling was wrong.
+
+### Known open item: the integration fixture deadlocks on GitHub runners
+
+**CI on `development` is red, twice in a row, and it is not a flake.** All 1,137 unit and
+architecture tests pass (74 · 153 · 247 · 434 · 98 · 131); the integration suite then loses
+`SqlServerFixture.InitializeAsync` to `Transaction (Process ID 51) was deadlocked on lock
+resources … chosen as the deadlock victim`, and 306 of 316 tests fail behind it. The failing
+statement moved between runs (line 412, then 423), so it is contention rather than one bad
+statement.
+
+The fixture already documents this exact deadlock class: `ALTER DATABASE` takes a database-level
+lock, which is why `SET RECOVERY SIMPLE` was consolidated into one statement on `model` before any
+test runs. That mitigation is evidently not sufficient on a 4-core runner — altering `model` locks
+the very template `CREATE DATABASE` reads.
+
+Three things it is **not**: not the branch (the fixture is untouched by it, and its only test change
+is two `/version` cases); not an upstream image change (`mssql/server:2022-latest` still resolves to
+the 2026-07-08 digest `sha256:ba4c8329…`); and not machine-wide (316 passed locally, and the PR run
+passed all 316 once).
+
+**`ExecuteAsync` had no retry of any kind** — one open, one `ExecuteNonQueryAsync`. Error **1205 is
+retryable by definition** and SQL Server says so in the message itself ("Rerun the transaction"), so
+the fix was a bounded retry on 1205 around the fixture's setup statements: five attempts, linear
+200ms backoff, that error only. **Written and merged** — `7862f86`, PR #2, and CI on that PR came
+back green with the integration suite at **316 of 316**.
+
+**One honest limit on that green run, and it is worth fixing next: no deadlock occurred during it.**
+The retry logs nothing when it fires, so a silently-retried deadlock and a run that never deadlocked
+leave identical logs. Two failures on the identical tree followed by a pass with the change is
+suggestive, not conclusive, for an intermittent contention bug. The change stands on its own terms
+regardless — the fixture had no retry at all and 1205 is retryable by definition — but **a single
+line of output when the retry fires would turn the next occurrence into evidence** instead of
+silence, and would say whether the deadlock is still happening at all. Not written.
+
+### Also open: `db-init` failed once on the same day and passed on re-run
+
+`00-database.sql`'s `ALTER DATABASE … SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE` — which
+needs exclusive access — failed with `Msg 5069` and *"the session is in the kill state"* roughly five
+seconds after the healthcheck first reported healthy, then passed unchanged on re-run. Same family as
+the item above: `ALTER DATABASE` contention against an instance that is still settling. `db-init`
+also pins the floating `2022-latest` tag, which is worth pinning by digest so a run's outcome does
+not depend on when it ran.
 
 ---
 
