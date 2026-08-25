@@ -51,7 +51,14 @@ services:
   # SQL Server 2022 — the only stateful service
   # ════════════════════════════════════════════════════════════════════════════════════════════
   mssql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # Pinned by digest as well as tag. `2022-latest` moves, and a run's outcome must not depend on
+    # when it ran: `db-init` failed once with `Msg 5069` and "the session is in the kill state" on
+    # an `ALTER DATABASE` that has worked every other time, and a floating tag makes "was it the
+    # image?" unanswerable after the fact. The tag stays for readability; the digest is what
+    # resolves. To move it deliberately: `docker pull mcr.microsoft.com/mssql/server:2022-latest`
+    # then `docker image inspect --format '{{index .RepoDigests 0}}'` and update all three
+    # references (both services here and `SqlServerFixture`).
+    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89
     container_name: gymos-mssql
     restart: unless-stopped
     logging: *default-logging
@@ -158,7 +165,14 @@ services:
   #
   # It uses the SQL Server image purely for the sqlcmd binary inside it; no engine is started.
   db-init:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # Pinned by digest as well as tag. `2022-latest` moves, and a run's outcome must not depend on
+    # when it ran: `db-init` failed once with `Msg 5069` and "the session is in the kill state" on
+    # an `ALTER DATABASE` that has worked every other time, and a floating tag makes "was it the
+    # image?" unanswerable after the fact. The tag stays for readability; the digest is what
+    # resolves. To move it deliberately: `docker pull mcr.microsoft.com/mssql/server:2022-latest`
+    # then `docker image inspect --format '{{index .RepoDigests 0}}'` and update all three
+    # references (both services here and `SqlServerFixture`).
+    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89
     container_name: gymos-db-init
     # Not `unless-stopped`: this container is meant to exit, and restarting it would loop forever.
     restart: 'no'

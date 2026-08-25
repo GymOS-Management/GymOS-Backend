@@ -9,6 +9,53 @@ migration as it stood on its branch and are kept for their reasoning, not their 
 
 ---
 
+## Pinned SQL Server, and a deadlock that will explain itself next time (2026-08-25)
+
+**Two changes, both aimed at the same thing: making the intermittent SQL Server failures on GitHub
+runners answerable instead of arguable.**
+
+**The image is pinned by digest in all three places** — both compose services and
+`SqlServerFixture`'s Testcontainers builder — at
+`mcr.microsoft.com/mssql/server:2022-latest@sha256:ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89`,
+verified pullable and identical to what the tag resolved to today. The tag stays for readability;
+the digest is what resolves. **A floating tag made "was it the image?" unanswerable after the fact** —
+`db-init` failed once with `Msg 5069` and "the session is in the kill state" on an `ALTER DATABASE`
+that has worked every other time, and nothing in the record could rule the image in or out. Moving
+the pin deliberately is documented at the compose reference; **all three references must move
+together.**
+
+**The fixture now prints the deadlock graph and still fails fast.** On 1205 it dumps every
+`xml_deadlock_report` the instance recorded, then rethrows. No extended-events session has to be
+created — SQL Server captures those into the always-on `system_health` session by default, and the
+ring buffer still holds them once the victim's exception has surfaced. The graph names **both
+parties, their statements, and the resource they contended over**, which is precisely what every
+attempt at this today lacked: the cause was assumed to be the instance settling after start-up, and
+that assumption did not survive a run still deadlocking twenty-three minutes in. The diagnostic
+swallows all of its own errors and says so — a diagnostic that can throw would replace the failure
+being diagnosed.
+
+**No retry was reintroduced.** Failing in ~45 seconds remains the better failure mode; what it
+lacked was evidence, not patience.
+
+Verified: build **0 warnings, 0 errors**; `dotnet format --verify-no-changes` **exit 0**; both
+compose files validate; the pinned reference resolves in both services; integration suite **316 of
+316** against the pinned image. **No deadlock occurred in that run, so the new capture path has not
+itself been exercised** — the next occurrence on a runner is what will prove it, and it will either
+print a graph or say why it could not.
+
+### Still owed, and neither is code
+
+- **The `Production` environment question is unresolved.** Only `UAT` exists, with no protection
+  rules, and the org is on the **free** plan with private repos — where environment protection rules
+  are unavailable, the same limitation that already makes branch protection return 403. If that
+  holds, `environment: Production` in `deploy-production.yml` is decorative and a push to `main`
+  would run a production migration with **no human pause**. Settling it needs one API write, or the
+  repo's Settings → Environments page.
+- **ADR-54 is still `Proposed`** with a placeholder rationale. Unchanged all day, and still the one
+  item nobody but its author can close.
+
+---
+
 ## The revision wait's own regression, and what it teaches about where the gate belongs (2026-08-25)
 
 **PR #3 merged and made the UAT deploy worse, not better.** The rewritten wait read the app's two
