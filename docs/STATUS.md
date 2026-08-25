@@ -22,8 +22,13 @@ locally.
 10.0.302 is still not installed; this machine has 10.0.103 and 10.0.400. The pin carries
 `rollForward: latestFeature`, which accepts a *higher* feature band, so the 4xx band satisfies a
 3xx request and `dotnet --version` resolves **10.0.400** inside the repository. `dotnet build
-GymOS.Backend.slnx -c Release` — **0 warnings, 0 errors** in 17.7s, natively. The pinned-SDK
-container that §4 documents is a workaround for the other machine, not a requirement of the repo.
+GymOS.Backend.slnx -c Release` — **0 warnings, 0 errors** in 17.7s, natively. **CI resolves the
+same 10.0.400**: run `32788974695` logs `.NET Core SDK with version '10.0.400' is already
+installed`, because `actions/setup-dotnet` is pointed at `global-json-file` and the same
+roll-forward applies on the runner. Local and CI are therefore on one SDK, so the formatting result
+below is evidence about the version CI actually uses. The other machine needed the pinned container
+only because 10.0.301 sits *below* the pin'''s floor and roll-forward never goes backward — not
+because 10.0.302 is required anywhere.
 
 **Formatting is now verified, closing §4's one deferred gate.** `dotnet format
 --verify-no-changes GymOS.Backend.slnx` — **exit 0**. The 178 whitespace errors §4 recorded were a
