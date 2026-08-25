@@ -63,9 +63,19 @@ is two `/version` cases); not an upstream image change (`mssql/server:2022-lates
 the 2026-07-08 digest `sha256:ba4c8329…`); and not machine-wide (316 passed locally, and the PR run
 passed all 316 once).
 
-**`ExecuteAsync` has no retry of any kind** — one open, one `ExecuteNonQueryAsync`. Error **1205 is
+**`ExecuteAsync` had no retry of any kind** — one open, one `ExecuteNonQueryAsync`. Error **1205 is
 retryable by definition** and SQL Server says so in the message itself ("Rerun the transaction"), so
-a bounded retry on 1205 around the fixture's setup statements is the fix. **Not written yet.**
+the fix was a bounded retry on 1205 around the fixture's setup statements: five attempts, linear
+200ms backoff, that error only. **Written and merged** — `7862f86`, PR #2, and CI on that PR came
+back green with the integration suite at **316 of 316**.
+
+**One honest limit on that green run, and it is worth fixing next: no deadlock occurred during it.**
+The retry logs nothing when it fires, so a silently-retried deadlock and a run that never deadlocked
+leave identical logs. Two failures on the identical tree followed by a pass with the change is
+suggestive, not conclusive, for an intermittent contention bug. The change stands on its own terms
+regardless — the fixture had no retry at all and 1205 is retryable by definition — but **a single
+line of output when the retry fires would turn the next occurrence into evidence** instead of
+silence, and would say whether the deadlock is still happening at all. Not written.
 
 ### Also open: `db-init` failed once on the same day and passed on re-run
 
