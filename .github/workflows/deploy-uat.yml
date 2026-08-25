@@ -221,23 +221,36 @@ jobs:
         run: |
           set -euo pipefail
 
+          # One scalar per call, deliberately. `--query "[a, b]" -o tsv` prints one value per
+          # *line*, not one tab-separated line -- so `cut -f1` returned both names joined by a
+          # newline, `revision show --revision` could not resolve that, runningState stayed
+          # `unknown`, and this loop failed the deploy job 30 attempts later on a deployment that
+          # had in fact succeeded. Two calls are chattier and unambiguous.
           for attempt in $(seq 1 30); do
-            names=$(az containerapp show               --name gymos-uat-api --resource-group GymOS-UAT               --query "[properties.latestRevisionName, properties.latestReadyRevisionName]" -o tsv)
-            latest=$(printf '%s' "$names" | cut -f1)
-            ready=$(printf '%s' "$names" | cut -f2)
+            latest=$(az containerapp show               --name gymos-uat-api --resource-group GymOS-UAT               --query "properties.latestRevisionName" -o tsv 2>/dev/null || true)
+            ready=$(az containerapp show               --name gymos-uat-api --resource-group GymOS-UAT               --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
 
-            state=$(az containerapp revision show               --name gymos-uat-api --resource-group GymOS-UAT --revision "$latest"               --query "properties.runningState" -o tsv 2>/dev/null || echo unknown)
+            state=unknown
+            if [ -n "$latest" ]; then
+              state=$(az containerapp revision show                 --name gymos-uat-api --resource-group GymOS-UAT --revision "$latest"                 --query "properties.runningState" -o tsv 2>/dev/null || echo unknown)
+            fi
 
-            echo "attempt $attempt: latest=$latest ready=${ready:-none} runningState=${state:-unknown}"
+            echo "attempt $attempt: latest=${latest:-none} ready=${ready:-none} runningState=${state}"
             if [ -n "$latest" ] && [ "$latest" = "$ready" ] && [ "$state" = "Running" ]; then
               exit 0
             fi
             sleep 10
           done
 
-          echo "::error::The new revision did not start serving traffic within five minutes."
-          az containerapp logs show --name gymos-uat-api --resource-group GymOS-UAT --tail 100 || true
-          exit 1
+          # A warning, not an error, and the job continues. This wait is an optimisation: it exists
+          # so `smoke` does not have to poll through the whole rollout. **The authoritative check is
+          # `/version` in `smoke`**, which polls and fails loudly if the wrong build is serving --
+          # so a rollout this loop could not observe is not a reason to fail a deployment that may
+          # well have worked. Failing here instead *skips* smoke, which is how a successful deploy
+          # came to be reported as a failed one with no version check run at all.
+          echo "::warning::Could not confirm the new revision is serving within five minutes; leaving the verdict to the /version check in smoke."
+          az containerapp revision list --name gymos-uat-api --resource-group GymOS-UAT             --query "[].{name:name, active:properties.active, state:properties.runningState}" -o table || true
+          exit 0
 
   smoke:
     needs: [preflight, deploy]

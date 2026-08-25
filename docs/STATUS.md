@@ -9,6 +9,46 @@ migration as it stood on its branch and are kept for their reasoning, not their 
 
 ---
 
+## The revision wait's own regression, and what it teaches about where the gate belongs (2026-08-25)
+
+**PR #3 merged and made the UAT deploy worse, not better.** The rewritten wait read the app's two
+revision names with one call — `--query "[properties.latestRevisionName,
+properties.latestReadyRevisionName]" -o tsv` — on the assumption that a two-element projection
+prints one tab-separated line. **It prints one value per line.** So `cut -f1` returned both names
+joined by a newline, `az containerapp revision show --revision` could not resolve that,
+`runningState` stayed `unknown`, and the loop ran all 30 attempts and **failed the `deploy` job**.
+The log says it plainly:
+
+    attempt 1: latest=gymos-uat-api--0000009
+    gymos-uat-api--0000008 ready=gymos-uat-api--0000009
+    gymos-uat-api--0000008 runningState=unknown
+
+**The deployment succeeded anyway** — `az containerapp update` runs before the wait, and UAT served
+`93298108f36ccadfadff919c02a6556666553890` from 18:57. Three consecutive UAT deploys have now been
+reported as failures while actually deploying correctly, and this third one was self-inflicted and
+the worst of them: failing `deploy` **skips `smoke`**, so the run had no version check at all.
+
+**Two fixes, and the second matters more than the first.**
+
+1. One scalar per `az` call. Chattier, unambiguous, and it cannot silently produce a multi-line
+   value again.
+2. **The wait no longer fails the job.** It emits a `::warning::`, dumps the revision table and
+   exits 0. The wait is an *optimisation* — it exists so `smoke` need not poll through a whole
+   rollout. The authoritative check is `/version` in `smoke`, which polls and fails loudly when the
+   wrong build is serving. A rollout this loop cannot observe is not a reason to fail a deployment
+   that may well have worked, and failing here removes the only check that could have told the
+   difference.
+
+**The lesson, recorded because it was learned three times in one day:** a gate that guesses about
+readiness must not be able to veto the gate that actually measures the result. Put the verdict where
+the evidence is — `/version` — and let everything upstream of it be advisory.
+
+Verified: all four workflows parse, and **all 40 bash `run` blocks pass `bash -n`** (the two `pwsh`
+blocks in `schema-drift.yml` are excluded by shell, not skipped by accident — an earlier check ran
+`bash -n` over one of them and reported a false failure on its backtick continuations).
+
+---
+
 ## The rollout window, and two failures the merge exposed (2026-08-25)
 
 **`feature/saas-hardening` is merged (`69cd1d2`, PR #1) and UAT is serving it** —
