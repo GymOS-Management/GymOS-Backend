@@ -26,7 +26,14 @@ database/
   GymOS.Database/            # the schema, declaratively — generated from the EF
                              #   migrations, compared against live databases,
                              #   never published. See database/README.md
+infrastructure/bicep/        # environment templates — a SKELETON, never applied;
+                             #   see infrastructure/bicep/README.md before using it
 scripts/                     # schema-compare.ps1, reset-local-db.ps1, populate-all.ps1
+docs/
+  Architecture/              # overview, database, security, deployment
+  Infrastructure/            # environments, Azure inventory, the local stack
+  runbooks/                  # rollback, database recovery, incident response, roles
+  BusinessRules/             # what each domain is supposed to do
 ```
 
 Note: the `GymOS.Platform.*` project names refer to the platform-scope module area
@@ -61,11 +68,17 @@ The usual working setup: the API on the host, only the database in a container.
 dotnet tool restore
 ```
 
-**2. Start SQL Server:**
+**2. Start SQL Server and apply migrations.** `migrator` pulls in `mssql` and `db-init` on its own
+(it depends on both), so this one service is the whole step:
 
 ```
-docker compose up -d mssql db-init
+docker compose up -d migrator
 ```
+
+`db-init` alone is **not** enough. It creates the database and the two principals but applies no
+migrations, and the API cannot apply them either — it connects as `gymos_app`, which owns nothing and
+holds no DDL rights in any environment (R14). An unmigrated database makes `/health/ready` answer
+503, which is the intended behaviour and a confusing first five minutes if you were not expecting it.
 
 **3. Give yourself an account to sign in with.** Skip this and the seeder warns and creates
 nothing — GymOS never ships a default credential:
@@ -81,28 +94,38 @@ dotnet user-secrets set "Seed:SuperAdmin:Password" "<12+ chars>"   --project src
 dotnet run --project src/Host/GymOS.WebApi       # http://localhost:5080, opens /scalar/v1
 ```
 
-In Development, `Database:MigrateOnStartup` is `true`, so the API migrates and seeds itself on
-boot — there is no separate `dotnet ef database update` step. That cuts both ways: **the first run
-after pulling applies any new migration to whichever database it is pointed at.**
+**The API never migrates, in any environment — including Development.** `Database:MigrateOnStartup`
+is `false` in every appsettings file and every compose file, because the principal the API connects
+as holds no DDL rights. Migrations are step 2 above, and they are the same code path
+(`Database:MigrateOnly`) that UAT and Production use. It does still **seed** on boot: identity, the
+feature catalogue, and the SuperAdmin from step 3.
 
-**Check which database that is before the first run of the day.** Configuration precedence is
+**Check which database it will open before the first run of the day.** Configuration precedence is
 environment variables → user secrets → `appsettings.Development.json`, so a
-`ConnectionStrings:Database` left in your user secrets (a shared team database, say) silently wins
-over the local container:
+`ConnectionStrings:Database` left in your user secrets silently wins over the local container:
 
 ```
 dotnet user-secrets list --project src/Host/GymOS.WebApi
 ```
 
-To point one run at the local container without changing anything, set the environment variable —
-it outranks the secret:
+A stale entry there is the single most common local startup failure. A PostgreSQL-shaped string left
+from before ADR-54 fails with `Keyword not supported: 'host'`; a string naming another environment's
+database is refused by `DatabaseEnvironmentGuard`. Remove it with:
+
+```
+dotnet user-secrets remove "ConnectionStrings:Database" --project src/Host/GymOS.WebApi
+```
+
+To point one run at the local container without changing your secrets, set the environment variable —
+it outranks them:
 
 ```powershell
-$env:ConnectionStrings__Database='Server=localhost,1433;Database=gymos;User Id=gymos_app;Password=Gymos_dev_app_password1;Encrypt=True;TrustServerCertificate=True;Current Language=us_english'
+$env:ConnectionStrings__Database='Server=localhost,1433;Database=GymOS_Local;User Id=gymos_app;Password=Gymos_dev_app_password1;Encrypt=True;TrustServerCertificate=True;Current Language=us_english'
 ```
 
 (Those credentials match `docker-compose.override.yml` and are deliberately public, like the
-signing key.)
+signing key. `Current Language=us_english` is not optional — `UnitOfWork` recovers a constraint name
+by reading the server's error message, and SQL Server localises it per login language.)
 
 Starting the API opens the **Scalar API reference** at `http://localhost:5080/scalar/v1` in
 your browser; the document behind it is `http://localhost:5080/openapi/v1.json`. Sign in
@@ -250,6 +273,63 @@ Full reference, including the three objects that are deliberately not comparable
 dotnet build GymOS.Backend.slnx
 dotnet test  GymOS.Backend.slnx
 ```
+
+The database project is **not** part of that build. `dotnet build` on the `.slnx` silently skips a
+`.sqlproj` — it reports success and produces nothing — so build it by path:
+
+```
+dotnet build database/GymOS.Database/GymOS.Database.sqlproj --configuration Release
+# → database/GymOS.Database/bin/Release/GymOS.Database.dacpac
+```
+
+## Database changes
+
+**EF Core migrations are the only thing that changes a database, in any environment.** The database
+project is the declarative record of what they produce, used for validation, comparison and the
+DACPAC — it never publishes.
+
+```
+dotnet ef migrations add <Name> --project src/Platform/GymOS.Platform.Infrastructure --startup-project src/Host/GymOS.WebApi
+dotnet ef migrations script <from> <to> --project src/Platform/GymOS.Platform.Infrastructure --startup-project src/Host/GymOS.WebApi
+# then update database/GymOS.Database from that script, and commit both halves together
+```
+
+Compare a live database against the repository — read-only, and there is no code path in it that
+writes:
+
+```powershell
+./scripts/schema-compare.ps1 -ConnectionString '<a read-only connection string>'
+```
+
+Both, in full: [`docs/Architecture/DATABASE.md`](docs/Architecture/DATABASE.md).
+
+## Version and deployment identity
+
+```
+curl http://localhost:5080/version
+# {"version":"0.9.0","commit":"<sha>","environment":"Development","builtAt":"…"}
+```
+
+`version` comes from `VersionPrefix` in `Directory.Build.props` — one hand-edited line, bumped when a
+milestone closes. `commit` is what identifies a deployment: it is the same value as the container
+image tag and the `org.opencontainers.image.revision` label, and CI asserts all three agree. A local
+build reports `null` for `commit` and `builtAt` rather than inventing them.
+
+## Documentation
+
+| | |
+|---|---|
+| [`docs/Architecture/OVERVIEW.md`](docs/Architecture/OVERVIEW.md) | What the system is, and where every other document lives |
+| [`docs/Architecture/DATABASE.md`](docs/Architecture/DATABASE.md) | EF migrations vs the database project; drift detection; the DACPAC |
+| [`docs/Architecture/SECURITY.md`](docs/Architecture/SECURITY.md) | Auth, tenant isolation, database principals, where secrets belong |
+| [`docs/Architecture/DEPLOYMENT.md`](docs/Architecture/DEPLOYMENT.md) | CI, UAT, Production, and why one image is never rebuilt |
+| [`docs/Infrastructure/ENVIRONMENTS.md`](docs/Infrastructure/ENVIRONMENTS.md) | The four stages, three databases, and the four checks that separate them |
+| [`docs/Infrastructure/AZURE.md`](docs/Infrastructure/AZURE.md) | The resource inventory, and what only a human can create |
+| [`docs/Infrastructure/DOCKER.md`](docs/Infrastructure/DOCKER.md) | The local stack, service by service |
+| [`docs/runbooks/`](docs/runbooks) | Rollback, database recovery, incident response, SQL Server roles |
+| [`docs/BusinessRules/`](docs/BusinessRules) | What each domain is supposed to do |
+| [`docs/STATUS.md`](docs/STATUS.md) | Working log: what was built and verified, and when |
+| `GymOS-Specification` | The frozen architecture and the ADRs. Decisions live there, not here |
 
 ## Rules
 

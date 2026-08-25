@@ -2,9 +2,65 @@
 
 **Last updated:** 2026-08-25 · **The SQL Server migration is merged, UAT is live and deploys
 itself, and the schema is now in Git as a database project.** The ADR that authorises the migration is
-still only *proposed* — that gate has not moved. The section immediately below covers everything that
-happened after the merge; the paragraphs after it describe the migration as it stood on its branch and
-are kept for their reasoning, not their branch state.
+still only *proposed* — that gate has not moved. The top section covers picking the SaaS hardening
+branch up on a second machine; the one after it covers everything that happened after the merge, and
+the paragraphs beyond that describe the migration as it stood on its branch and are kept for their
+reasoning, not their branch state.
+
+---
+
+## SaaS hardening branch picked up on the second machine (2026-08-25)
+
+**`feature/saas-hardening` is checked out here, unmerged and with no PR open. Its §5 "personal
+to-dos on the machine" turned out to be scoped to the machine the branch was written on — none of
+the three applies to this one, verified individually rather than assumed.** All seven repos were
+fast-forwarded first; Backend `main` moved to `41c57c9`, Platform `development` and `main` to
+`5339c6a`, and `GymOs-Specification` `development` to `fd5c200`, which is where ADR-54 now sits
+locally.
+
+**The SDK blocker does not exist here, and the reason is `global.json` rather than an install.**
+10.0.302 is still not installed; this machine has 10.0.103 and 10.0.400. The pin carries
+`rollForward: latestFeature`, which accepts a *higher* feature band, so the 4xx band satisfies a
+3xx request and `dotnet --version` resolves **10.0.400** inside the repository. `dotnet build
+GymOS.Backend.slnx -c Release` — **0 warnings, 0 errors** in 17.7s, natively. **CI resolves the
+same 10.0.400**: run `32788974695` logs `.NET Core SDK with version '10.0.400' is already
+installed`, because `actions/setup-dotnet` is pointed at `global-json-file` and the same
+roll-forward applies on the runner. Local and CI are therefore on one SDK, so the formatting result
+below is evidence about the version CI actually uses. The other machine needed the pinned container
+only because 10.0.301 sits *below* the pin'''s floor and roll-forward never goes backward — not
+because 10.0.302 is required anywhere.
+
+**Formatting is now verified, closing §4's one deferred gate.** `dotnet format
+--verify-no-changes GymOS.Backend.slnx` — **exit 0**. The 178 whitespace errors §4 recorded were a
+Linux-container-against-CRLF-working-tree artifact exactly as it suspected, and they do not
+reproduce natively. **Confirmed it was not a silent no-op** before believing the exit code, because
+that is precisely §4's trap 1: re-run at `--verbosity diagnostic` it reports **"Formatted 0 of 522
+files"**, so it inspected the tree and found nothing to change. Two projects cannot be opened by the
+format workspace — `docker-compose.dcproj` and `database/GymOS.Database/GymOS.Database.sqlproj`,
+neither associated with a language. Neither holds C#, and the `.sqlproj` case is the same blind spot
+as the `dotnet build` skip already recorded above.
+
+**The other two machine to-dos were already clean.** `dotnet user-secrets list --project
+src/Host/GymOS.WebApi` holds only `Seed:SuperAdmin:Email` and `Seed:SuperAdmin:Password` — the stale
+Neon `ConnectionStrings:Database` that breaks host-run `dotnet run` with `Keyword not supported:
+'host'` is not present, so nothing was removed. No `.claude/skills/neon*` exists anywhere in the
+tree or under the user profile here, so there is no Postgres-flavoured steer for an agent to pick up.
+
+**The integration suite has now been run here, and it is green: 316 passed, 0 failed, 0
+skipped, in 9m18s.** Release, `--logger trx`, against a Testcontainers-managed
+`mcr.microsoft.com/mssql/server:2022-latest` on Docker engine 29.2.1 — the image was a cold pull.
+**316 rather than the 314 the branch inherited, and both extras are this branch's own:**
+`Version_IsServedAnonymously_AndNamesTheBuildAndEnvironment` and
+`Version_IsAbsentFromTheOpenApiDocument`, which are the only test change it makes. Deliberately run
+*without* `--no-build` and with a unique trx name, because those are §4's two traps; and the count
+was read out of the run rather than inferred from the exit code, which is the only thing that
+distinguishes a pass from trap 1's zero-test exit 0. The 1,137 unit and architecture tests were
+verified on the other machine and were not re-run here.
+
+**§1's three owed items have not moved, and none is code:** the two Entra/SQL grants for
+`gymos-uat-deploy` plus `SCHEMA_DRIFT_ENABLED=true`, required reviewers on the `Production` GitHub
+environment, and **ADR-54, still `Proposed`** with a placeholder rationale that only the author can
+write.
 
 ---
 
@@ -112,7 +168,9 @@ toolchain in there against the mounted repository gave **build 0 warnings / 0 er
 rather than floating `10.0`, which carries 10.0.400 and disagrees about formatting — the command and
 that trap are under "Known open items". The pin predates the branch (`fd7763e`); it is an environment
 gap, not a regression.
-**The 314 integration tests are still unrun — run them before promoting anything.**
+~~**The 314 integration tests are still unrun — run them before promoting anything.**~~
+**Closed 2026-08-25** — run on the second machine at 316 (the two extras being
+`feature/saas-hardening`'s own `/version` tests), 0 failed. See the top section.
 
 **One defect found reviewing the branch, not by running it:**
 `src/Host/GymOS.WebApi/appsettings.Development.json` **was never migrated** — it still carries

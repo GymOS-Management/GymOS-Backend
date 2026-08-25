@@ -297,6 +297,11 @@ try
     app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/ready");
 
+    // Which build is answering. Beside the health endpoints rather than among the /api/v1 groups
+    // below, because it belongs to the same operational surface: unversioned, anonymous, and absent
+    // from the OpenAPI document. See VersionEndpoints for why each of those three is deliberate.
+    app.MapVersionEndpoint();
+
     // The contract and its reference UI travel together — publishing one without the other
     // serves a UI that cannot load its own document. Off outside Development unless
     // OpenApi:Enabled says otherwise; see OpenApiExtensions.IsOpenApiExposed.
