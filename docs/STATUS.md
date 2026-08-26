@@ -1,11 +1,78 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-25 · **The SQL Server migration is merged, UAT is live and deploys
+**Last updated:** 2026-08-26 · **The SQL Server migration is merged, UAT is live and deploys
 itself, and the schema is now in Git as a database project.** The ADR that authorises the migration is
-still only *proposed* — that gate has not moved. The top section covers the merge itself and the two
-failures it exposed; the one after it covers picking the branch up on a second machine, then
-everything that happened after the SQL Server merge, and the paragraphs beyond that describe the
-migration as it stood on its branch and are kept for their reasoning, not their branch state.
+still only *proposed* — that gate has not moved. **The top section is the close-of-day summary and the list
+of what is owed; start there.** The sections after it run newest-first through 2026-08-25's work,
+then the SQL Server merge, and the paragraphs beyond that describe the migration as it stood on its
+branch and are kept for their reasoning, not their branch state.
+
+---
+
+## Close of 2026-08-25 — where to pick up
+
+**Both active repositories are clean, `development` is green, and UAT is serving `development`'s
+tip.** Nothing is in flight, nothing is uncommitted, and no local branch is ahead of its remote.
+The sections below this one carry the detail and the reasoning; this is the short version and the
+list of what is owed.
+
+| | |
+|---|---|
+| `GymOS-Backend` `development` | `6fd875d` — CI green, integration **316/316** |
+| UAT | `/version` → `6fd875d63801802ea79a9cb2b4789d028cfa45b8`, environment `Staging` |
+| `GymOs-Specification` `development` | `81fdce8` — ADR-54 staged for approval |
+| Open PRs | none, in either repository |
+
+**Seven PRs merged.** In the backend: the SaaS-hardening handoff branch (#1), the deploy-gate fix
+(#3), the regression fix to that fix (#4), the revert of the fixture retry (#5), and the image pin
+plus deadlock capture (#6). In the specification repository: ADR-54 staged (#1).
+
+### Owed, and none of it is code
+
+1. **The `Production` GitHub environment — the only open item with a safety consequence.** Only
+   `UAT` exists, with **zero protection rules**, and the organisation is on the **free** plan with
+   private repositories, where environment protection rules are unavailable — the same limitation
+   that already makes branch protection and rulesets return 403. If that holds, `environment:
+   Production` in `deploy-production.yml` is decorative and **a push to `main` runs a production
+   migration with no human approval.** Settling it needs one API write or the repository's
+   Settings → Environments page. *An attempt to test it by API was blocked by a permission
+   classifier and deliberately not worked around.*
+2. **ADR-54's rationale** — `GymOs-Specification/ADR-CHANGELOG.md`, the blockquote marked `AUTHOR:`
+   (line 243 at `81fdce8`). One or two sentences. The approval checklist in the entry makes
+   everything after it mechanical. **Also waiting there: the `idempotency_key` decision** — the
+   database collation makes that client-supplied key match case-insensitively where PostgreSQL's
+   `lc-collate=C` compared it byte-for-byte, so two keys differing only in case are now one key.
+   Accept it, or pin the column to `Latin1_General_100_BIN2`, which is a migration.
+3. **The two Entra grants**, then `SCHEMA_DRIFT_ENABLED=true`. `schema-drift.yml` is written, valid,
+   and correctly short-circuiting: its `preflight` passes, `compare` skips, and it prints a notice
+   naming exactly what it needs. `docs/Infrastructure/AZURE.md` §3.
+
+### Two things not to misread
+
+**The fixture deadlock is instrumented, not fixed.** It failed twice consecutively, then passed on
+the four runs since. The retry that looked like a fix was reverted for making things worse; what is
+in place now prints the deadlock graph on error 1205 and still fails fast. **That capture path has
+not yet been exercised, because no deadlock has occurred since it landed.** When one does, it will
+name both parties and the contended resource — and that is the point at which to fix it, not before.
+
+**The deploy gates are proven, once.** Three consecutive clean UAT deploys, and run `32888622170`
+shows the mechanism working rather than merely passing: `latest=--0000010 ready=--0000009
+runningState=Activating` on attempt 1, exiting on attempt 3 when `ready` caught up. The old logic
+would have passed on attempt 1 against the outgoing revision. `deploy-production.yml` has the same
+`/version` poll but **no revision-readiness wait at all**, and has never run.
+
+### Honest note on today's two self-inflicted failures
+
+Both reached `development` before being caught, and both came from shipping a plausible fix for a
+failure that does not reproduce locally. The retry (`7862f86`, reverted in #5) turned a 45-second
+red into a 25-minute job timeout that reported nothing. The revision wait (#3, fixed in #4) assumed
+`--query "[a, b]" -o tsv` prints one tab-separated line when it prints one value per line, and
+failed a `deploy` job on a deployment that had succeeded — which also **skipped `smoke`**, removing
+the only check that could have told the difference.
+
+The durable lesson, written into the workflow itself: **a gate that guesses about readiness must not
+be able to veto the gate that measures the result.** The revision wait now warns and exits 0; the
+`/version` poll holds the verdict.
 
 ---
 
