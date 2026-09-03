@@ -1,11 +1,85 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-08-25 · **The SQL Server migration is merged, UAT is live and deploys
+**Last updated:** 2026-09-03 · **The SQL Server migration is merged, UAT is live and deploys
 itself, and the schema is now in Git as a database project.** The ADR that authorises the migration is
-still only *proposed* — that gate has not moved. The top section covers the merge itself and the two
-failures it exposed; the one after it covers picking the branch up on a second machine, then
-everything that happened after the SQL Server merge, and the paragraphs beyond that describe the
-migration as it stood on its branch and are kept for their reasoning, not their branch state.
+still only *proposed* — that gate has not moved. The top section is the 2026-09-03 resumption and the
+decisions it took; the sections after it cover the merge itself and the two failures it exposed, then
+picking the branch up on a second machine, then everything that happened after the SQL Server merge,
+and the paragraphs beyond that describe the migration as it stood on its branch and are kept for their
+reasoning, not their branch state.
+
+---
+
+## Resumed 2026-09-03: the platform roadmap is the target, and audit finding 7 is closed
+
+**Decision taken with the owner: finish the Super Admin platform — M6 and M7 — before any gym-facing
+module.** Three scope decisions were taken at the same time, each against the Golden Rule:
+
+1. **M6 ships monitoring without devices.** The device registry, heartbeat endpoint and offline job are
+   deferred to the Gateway module, because nothing exists to send a heartbeat and a registry with no
+   producer would report empty for months — the same trap M5 avoided by deferring `active_devices`.
+   M6 is therefore: a health/outbox/job-runner overview, **persisted job runs** (the job host records
+   no state today), and a jobs page.
+2. **Two owed increments land before M6 starts:** audit finding 7 (below, done) and the in-app
+   `Seed:DemoData` seeder, so the consoles have gyms and plans to show.
+3. **M7's settings module starts with the categories that have a consumer today** — General, Email,
+   Security, Maintenance and the retention windows. Storage, AI and Payment arrive as additive rows
+   with the providers they configure.
+
+### Audit finding 7 — concurrent failed sign-ins no longer collide (branch `fix/concurrent-failed-logins`)
+
+**The defect:** the failed-attempt counter rode the aggregate's row version. Five wrong guesses in
+flight together each loaded the same streak, one `SaveChanges` won and four lost to the concurrency
+token — so `/auth/login` answered **409** on a sign-in endpoint, `FailedLoginAttempts` advanced by one
+instead of five, and lockout took roughly `MaxFailedAttempts × concurrency` guesses to trigger. A user
+double-submitting the form saw the 409 too.
+
+**The fix is the one the finding prescribed: a tally that does not ride the version.**
+`IUserRepository.RecordFailedLoginAsync` is a single `UPDATE … OUTPUT` whose `CASE` expressions do
+the increment and the threshold test in the same statement, under the row lock the update takes, so no
+two attempts can read the same streak. Its `WHERE` clause restates `User.IsLockedOut`, so a guess
+arriving after a concurrent one has already locked the account is not tallied and the window is not
+extended. The aggregate then **reflects** the store's result — `User.ReflectFailedLogin` replaces
+`RecordFailedLogin` — and raises `UserLockedOut` only on the attempt that applied the lockout, so a
+lockout is announced once. Both callers moved: sign-in and change-password (which shares the counter
+on purpose). The row version still advances, as on any update, so the repository reloads the tracked
+aggregate afterwards; that is what lets the handler's own `SaveChanges` — the audit entry and, on the
+locking attempt, the outbox message — go through instead of colliding with the very update it just
+made. One extra `SELECT`, on a path that has just paid for an Argon2 verification.
+
+**The rule now lives in the SQL, and the domain method mirrors it.** That duplication is deliberate
+and named in both places: the arithmetic cannot be atomic in memory, which is the whole finding. Raw
+ADO.NET rather than `ExecuteUpdate` or `SqlQuery`, for the reasons `InvoiceNumberGenerator` already
+records — the first cannot return the updated values and the second wraps its SQL in a subquery.
+
+**No schema change, no contract change.** Same two columns, no migration, OpenAPI untouched.
+
+Verified on this machine with the pinned SDK 10.0.302 (installed user-locally — see the Fresh-machine
+setup): build **0 warnings, 0 errors**; `dotnet format --verify-no-changes` **exit 0**; Domain **437**
+(was 434 — three new `ReflectFailedLogin` cases), Application **247**, Infrastructure **98**,
+Architecture **153**, all green. Integration: the new `FailedLoginTallyTests` — five parallel wrong
+passwords **all 401, none 409**, the sixth attempt refused as `account_locked`, exactly one
+`gymos.platform.user.locked_out` outbox message, all six attempts audited; and the repository-level
+tally advancing 1, 2, locking at 3, ignoring a guess during the window, starting a fresh streak after
+it, and leaving the aggregate saveable — plus `AuthenticationFlowTests`, `SignInRateLimitingTests` and
+`ConcurrencyTests`: **28 of 28**. The full 316-test suite was **not** re-run for this change; it was
+run once on this machine today before the change and lost 12 tests to `CREATE DATABASE` execution
+timeouts (see below), which is the machine, not the code.
+
+### This machine, for whoever resumes here
+
+- **SDK 10.0.302 is installed under `%LOCALAPPDATA%\Microsoft\dotnet`**, not in Program Files (no admin
+  rights; Program Files has only 10.0.301, below the pin's floor). It is **not on PATH**: set
+  `DOTNET_ROOT` to that directory and prepend it to `PATH` in each shell, or `dotnet` resolves the
+  10.0.301 that refuses to load.
+- **The integration suite is slow and flaky here, and the cause is I/O, not code.** The full run took
+  **34 minutes** (the other machine: 9m18s) and failed **12 of 316**, every one an `Execution Timeout
+  Expired` on the fixture's `CREATE DATABASE` at 18, 22, 31 and 31 minutes in — the same
+  `CREATE`/`ALTER DATABASE` contention family as the runner deadlocks, showing as SQL Server's 30-second
+  command timeout instead of a 1205. The fixture sets no command timeout on those statements; raising
+  it for database creation is the obvious lever if this machine needs to be green, and it has not been
+  pulled. Filtered runs occasionally lose their first class the same way and pass on re-run.
+- **`gh` is not installed here**, so PRs are opened from the browser.
 
 ---
 
@@ -3419,14 +3493,12 @@ been exercised against a real grant.
   untouched" (true but conflated, cosmetic). None has a live consequence yet; all three are recorded
   in `docs/BusinessRules/Features.md`'s deferred list rather than left only here.
 
-- **Concurrent failed sign-ins for one account collide on the user row's version** (audit finding 7,
-  deliberately deferred): four of five parallel guesses raise a concurrency conflict, so
-  `/auth/login` can answer **409** on a login endpoint, and `FailedLoginAttempts` advances by one
-  instead of five — lockout takes roughly `MaxFailedAttempts` × concurrency to trigger. A user
-  double-submitting the form sees the 409 too. The fix is a counter update that does not ride the
-  aggregate's optimistic token (a targeted `UPDATE … SET failed_login_attempts = failed_login_attempts + 1`,
-  or a dedicated login-attempt row); it is a small domain change that deserves its own increment
-  rather than riding along in a ten-finding batch. The per-IP limiter still caps a single source.
+- **~~Concurrent failed sign-ins for one account collide on the user row's version~~ — FIXED
+  2026-09-03 on `fix/concurrent-failed-logins`** (audit finding 7; see the top section). The tally is
+  now one atomic `UPDATE … OUTPUT` in `UserRepository.RecordFailedLoginAsync`, and the aggregate
+  reflects its result. Kept for the record: four of five parallel guesses used to raise a concurrency
+  conflict, so `/auth/login` answered **409** on a login endpoint and `FailedLoginAttempts` advanced by
+  one instead of five. The per-IP limiter still caps a single source.
 
 - **The dev overlay publishes ports on `0.0.0.0`**, so a running dev stack — with its
   deliberately public admin credentials — is reachable from the local network, not just the

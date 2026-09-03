@@ -78,22 +78,58 @@ public sealed class UserTests
     }
 
     [Fact]
-    public void RecordFailedLogin_LocksOut_AtTheThreshold_AndRaisesEvent()
+    public void ReflectFailedLogin_TracksTheStreak_WithoutAnnouncingAnything()
     {
         User user = CreateUser();
         user.SetPasswordHash("hash", Now);
         user.DequeueDomainEvents();
 
-        user.RecordFailedLogin(Now, maxAttempts: 3, lockoutDuration: TimeSpan.FromMinutes(15));
-        user.RecordFailedLogin(Now, maxAttempts: 3, lockoutDuration: TimeSpan.FromMinutes(15));
-        Assert.False(user.IsLockedOut(Now));
+        user.ReflectFailedLogin(1, lockedOutUntilUtc: null, Now);
+        user.ReflectFailedLogin(2, lockedOutUntilUtc: null, Now);
 
-        user.RecordFailedLogin(Now, maxAttempts: 3, lockoutDuration: TimeSpan.FromMinutes(15));
+        Assert.Equal(2, user.FailedLoginAttempts);
+        Assert.False(user.IsLockedOut(Now));
+        Assert.Empty(user.DomainEvents);
+    }
+
+    [Fact]
+    public void ReflectFailedLogin_RaisesTheLockoutEvent_OnTheAttemptThatAppliesIt()
+    {
+        User user = CreateUser();
+        user.SetPasswordHash("hash", Now);
+        user.DequeueDomainEvents();
+        user.ReflectFailedLogin(2, lockedOutUntilUtc: null, Now);
+
+        user.ReflectFailedLogin(0, Now.AddMinutes(15), Now);
 
         Assert.True(user.IsLockedOut(Now));
+        Assert.Equal(0, user.FailedLoginAttempts);
         Assert.False(user.IsLockedOut(Now.AddMinutes(16))); // lockout expires
         var lockedOut = Assert.IsType<UserLockedOut>(Assert.Single(user.DomainEvents));
         Assert.Equal(Now.AddMinutes(15), lockedOut.LockedOutUntilUtc);
+    }
+
+    [Fact]
+    public void ReflectFailedLogin_OnAnAccountAlreadyLocked_DoesNotAnnounceTheLockoutAgain()
+    {
+        User user = CreateUser();
+        user.SetPasswordHash("hash", Now);
+        user.ReflectFailedLogin(0, Now.AddMinutes(15), Now);
+        user.DequeueDomainEvents();
+
+        // A guess that lands while the window is open: the store reports the same window back.
+        user.ReflectFailedLogin(0, Now.AddMinutes(15), Now.AddMinutes(1));
+
+        Assert.True(user.IsLockedOut(Now.AddMinutes(1)));
+        Assert.Empty(user.DomainEvents);
+    }
+
+    [Fact]
+    public void ReflectFailedLogin_RejectsANegativeStreak()
+    {
+        User user = CreateUser();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => user.ReflectFailedLogin(-1, null, Now));
     }
 
     [Fact]
@@ -101,8 +137,7 @@ public sealed class UserTests
     {
         User user = CreateUser();
         user.SetPasswordHash("hash", Now);
-        user.RecordFailedLogin(Now, maxAttempts: 2, lockoutDuration: TimeSpan.FromMinutes(15));
-        user.RecordFailedLogin(Now, maxAttempts: 2, lockoutDuration: TimeSpan.FromMinutes(15));
+        user.ReflectFailedLogin(0, Now.AddMinutes(15), Now);
         Assert.True(user.IsLockedOut(Now));
 
         user.RecordSuccessfulLogin(Now.AddMinutes(20));

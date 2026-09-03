@@ -13,7 +13,7 @@ namespace GymOS.WebApi.Extensions;
 /// <item>this limiter caps attempts <b>per client IP</b> — it blunts credential
 /// stuffing, where one source tries many accounts, and it costs nothing to evaluate
 /// because it never touches the database;</item>
-/// <item>the domain's lockout (<c>User.RecordFailedLogin</c>, thresholds in
+/// <item>the domain's lockout (<c>IUserRepository.RecordFailedLoginAsync</c>, thresholds in
 /// <c>Security:LoginPolicy</c>) caps attempts <b>per account</b> — it blunts brute
 /// forcing of one account, and it works even when the attacker rotates IPs, which is
 /// precisely what an IP limiter cannot see.</item>

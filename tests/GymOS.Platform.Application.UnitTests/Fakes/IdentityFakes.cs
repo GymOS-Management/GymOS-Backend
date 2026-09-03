@@ -29,6 +29,42 @@ internal sealed class FakeUserRepository : IUserRepository
     public void Add(User user) => _users.Add(user);
 
     /// <summary>
+    /// The store's atomic tally, restated in memory: the streak advances, the attempt that reaches
+    /// the threshold locks the account and resets it, and an account already locked at
+    /// <paramref name="now"/> is left alone. Mirrors the SQL in the real repository so handler
+    /// tests exercise the same rule the integration suite pins against SQL Server.
+    /// </summary>
+    public Task RecordFailedLoginAsync(
+        User user,
+        DateTimeOffset now,
+        int maxAttempts,
+        TimeSpan lockoutDuration,
+        CancellationToken cancellationToken)
+    {
+        FailedLoginTallies++;
+
+        if (user.IsLockedOut(now))
+        {
+            return Task.CompletedTask;
+        }
+
+        int attempts = user.FailedLoginAttempts + 1;
+        if (attempts >= maxAttempts)
+        {
+            user.ReflectFailedLogin(0, now.Add(lockoutDuration), now);
+        }
+        else
+        {
+            user.ReflectFailedLogin(attempts, user.LockedOutUntilUtc, now);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>How many failed attempts handlers asked the store to count.</summary>
+    public int FailedLoginTallies { get; private set; }
+
+    /// <summary>
     /// Records the expectation and, when <see cref="ConflictingVersion"/> matches it, simulates the
     /// store refusing the write. The real check happens in PostgreSQL, so this is the only way a
     /// handler test can cover the conflict path at all.

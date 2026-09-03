@@ -72,7 +72,8 @@ internal sealed class ChangePasswordCommandHandler : ICommandHandler<ChangePassw
         {
             // Counted and audited: without this the endpoint was an unlimited, traceless oracle,
             // and a successful guess ends every session — locking the real owner out silently.
-            user.RecordFailedLogin(now, _policy.Value.MaxFailedAttempts, _policy.Value.LockoutDuration);
+            await _users.RecordFailedLoginAsync(
+                user, now, _policy.Value.MaxFailedAttempts, _policy.Value.LockoutDuration, cancellationToken);
             await FailAsync(user, "wrong_current_password", cancellationToken);
             return Result.Failure(AuthenticationErrors.InvalidCurrentPassword);
         }
