@@ -12,6 +12,7 @@ using GymOS.Platform.Infrastructure.Jobs;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
+using GymOS.Platform.Infrastructure.Persistence.Seeding.DemoData;
 using GymOS.Platform.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -79,6 +80,9 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         // Insert-only: a feature's defaults and copy belong to the operator once the row exists
         // (§3.5), so this must never "reconcile" them — see FeatureCatalogSeeder.
         services.TryAddScoped<FeatureCatalogSeeder>();
+
+        // Host mode only (Seed:DemoData); resolved by Program.cs after the seeders above have run.
+        services.TryAddScoped<DemoDataSeeder>();
 
         // The audited-entity declaration never changes at runtime, so the policy is a
         // singleton built once from the module's list (AD-7).
