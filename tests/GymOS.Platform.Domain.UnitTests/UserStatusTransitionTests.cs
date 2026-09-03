@@ -157,7 +157,7 @@ public sealed class UserStatusTransitionTests
         var user = User.Create("admin@gymos.test", "Ada", "Admin");
         user.SetPasswordHash("hash", Now);
 
-        user.RecordFailedLogin(Now, maxAttempts: 1, lockoutDuration: TimeSpan.FromMinutes(15));
+        user.ReflectFailedLogin(0, Now.AddMinutes(15), Now);
 
         // The account is locked out *and* Active. Conflating the two would need a job to unlock
         // accounts and a memory of what state to return to.
@@ -170,7 +170,7 @@ public sealed class UserStatusTransitionTests
     {
         var user = User.Create("admin@gymos.test", "Ada", "Admin");
         user.SetPasswordHash("hash", Now);
-        user.RecordFailedLogin(Now, maxAttempts: 1, lockoutDuration: TimeSpan.FromMinutes(15));
+        user.ReflectFailedLogin(0, Now.AddMinutes(15), Now);
 
         Assert.False(user.IsLockedOut(Now.AddMinutes(16)));
         Assert.Equal(UserStatus.Active, user.Status);
@@ -183,7 +183,7 @@ public sealed class UserStatusTransitionTests
         // interrupt either lifecycle state.
         var user = User.Create("invited@gymos.test", "Ada", "Admin");
 
-        user.RecordFailedLogin(Now, maxAttempts: 1, lockoutDuration: TimeSpan.FromMinutes(15));
+        user.ReflectFailedLogin(0, Now.AddMinutes(15), Now);
 
         Assert.True(user.IsLockedOut(Now));
         Assert.Equal(UserStatus.PendingActivation, user.Status);
@@ -194,7 +194,7 @@ public sealed class UserStatusTransitionTests
     {
         var user = User.Create("admin@gymos.test", "Ada", "Admin");
         user.SetPasswordHash("hash", Now);
-        user.RecordFailedLogin(Now, maxAttempts: 1, lockoutDuration: TimeSpan.FromMinutes(15));
+        user.ReflectFailedLogin(0, Now.AddMinutes(15), Now);
 
         user.SetPasswordHash("new-hash", Now.AddMinutes(1));
 

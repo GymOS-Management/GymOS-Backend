@@ -94,7 +94,10 @@ internal sealed partial class SignInCommandHandler
 
         if (!_passwordHasher.Verify(command.Password ?? string.Empty, user.PasswordHash))
         {
-            user.RecordFailedLogin(now, _policy.Value.MaxFailedAttempts, _policy.Value.LockoutDuration);
+            // Tallied at the store, not on the aggregate: parallel guesses must each count and each
+            // be answered "invalid credentials", never with a version conflict (audit finding 7).
+            await _users.RecordFailedLoginAsync(
+                user, now, _policy.Value.MaxFailedAttempts, _policy.Value.LockoutDuration, cancellationToken);
             return await FailAsync(
                 "wrong_password", normalizedEmail, command, user.Id,
                 AuthenticationErrors.InvalidCredentials, cancellationToken);

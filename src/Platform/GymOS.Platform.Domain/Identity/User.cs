@@ -163,18 +163,35 @@ public sealed class User : AggregateRoot, IAuditable
         LastLoginAtUtc = now;
     }
 
-    /// <summary>Counts a failed attempt; locks the account when the threshold is hit.</summary>
-    public void RecordFailedLogin(DateTimeOffset now, int maxAttempts, TimeSpan lockoutDuration)
+    /// <summary>
+    /// Brings the aggregate in line with a failed attempt the store has already counted, and
+    /// announces the lockout when this attempt is the one that applied it.
+    ///
+    /// <para>The tally itself is not computed here, deliberately. Two wrong guesses arriving
+    /// together each load the same <see cref="FailedLoginAttempts"/>, and whichever saves second
+    /// loses to the row version — so the counter advanced by one instead of two and the endpoint
+    /// answered a conflict instead of "invalid credentials" (audit finding 7). Counting is therefore
+    /// a single atomic statement at the store (<c>IUserRepository.RecordFailedLoginAsync</c>): the
+    /// rule "the attempt that reaches the threshold locks the account for the configured duration
+    /// and resets the streak" lives in that statement, and this method reflects its outcome.</para>
+    /// </summary>
+    /// <param name="failedLoginAttempts">The streak after this attempt, as the store recorded it.</param>
+    /// <param name="lockedOutUntilUtc">The lockout window after this attempt, as the store recorded it.</param>
+    /// <param name="now">The instant the attempt was judged against (AD-40).</param>
+    public void ReflectFailedLogin(int failedLoginAttempts, DateTimeOffset? lockedOutUntilUtc, DateTimeOffset now)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(maxAttempts, 1);
+        ArgumentOutOfRangeException.ThrowIfNegative(failedLoginAttempts);
 
-        FailedLoginAttempts++;
+        bool wasLockedOut = IsLockedOut(now);
 
-        if (FailedLoginAttempts >= maxAttempts)
+        FailedLoginAttempts = failedLoginAttempts;
+        LockedOutUntilUtc = lockedOutUntilUtc;
+
+        // Raised once per lockout, by the attempt that caused it: an attempt tallied against an
+        // account the store already shows as locked reflects the window without announcing it again.
+        if (!wasLockedOut && IsLockedOut(now))
         {
-            LockedOutUntilUtc = now.Add(lockoutDuration);
-            FailedLoginAttempts = 0;
-            Raise(new UserLockedOut(Id, LockedOutUntilUtc.Value));
+            Raise(new UserLockedOut(Id, LockedOutUntilUtc!.Value));
         }
     }
 

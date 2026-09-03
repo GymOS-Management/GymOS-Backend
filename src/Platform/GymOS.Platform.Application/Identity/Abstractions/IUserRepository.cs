@@ -23,6 +23,34 @@ public interface IUserRepository
     void Add(User user);
 
     /// <summary>
+    /// Counts one failed sign-in against <paramref name="user"/> at the store, atomically, and
+    /// reflects the result onto the aggregate (<see cref="User.ReflectFailedLogin"/>): the streak
+    /// advances by one, and the attempt that reaches <paramref name="maxAttempts"/> locks the
+    /// account until <paramref name="now"/> + <paramref name="lockoutDuration"/> and resets the
+    /// streak. An account the store already shows as locked out at <paramref name="now"/> is left
+    /// exactly as it is — a lockout is not extended by the guesses that arrive during it.
+    ///
+    /// <para>This is the one write to the aggregate that deliberately does <b>not</b> ride its row
+    /// version. The counter is a tally, not an edit: five wrong guesses arriving together are five
+    /// attempts on the account, and an optimistic token would let exactly one of them count and
+    /// answer the other four with a conflict — on a sign-in endpoint, which must never say anything
+    /// but "invalid credentials" (audit finding 7). Implementations perform the increment and the
+    /// threshold test in a single statement so no two attempts can read the same streak.</para>
+    ///
+    /// <para>The store's row version does still advance, as it does on any update. The aggregate
+    /// is left tracked and unchanged against the row as it now stands, so the caller's subsequent
+    /// <see cref="IUnitOfWork.SaveChangesAsync"/> — the audit entry and the lockout event — is not
+    /// itself refused. Callers must not have pending changes on <paramref name="user"/>: a failed
+    /// attempt is judged before anything else about the account is touched.</para>
+    /// </summary>
+    Task RecordFailedLoginAsync(
+        User user,
+        DateTimeOffset now,
+        int maxAttempts,
+        TimeSpan lockoutDuration,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Declares the version the caller believes they are updating, so the write fails if the row
     /// changed since they read it (ARCHITECTURE.md §3).
     ///
