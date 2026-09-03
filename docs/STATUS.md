@@ -10,7 +10,28 @@ reasoning, not their branch state.
 
 ---
 
-## Resumed 2026-09-03: the platform roadmap is the target, and audit finding 7 is closed
+## Resumed 2026-09-03: the platform roadmap is the target; finding 7 and the demo seeder are on `development`
+
+### Resume here (end of the 2026-09-03 session)
+
+**`development` is at `b947d84` and both increments below are merged into it**: the audit finding 7 fix
+(PR #8, `41116e0`) and the demo data seeder (`452c1b4`, merged directly — the owner asked for direct
+merges to `development` rather than PRs for this work). Working tree clean, local and origin in sync.
+CI on that push had not been checked when the session ended; **look at the Actions run for `b947d84`
+first.**
+
+**The next increment is M6, and it starts with a design spec** in `docs/superpowers/specs/`, on the M5
+precedent. Scope already decided with the owner (below): a monitoring overview (health-check
+aggregation, outbox lag, job-runner heartbeat), **persisted job runs** — the job host records no
+state today, so this is the schema work — and a jobs page; **devices deferred** to the Gateway
+module. The two choices the spec should bring to the owner: what the overview shows, and how long job
+run history is kept (a retention window, so `RetentionJob` has something to sweep). ARCHITECTURE.md
+§3.7 is the frozen endpoint list; `/logs` and `/devices` fall out with the deferral.
+
+Still owed and not code: ADR-54's rationale (author only), required reviewers on the `Production`
+GitHub environment, the two Entra/SQL grants for `gymos-uat-deploy`. Still owed and code, after M6:
+M7 (settings with consumed categories only, maintenance mode, API rate limiting, audit CSV export),
+then the ~19 non-severe review findings and the gym-scoped-grants spec review.
 
 **Decision taken with the owner: finish the Super Admin platform — M6 and M7 — before any gym-facing
 module.** Three scope decisions were taken at the same time, each against the Golden Rule:
@@ -26,7 +47,7 @@ module.** Three scope decisions were taken at the same time, each against the Go
    Security, Maintenance and the retention windows. Storage, AI and Payment arrive as additive rows
    with the providers they configure.
 
-### Audit finding 7 — concurrent failed sign-ins no longer collide (branch `fix/concurrent-failed-logins`)
+### Audit finding 7 — concurrent failed sign-ins no longer collide (merged, PR #8)
 
 **The defect:** the failed-attempt counter rode the aggregate's row version. Five wrong guesses in
 flight together each loaded the same streak, one `SaveChanges` won and four lost to the concurrency
@@ -66,7 +87,7 @@ it, and leaving the aggregate saveable — plus `AuthenticationFlowTests`, `Sign
 run once on this machine today before the change and lost 12 tests to `CREATE DATABASE` execution
 timeouts (see below), which is the machine, not the code.
 
-### Demo data seeder — the consoles have something to show (branch `feature/demo-data-seeder`, stacked on the fix above)
+### Demo data seeder — the consoles have something to show (merged, `452c1b4`)
 
 **The 2026-08-24 item "Demo data is not implemented" is closed**, the way that entry said it had to be:
 a seeder inside the application, every object through its aggregate's factory and lifecycle methods,
