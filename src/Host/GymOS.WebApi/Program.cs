@@ -12,6 +12,7 @@ using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
+using GymOS.Platform.Infrastructure.Persistence.Seeding.DemoData;
 using GymOS.Platform.Infrastructure.Tenancy;
 using GymOS.WebApi.Analytics;
 using GymOS.WebApi.Auth;
@@ -241,6 +242,21 @@ try
         // Does nothing unless Seed:SuperAdmin is configured, and never resets an
         // existing account's password.
         await startupScope.ServiceProvider.GetRequiredService<SuperAdminSeeder>().SeedAsync(CancellationToken.None);
+
+        // The demo-data mode: fill an empty portfolio, then stop — the same shape as the migrator's
+        // mode above, and placed here so the catalogue the demo plans reference already exists.
+        // Runs as the application principal because everything it writes is ordinary DML. Refuses
+        // Production, throws on pending migrations, and writes nothing when any gym or plan exists;
+        // see DemoDataSeeder and docs/superpowers/specs/2026-09-03-demo-data-seeder-design.md.
+        if (app.Configuration.GetValue<bool>("Seed:DemoData"))
+        {
+            await startupScope.ServiceProvider
+                .GetRequiredService<DemoDataSeeder>()
+                .SeedAsync(app.Environment.EnvironmentName, CancellationToken.None);
+
+            Log.Information("Demo data seeding finished; exiting because Seed:DemoData is set.");
+            return 0;
+        }
 
         // Monthly audit partitions, created ahead of need (§2.6). Idempotent and
         // non-fatal: the DEFAULT partition keeps audit writes working if this fails.

@@ -144,26 +144,35 @@ if (-not $SkipStack) {
 }
 
 # ---------------------------------------------------------------------------------------------------
-# 5. Demo data: multiple gyms, plans and prices, subscriptions across lifecycle states, invoices,
-#    per-gym feature overrides, and daily_platform_stats rows so the dashboards have a series to draw.
+# 5. Demo data: thirteen gyms, three plans with prices, subscriptions in every lifecycle state,
+#    invoices in every status, two feature overrides, and ninety days of daily_platform_stats so the
+#    dashboards have a series to draw. Design: docs/superpowers/specs/2026-09-03-demo-data-seeder-design.md.
 #
-#    NOT IMPLEMENTED YET, and this reports that rather than exiting 0 as though it had run.
+#    A seeder inside the application, not SQL from here: every one of those objects is an aggregate
+#    with invariants enforced in code, and invoice numbers come from a stored procedure the app calls.
+#    Run as a host mode -- Seed:DemoData=true makes the API boot, seed, and exit, exactly as
+#    Database:MigrateOnly does for the migrator -- as the application principal, since it is all DML.
 #
-#    It has to be a seeder inside the application, not SQL from here. Every one of those objects is an
-#    aggregate with invariants enforced in code -- Gym.Provision, SubscriptionPlan.Create,
-#    GymSubscription.Assign, Invoice.Issue, DailyPlatformStats.Record -- and invoice numbers come from
-#    a stored procedure the app calls. INSERTing past all of that would produce rows the domain
-#    considers impossible, which is worse than having no demo data.
-#
-#    The mechanism to use is the existing host-mode pattern: Database:MigrateOnly already runs the
-#    host, does one job and exits, and a Seed:DemoData flag alongside it is the same shape.
+#    Idempotent in the strictest sense: it fills an EMPTY portfolio and otherwise writes nothing, so a
+#    database that already has gyms or plans (yours, once you have created one by hand) is left alone.
+#    `docker compose run` hands back the container's exit code, so a refused or failed seed fails here.
 # ---------------------------------------------------------------------------------------------------
-Write-Host ''
-Write-Host 'Demo data: NOT YET IMPLEMENTED.' -ForegroundColor Yellow
-Write-Host '  Identity, permissions, the feature catalogue and the SuperAdmin are seeded and usable.' -ForegroundColor Yellow
-Write-Host '  Gyms, plans, subscriptions, invoices and analytics rows are not yet created by this' -ForegroundColor Yellow
-Write-Host '  script -- they need an in-application seeder (see the comment in this file for why SQL' -ForegroundColor Yellow
-Write-Host '  is the wrong tool for it). Sign in and create a gym by hand in the meantime.' -ForegroundColor Yellow
+if (-not $SkipStack) {
+    Write-Host 'Seeding demo data (Seed:DemoData host mode)...' -ForegroundColor Cyan
+    Push-Location $repoRoot
+    try {
+        Invoke-Native -FailureMessage 'Demo data seeding failed; see the container output above' `
+            -- docker compose run --rm --no-deps -e Seed__DemoData=true api
+    }
+    finally {
+        Pop-Location
+    }
+    Write-Host '  OK: demo portfolio seeded, or left alone because gyms or plans already existed' -ForegroundColor Green
+}
+else {
+    Write-Host 'Skipping demo data (-SkipStack). To seed by hand:' -ForegroundColor Yellow
+    Write-Host '  docker compose run --rm --no-deps -e Seed__DemoData=true api' -ForegroundColor Yellow
+}
 Write-Host ''
 Write-Host "populate-all finished against $database." -ForegroundColor Cyan
 Write-Host '  Sign in at http://localhost:5080 -- admin@gymos.local / gymos-dev-admin-password' -ForegroundColor Cyan

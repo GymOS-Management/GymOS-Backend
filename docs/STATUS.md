@@ -66,6 +66,68 @@ it, and leaving the aggregate saveable — plus `AuthenticationFlowTests`, `Sign
 run once on this machine today before the change and lost 12 tests to `CREATE DATABASE` execution
 timeouts (see below), which is the machine, not the code.
 
+### Demo data seeder — the consoles have something to show (branch `feature/demo-data-seeder`, stacked on the fix above)
+
+**The 2026-08-24 item "Demo data is not implemented" is closed**, the way that entry said it had to be:
+a seeder inside the application, every object through its aggregate's factory and lifecycle methods,
+invoice numbers from the same stored procedure the API calls, run as a host mode. Design, with the
+three owner decisions and the full portfolio table:
+`docs/superpowers/specs/2026-09-03-demo-data-seeder-design.md`.
+
+**How it runs.** `Seed:DemoData=true` makes the API boot, seed and **exit 0**, the same shape as
+`Database:MigrateOnly`, placed in `Program.cs` after the boot-time seeders so the feature catalogue the
+demo plans reference exists. It runs as the **application principal** — everything it writes is DML.
+`scripts/populate-all.ps1` §5 now runs it as
+`docker compose run --rm --no-deps -e Seed__DemoData=true api` and inherits the container's exit code.
+
+**Three rules, in the order they are checked.** Production is **refused by either name** — an
+environment called `Production` or a connection to `GymOS_Production` — with no override setting,
+deliberately. Pending migrations **throw** rather than skip: an operator who asked for a seed should
+learn the schema is behind, not be told it finished. And it writes only into an **empty portfolio**:
+any existing gym or plan means it logs what it found and exits 0 without a write, so it can never
+touch a UAT that has acquired real gyms, and `populate-all` stays idempotent by construction.
+
+**What it writes.** Three EUR plans (Starter €49/€490, Growth €99/€279/€990, Enterprise €249/€2,490,
+with plan features); thirteen fictional Cypriot gyms of which twelve are living — **10 Active, 1
+Suspended, 1 Provisioning, 1 Deleted**; twelve subscriptions — **1 Trialing, 7 Active, 1 PastDue, 2
+Canceled, 1 Expired** — renewed period by period to the present with `Renew()`; an invoice per billed
+period, settled so that every status but Draft appears (**Paid, Issued/open, Overdue, Void**); two
+feature overrides that differ from their plans so the redundancy sweep leaves them alone; and **ninety
+days of `daily_platform_stats`**, the last row for yesterday. All instants derive from `IClock.UtcNow`
+at seed time, so the portfolio is always recent — the trial ends next week, the overdue invoice is
+overdue now — and they sit at 09:00 UTC so nothing straddles a day boundary.
+
+**Two things worth knowing about how.** *Timestamps are backdated behind the domain's back*, and this
+is the one place the seeder steps around a seam: `AuditableTimestampsInterceptor` stamps every insert
+with the clock, and the stats compiler counts new gyms by `CreatedAtUtc`, so a portfolio "created
+today" would report thirteen new gyms this morning. After the aggregates are saved, typed
+`ExecuteUpdate` statements set `CreatedAtUtc`/`UpdatedAtUtc` on gyms, subscriptions, invoices and plans
+to their real instants — audit metadata that no invariant reads, done with EF's typed update so a
+renamed column is a compile error. *The stats history does not use `DailyStatsCompiler`*: its
+population reads are as-of-now (M5's unwindowed-read caveat), so it cannot compile a past day.
+`DemoTimeline` derives each day from the portfolio's own timeline — status at end of day, gyms
+provisioned that day, cancellations and expiries that day, MRR from the billing subscriptions — and
+records it through `DailyPlatformStats.Record`, so the history and the rows agree by construction and
+the nightly job takes over from today. `DemoTimeline` is pure and unit-tested.
+
+**One rule the build enforced on the way.** The first cut of `DemoPrice` carried a `decimal Amount`,
+and `MoneyTypeTests.NoProductionMemberExposesMoneyAsANakedDecimal` refused it (R4). It carries `Money`
+now. The rule did its job on a class nobody would have thought to review for it.
+
+Verified: build **0 warnings, 0 errors**; `dotnet format --verify-no-changes` **exit 0**;
+Architecture **153**, Infrastructure **103** (was 98 — five `DemoTimeline` cases: every day
+reconciles with one EUR MRR, yesterday is the living population, churn lands on its days, a deleted
+gym leaves the population but its cancellation stays, and the portfolio is strictly in the past even
+when built one minute after midnight), Application **247**. Integration, new `DemoDataSeedingTests`
+**4 of 4**: the portfolio above lands with every count and status asserted, distinct invoice numbers
+in the platform's format, ninety stats rows ending yesterday whose last row is today's population;
+`/dashboard/summary` on a normal host over the seeded database answers **200 with `totalGyms: 12`**;
+a second run writes nothing; a `Production` host is refused before any read and leaves zero gyms.
+Neighbouring classes re-run green — `MigrateOnlyTests`, `SuperAdminSeedingTests`,
+`FeatureCatalogSeedingTests`, `OpenApiExposureTests`, `PlatformStatsJobTests`, `DashboardApiTests`:
+**32 of 32**. Not verified: `populate-all.ps1` end to end against a local compose stack (no Docker
+compose stack was brought up on this machine), and the seeder against UAT.
+
 ### This machine, for whoever resumes here
 
 - **SDK 10.0.302 is installed under `%LOCALAPPDATA%\Microsoft\dotnet`**, not in Program Files (no admin
@@ -2759,17 +2821,12 @@ been exercised against a real grant.
 
 ### From the environment model (2026-08-24) — open
 
-- **Demo data is not implemented, and `populate-all.ps1` says so rather than exiting 0 quietly.**
-  Identity, permissions, the feature catalogue and the SuperAdmin are seeded and usable (verified:
-  `1/5/16/12`), but there are **zero gyms and zero plans**, so the dashboards and the consoles have
-  nothing to show. It has to be a seeder *inside the application*: every object is an aggregate with
-  invariants in code (`Gym.Provision`, `SubscriptionPlan.Create`, `GymSubscription.Assign`,
-  `Invoice.Issue`, `DailyPlatformStats.Record`) and invoice numbers come from a stored procedure the
-  app calls, so INSERTing past all that would produce rows the domain considers impossible. The
-  mechanism is the existing host-mode pattern — a `Seed:DemoData` flag alongside
-  `Database:MigrateOnly`. **Note the domain limit**: Members, trainers, classes, bookings, check-ins
-  and payments do **not exist in code** (Members is a frozen design document), so no seeder can create
-  them and none should pretend to.
+- **~~Demo data is not implemented~~ — DONE 2026-09-03 on `feature/demo-data-seeder`** (see the top
+  section and `docs/superpowers/specs/2026-09-03-demo-data-seeder-design.md`). Built exactly as this
+  entry prescribed: a seeder inside the application behind a `Seed:DemoData` host mode, every object
+  through its aggregate, invoice numbers from the stored procedure. **The domain limit still holds**:
+  Members, trainers, classes, bookings, check-ins and payments do **not exist in code** (Members is a
+  frozen design document), so the seeder creates none of them and `gym_stats` stays empty.
 
 - **The unit suites and the build ARE verified; the integration suite is not.** The local SDK gap
   (pin 10.0.302, installed 10.0.301) was worked around by running the toolchain **inside the
