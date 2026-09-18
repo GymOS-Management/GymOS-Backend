@@ -1,3 +1,6 @@
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Configurations;
+using DotNet.Testcontainers.Containers;
 using GymOS.Platform.Infrastructure.DependencyInjection;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
@@ -137,7 +140,94 @@ public sealed class SqlServerFixture : IAsyncLifetime
         // transport-level errors in whichever test was mid-query. PostgreSQL's defaults are modest
         // enough that its fixture never had to say anything about memory.
         .WithEnvironment("MSSQL_MEMORY_LIMIT_MB", "3072")
+        // Two readiness conditions in place of the module's own. Testcontainers.MsSql declares the
+        // container ready when `sqlcmd -Q "SELECT 1"` succeeds — and the engine answers that as soon
+        // as it is listening, which is BEFORE it has finished starting: model and msdb are still
+        // recovering, and a background task is still expanding tempdb to one data file per core,
+        // holding schema-modification locks on master's catalog while it does. The fixture's first
+        // statement is `ALTER DATABASE [model]`, which queues behind that task on a Sch-S lock
+        // (`sys.dm_exec_requests` during the window: our ALTER suspended on LCK_M_SCH_S, blocked by
+        // a TASK MANAGER session holding LCK_M_SCH_M in master). On a laptop the queue is ~3 seconds;
+        // on the 2026-09-03 GitHub runners it outlasted SqlClient's 30-second command timeout,
+        // InitializeAsync threw, and xUnit failed all 312 tests of the collection at [1 ms] each
+        // without running one. The green run an hour earlier had simply won the race.
+        //
+        // `WithWaitStrategy` REPLACES the module's probe rather than adding to it — verified: its
+        // `sqlcmd` executions no longer appear in the Testcontainers log. Nothing is lost. The two
+        // conditions run in this order, and the second cannot pass without a successful connection to
+        // master over the mapped port, which is the stronger form of what the probe checked.
+        .WithWaitStrategy(Wait.ForUnixContainer()
+            // The errorlog's own "start-up done" line. It covers master, model and msdb recovery —
+            // but not the tempdb expansion, which the engine logs *after* it (observed 0.3 s to
+            // 5 s later), hence the second condition.
+            .UntilMessageIsLogged("Recovery is complete", w => w.WithTimeout(StartupTimeout))
+            .AddCustomWaitStrategy(new UntilStartupTasksHaveFinished(), w => w.WithTimeout(StartupTimeout)))
         .Build();
+
+    /// <summary>
+    /// How long each of the two start-up conditions above may take before the fixture gives up.
+    /// Generous on purpose: what this guards against is the engine being slow to finish starting
+    /// on a contended runner disk, and a wait that gives up at the first sign of slowness would
+    /// reproduce the failure it exists to prevent. Testcontainers reports the expiry as a
+    /// <see cref="TimeoutException"/> naming the strategy — a far better error than 312 identical
+    /// "Execution Timeout Expired" failures.
+    /// </summary>
+    private static readonly TimeSpan StartupTimeout = TimeSpan.FromMinutes(3);
+
+    /// <summary>
+    /// Ready when SQL Server's start-up work has actually finished — not merely when it listens.
+    /// </summary>
+    /// <remarks>
+    /// <para>Two facts, read as <c>sa</c> on <c>master</c>. First, tempdb has as many data files as
+    /// start-up will give it: SQL Server configures one per logical processor, capped at eight
+    /// (observed on this image: 16 cores → 8 files, 4 → 4, 1 → 1), and the task doing that
+    /// expansion is the one holding the catalog locks the fixture's DDL then waits on. On a single
+    /// core there is nothing to expand and the condition holds at once. Second, no system session
+    /// still holds a schema-modification lock in <c>master</c> — the general form of the same
+    /// contention, so a start-up task this fixture has not met yet is waited out rather than
+    /// collided with.</para>
+    /// <para>A probe that cannot get its answer says "not yet" rather than failing the wait: the
+    /// command timeout is short so a probe blocked by the very lock it is looking for comes back
+    /// and is retried, and a connection refused mid-start is the same answer.</para>
+    /// </remarks>
+    private sealed class UntilStartupTasksHaveFinished : IWaitUntil
+    {
+        private const string StartupTasksHaveFinishedSql = """
+            SELECT CASE
+                WHEN (SELECT COUNT(*) FROM tempdb.sys.database_files WHERE type = 0)
+                     >= (SELECT IIF(cpu_count > 8, 8, cpu_count) FROM sys.dm_os_sys_info)
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM sys.dm_tran_locks AS l
+                     JOIN sys.dm_exec_sessions AS s ON s.session_id = l.request_session_id
+                     WHERE l.resource_database_id = DB_ID('master')
+                       AND l.request_mode = 'Sch-M'
+                       AND s.is_user_process = 0)
+                THEN 1
+                ELSE 0
+            END;
+            """;
+
+        public async Task<bool> UntilAsync(IContainer container)
+        {
+            try
+            {
+                await using var connection = new SqlConnection(
+                    Unpooled(((MsSqlContainer)container).GetConnectionString(), "master"));
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = StartupTasksHaveFinishedSql;
+                command.CommandTimeout = 5;
+
+                return await command.ExecuteScalarAsync() is 1;
+            }
+            catch (SqlException)
+            {
+                return false;
+            }
+        }
+    }
 
     /// <summary>
     /// The container's bootstrap <c>sa</c> login. For suites that deliberately need a privileged
@@ -284,6 +374,17 @@ public sealed class SqlServerFixture : IAsyncLifetime
     /// <summary>SQL Server's "was chosen as the deadlock victim" error.</summary>
     private const int DeadlockVictim = 1205;
 
+    /// <summary>
+    /// Command timeout for the fixture's own DDL, in seconds. SqlClient's default of 30 is a budget
+    /// for a query, not for a <c>CREATE DATABASE</c> allocating files on a contended runner disk or
+    /// an <c>ALTER DATABASE</c> queued behind the engine's own start-up work. The wait strategies on
+    /// the container builder keep the second case from arising; this keeps a slow first case — or a
+    /// start-up task those strategies have not met yet — reading as a slow statement rather than as
+    /// every test in the collection failing at once. Two minutes still fails a genuinely stuck
+    /// statement well inside the CI job's 25-minute budget.
+    /// </summary>
+    private const int DdlCommandTimeoutSeconds = 120;
+
     /// <summary>Runs one statement batch on its own connection.</summary>
     /// <remarks>
     /// A deadlock is printed and then rethrown, deliberately in that order and with no retry. An
@@ -302,6 +403,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
 
             await using var command = connection.CreateCommand();
             command.CommandText = sql;
+            command.CommandTimeout = DdlCommandTimeoutSeconds;
             await command.ExecuteNonQueryAsync();
         }
         catch (SqlException ex) when (ex.Number == DeadlockVictim)
