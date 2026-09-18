@@ -79,13 +79,53 @@ public sealed class JobHostTests
             Task.FromResult<IAsyncDisposable?>(new Handle());
     }
 
-    private static JobHost Host(CountingJob job, IJobLock jobLock, bool enabled = true)
+    private sealed class RecordingRecorder : IJobRunRecorder
+    {
+        private readonly TaskCompletionSource _finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public List<string> Calls { get; } = [];
+
+        public string? LastError { get; private set; }
+
+        public bool ThrowOnStart { get; init; }
+
+        public Task Finished => _finished.Task;
+
+        public Task<Guid> StartAsync(string jobName, string instance, DateTimeOffset startedAtUtc, CancellationToken cancellationToken)
+        {
+            if (ThrowOnStart)
+            {
+                throw new InvalidOperationException("recorder unavailable");
+            }
+
+            lock (Calls) { Calls.Add($"start:{jobName}"); }
+            return Task.FromResult(Guid.NewGuid());
+        }
+
+        public Task SucceedAsync(Guid runId, DateTimeOffset finishedAtUtc, CancellationToken cancellationToken)
+        {
+            lock (Calls) { Calls.Add("succeed"); }
+            _finished.TrySetResult();
+            return Task.CompletedTask;
+        }
+
+        public Task FailAsync(Guid runId, DateTimeOffset finishedAtUtc, string error, CancellationToken cancellationToken)
+        {
+            lock (Calls) { Calls.Add("fail"); }
+            LastError = error;
+            _finished.TrySetResult();
+            return Task.CompletedTask;
+        }
+    }
+
+    private static JobHost Host(CountingJob job, IJobLock jobLock, bool enabled = true, IJobRunRecorder? recorder = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(job);
         services.AddSingleton(jobLock);
         services.AddScheduledJob<CountingJob>(); // TryAddScoped defers to the singleton above
         services.AddSingleton<IClock>(new FakeClock(new DateTimeOffset(2026, 8, 10, 12, 0, 0, TimeSpan.Zero)));
+        services.AddSingleton<IJobRunRecorder>(recorder ?? new RecordingRecorder());
 
         ServiceProvider provider = services.BuildServiceProvider();
 
@@ -163,6 +203,7 @@ public sealed class JobHostTests
         services.AddScheduledJob<CountingJob>();
         services.AddScheduledJob<UnconstructibleJob>();
         services.AddSingleton<IClock>(new FakeClock(new DateTimeOffset(2026, 8, 10, 12, 0, 0, TimeSpan.Zero)));
+        services.AddSingleton<IJobRunRecorder>(new RecordingRecorder());
         ServiceProvider provider = services.BuildServiceProvider();
 
         var host = new JobHost(
@@ -204,5 +245,63 @@ public sealed class JobHostTests
         await host.StopAsync(CancellationToken.None);
 
         Assert.Equal(0, job.Runs);
+    }
+
+    [Fact]
+    public async Task ASuccessfulRunIsRecordedAsStartThenSucceed()
+    {
+        var job = new CountingJob { RunsBeforeSignal = 1 };
+        var recorder = new RecordingRecorder();
+        JobHost host = Host(job, new GrantingLock(), recorder: recorder);
+
+        await host.StartAsync(CancellationToken.None);
+        await recorder.Finished.WaitAsync(Timeout);
+        await host.StopAsync(CancellationToken.None);
+
+        Assert.Equal("start:test.counting", recorder.Calls[0]);
+        Assert.Equal("succeed", recorder.Calls[1]);
+    }
+
+    [Fact]
+    public async Task AFailingRunIsRecordedAsFailWithTheTrimmedError()
+    {
+        var job = new CountingJob { RunsBeforeSignal = 1, FailFirstRun = true };
+        var recorder = new RecordingRecorder();
+        JobHost host = Host(job, new GrantingLock(), recorder: recorder);
+
+        await host.StartAsync(CancellationToken.None);
+        await recorder.Finished.WaitAsync(Timeout);
+        await host.StopAsync(CancellationToken.None);
+
+        Assert.Equal("fail", recorder.Calls[1]);
+        Assert.Equal("InvalidOperationException: First run fails by design.", recorder.LastError);
+    }
+
+    [Fact]
+    public async Task ASkippedTickRecordsNothing()
+    {
+        var job = new CountingJob();
+        var recorder = new RecordingRecorder();
+        var denying = new DenyingLock();
+        JobHost host = Host(job, denying, recorder: recorder);
+
+        await host.StartAsync(CancellationToken.None);
+        await denying.Attempted.WaitAsync(Timeout);
+        await host.StopAsync(CancellationToken.None);
+
+        Assert.Empty(recorder.Calls);
+    }
+
+    [Fact]
+    public async Task ARecorderThatCannotStartDoesNotStopTheJobRunning()
+    {
+        var job = new CountingJob { RunsBeforeSignal = 1 };
+        JobHost host = Host(job, new GrantingLock(), recorder: new RecordingRecorder { ThrowOnStart = true });
+
+        await host.StartAsync(CancellationToken.None);
+        await job.Reached.WaitAsync(Timeout);
+        await host.StopAsync(CancellationToken.None);
+
+        Assert.True(job.Runs >= 1);
     }
 }

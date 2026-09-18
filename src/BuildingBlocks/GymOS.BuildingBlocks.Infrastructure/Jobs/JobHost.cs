@@ -55,6 +55,11 @@ public sealed partial class JobHost : BackgroundService
         "redeploy; until then this job's work simply does not happen.")]
     private static partial void LogLoopDead(ILogger logger, string jobType, Exception exception);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message =
+        "Job {JobName}: its run could not be recorded ({Stage}); the job still runs, this run " +
+        "will simply be missing from the monitoring history.")]
+    private static partial void LogRecordingFailed(ILogger logger, string jobName, string stage, Exception exception);
+
     public JobHost(
         IEnumerable<ScheduledJobRegistration> registrations,
         IServiceScopeFactory scopeFactory,
@@ -154,11 +159,62 @@ public sealed partial class JobHost : BackgroundService
             return;
         }
 
-        var job = (IScheduledJob)scope.ServiceProvider.GetRequiredService(jobType);
+        // The recorder gets its own scope — its own DbContext and connection — so a job's failed
+        // transaction cannot roll back its own failure row, and a job's scope disposing mid-Fail
+        // cannot take the recorder with it (M6 spec §2).
+        using IServiceScope recordingScope = _scopeFactory.CreateScope();
+        IJobRunRecorder recorder = recordingScope.ServiceProvider.GetRequiredService<IJobRunRecorder>();
 
-        long startedAt = Environment.TickCount64;
-        await job.ExecuteAsync(_clock.UtcNow, stoppingToken);
-        LogFinished(_logger, name, Environment.TickCount64 - startedAt);
+        DateTimeOffset startedAt = _clock.UtcNow;
+        Guid? runId = await TryStartRecordingAsync(recorder, name, startedAt, stoppingToken);
+
+        long startedAtTicks = Environment.TickCount64;
+        try
+        {
+            // Resolved AFTER Start so a constructor that throws is still a recorded failure.
+            var job = (IScheduledJob)scope.ServiceProvider.GetRequiredService(jobType);
+            await job.ExecuteAsync(startedAt, stoppingToken);
+        }
+        catch (Exception exception) when (!(exception is OperationCanceledException && stoppingToken.IsCancellationRequested))
+        {
+            await TryFinishRecordingAsync(
+                recorder, name, runId, r => recorder.FailAsync(r, _clock.UtcNow, JobRunError.Describe(exception), CancellationToken.None));
+            throw;
+        }
+
+        LogFinished(_logger, name, Environment.TickCount64 - startedAtTicks);
+        await TryFinishRecordingAsync(recorder, name, runId, r => recorder.SucceedAsync(r, _clock.UtcNow, stoppingToken));
+    }
+
+    private async Task<Guid?> TryStartRecordingAsync(
+        IJobRunRecorder recorder, string name, DateTimeOffset startedAt, CancellationToken stoppingToken)
+    {
+        try
+        {
+            return await recorder.StartAsync(name, Environment.MachineName, startedAt, stoppingToken);
+        }
+        catch (Exception exception) when (!(exception is OperationCanceledException && stoppingToken.IsCancellationRequested))
+        {
+            LogRecordingFailed(_logger, name, "start", exception);
+            return null;
+        }
+    }
+
+    private async Task TryFinishRecordingAsync(IJobRunRecorder recorder, string name, Guid? runId, Func<Guid, Task> finish)
+    {
+        if (runId is not Guid id)
+        {
+            return; // Start never landed; there is no row to finish.
+        }
+
+        try
+        {
+            await finish(id);
+        }
+        catch (Exception exception)
+        {
+            LogRecordingFailed(_logger, name, "finish", exception);
+        }
     }
 }
 
