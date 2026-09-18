@@ -20,9 +20,10 @@ and the day did not stop there.** Three failures were stacked on `development` (
 Server's start-up, a runner disk the suite had outgrown, MinIO leaving Docker Hub); fixing the first
 exposed the other two, and each was named from evidence before anything was touched. Then the suite's
 disk footprint was fixed at its root, UAT was brought back from Azure's free-tier pause onto a footing
-that lasts, and the first UAT deployment since 25 August succeeded. **Look at the CI run for the last
-push first** — it is the full-suite confirmation of the footprint fix (328 tests now). Working tree
-clean, local and origin in sync.
+that lasts, and the first UAT deployment since 25 August succeeded. **The footprint fix is confirmed on
+CI: `2722da2`, 328 of 328, both jobs green.** Its `Deploy to UAT` failed — the pause doing what it was set
+to do, met by a migrator with no retry — and that is fixed too (`2dbae6a`, see "Later still" below).
+Working tree clean, local and origin in sync.
 
 **The next increment is unchanged from 2026-09-03: M6, starting with its design spec** in
 `docs/superpowers/specs/` on the M5 precedent (monitoring overview, persisted job runs, jobs page;
@@ -226,6 +227,34 @@ workflow, on the same reasoning it already gives for secrets.
 `SCHEMA_DRIFT_ENABLED=true` (UAT is reachable now, so this can actually be done); the `Production`
 environment gating question; the stray local branch `feature/status-close-of-day` (the classifier
 refused the delete — `git branch -D` it by hand or leave it).
+
+### Later still: the pause's first consequence — the migrator met a sleeping database
+
+**The `Deploy to UAT` for the footprint push (`2722da2`, run 35385094829) failed at `migrate`, and it
+was the min-replicas-0 setting working as intended.** The migrator's first connection was refused with
+Azure SQL **error 40613** — *"Database 'GymOS_UAT' … is not currently available. Please retry the
+connection later"* — which is what a serverless database says while it resumes from auto-pause. The
+18:18 deploy had succeeded because the owner had just resumed the database by hand; this one ran an
+hour later against a database that had gone back to sleep, exactly as the setting means it to. The
+migrator makes one attempt: `EnableRetryOnFailure` is deliberately off (the seeders' user-initiated
+transactions, see `AddPlatformPersistence`), so the process died at `Program.cs:216` eighteen seconds
+in, exit 139, `deploy` and `smoke` skipped. UAT kept serving the 18:26 revision; the failed commit
+touched only tests and docs, so nothing was missing from it.
+
+**The fix is in the workflow, where the seeders' transactions are not in play** (`2dbae6a`,
+`deploy-uat.yml`). The `migrate` job's `docker run` is now a loop of up to six attempts 30 s apart,
+teeing the migrator's output and retrying **only** when it carries `Error Number:40613`, `40197` or
+`40501` — the resume/transient family. Any other exit fails first time as before, with an error
+saying so, so a migration that does not apply or a bad connection string is never masked. The sixth
+refusal fails with a pointer to `AZURE.md` §7, because a database that has not resumed in 2.5 minutes
+is not resuming. `AZURE.md` §7 item 4 records the behaviour beside the setting that causes it.
+
+**Verified on the push itself, not just by reading:** run 35388539068 — attempt 1 refused with 40613,
+`::notice::GymOS_UAT is resuming from pause (attempt 1 of 6)`, attempt 2 logged *Migrations applied*
+35 s later; `deploy` and `smoke` green; whole run 8m43s. The retry path was exercised for real because
+the database had paused again in the 35 minutes since the failed run woke it. **Expect this on most
+pushes from now on** — one notice, one retry — and treat a `migrate` failure with any other error
+number as genuine.
 
 ### This machine, for whoever resumes here
 
