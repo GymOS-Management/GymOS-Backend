@@ -1,7 +1,8 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-09-18 · **CI had been red on `development` since 2026-09-03, and it was the
-integration fixture racing SQL Server's own start-up, not the code.** The top section is the 2026-09-18
+**Last updated:** 2026-09-18 · **CI had been red on `development` since 2026-09-03, and it was three
+stacked failures, none of them the code: the integration fixture racing SQL Server's start-up, a runner
+disk the suite had outgrown, and MinIO leaving Docker Hub.** The top section is the 2026-09-18
 session: the failure named with evidence and fixed, the UAT deploy failure diagnosed as Azure's free-tier
 cap (a decision, not code), and the resume point for M6. The sections after it are the 2026-09-03
 resumption and its decisions, then the merge and the two failures it exposed, then picking the branch up
@@ -14,16 +15,24 @@ the migration as it stood on its branch and are kept for their reasoning, not th
 
 ### Resume here (end of the 2026-09-18 session)
 
-**`fix/sqlserver-startup-readiness` is merged into `development`** (one file,
-`tests/GymOS.IntegrationTests/SqlServerFixture.cs`, additions only) and pushed. **Look at the CI run
-for that push first**: it is the full-suite verification of the fix — the suite was not run end to end
-on this machine (see below). If it is green, the next increment is unchanged from 2026-09-03: **M6,
-starting with its design spec** in `docs/superpowers/specs/` on the M5 precedent (monitoring overview,
-persisted job runs, jobs page; devices deferred to Gateway; the two decisions to bring the owner are
-what the overview shows and how long job-run history is kept). If it is red, the failure is a
-*different* one from the one fixed here — the fixed one cannot recur in its old shape, because the
-fixture no longer talks to an instance that is still starting — and it goes through the same process:
-name it from evidence before touching anything.
+**`development` is at `0514367` and CI is green — 322 of 322, both jobs, 11m14s — for the first time
+since 3 September.** Four commits landed today, all directly on `development`: the fixture readiness fix
+(merge `10870ad`), MinIO pulled from Quay (`5706a74`), disk instrumentation in CI (`3ddb1a7`), and the
+runner disk reclaim (`0514367`). **Three failures were stacked**, and fixing the first exposed the other
+two — each was named from evidence before anything was touched, and each is written up below. Working
+tree clean, local and origin in sync.
+
+**The next increment is unchanged from 2026-09-03: M6, starting with its design spec** in
+`docs/superpowers/specs/` on the M5 precedent (monitoring overview, persisted job runs, jobs page;
+devices deferred to Gateway; the two decisions to bring the owner are what the overview shows and how
+long job-run history is kept). Start it in a fresh session.
+
+**One piece of engineering is newly owed, and it should land before M6 grows the suite:** the
+integration suite's disk footprint. Today's answer gave the runner room (below); the durable answer is
+each test class dropping its databases in `DisposeAsync` — the fixture cannot do it alone, because it
+never learns when a class finishes, and `TenantIsolationTests` creates two databases in one
+`InitializeAsync`, so no fixture-side heuristic is safe. 37 classes, mechanical; the fixture gains a
+`DropDatabaseAsync` that refuses the shared database.
 
 **Two things are the owner's, not code:**
 
@@ -126,6 +135,48 @@ the class that failed first in every red run — **5 of 5, twice**, with the con
 **+13.1 s and +13.3 s** after start against **+5–6 s** before the change, which is the expansion window
 being waited out. **Not verified:** the full 318-test suite on this machine, and the wait strategies'
 timeout path (nothing has yet failed to start). The push to `development` is the full-suite run.
+
+### Behind the first fix: a full disk, and an image that moved registries
+
+**The readiness fix worked on the runner exactly as it had locally** — the container was reported
+ready at +10.6 s (was +5), `InitializeAsync` succeeded, and the suite ran **310 of 318** in 5.5 minutes
+before failing. It had also become the fastest run on record, because the fixture no longer queued
+behind the engine's start-up work. What it ran into next had been there all along, hidden behind the
+fixture failure.
+
+**The disk.** The last two classes (`Tenancy.TenantIsolationTests`, `TenantResolutionTests`) failed on
+`CREATE DATABASE` with `MODIFY FILE encountered operating system error 31 (A device attached to the
+system is not functioning)`, and the runner's own diagnostics writer said the same thing in plain words:
+`No space left on device`. Same point, twice, deterministic. Instrumented rather than estimated — `df -h`
+and `docker system df` now run before and after the test step — the numbers were: **11 GB free after
+the build** on runner image `20260907.300.1`; the suite creates **~280 databases** (one per test method
+for every class that asks in `InitializeAsync`, which is nearly all of them — the fixture's comment said
+"a hundred" and now says the real figure) at **32 MB each by construction** (`SIZE = 16MB` data and
+log, preallocated), so ~9 GB, plus the 1.7 GB SQL Server image pulled during the step. It fitted on the
+23 August image. The `docker` job, on a separate VM, had already shown the same image pulling and the
+same compose stack booting, so this was the test job alone.
+
+The capacity half is a CI step, `Free runner disk`, that removes toolchains the build never touches —
+Android SDK, CodeQL, JVM, Haskell, Swift, Miniconda, browsers — with a comment naming what it must
+*not* remove (the SDK under `/usr/share/dotnet`, `pwsh`, Docker). It freed **25 GB: 11 → 36 GB free**,
+and the suite then ran **322 of 322** with 34 GB still free at the end. The footprint half is owed
+(resume point above).
+
+**MinIO.** The `docker` job's `Start every optional profile` step failed on
+`pull access denied for minio/minio, repository does not exist` — MinIO stopped publishing to Docker Hub
+between 3 and 18 September, with no change to the compose file. It publishes to `quay.io/minio/minio`;
+the `storage` profile now pulls `RELEASE.2025-09-07T16-13-09Z` (what Quay's `latest` resolved to today)
+**pinned by digest**, as the SQL Server image is and for the same reason. Verified locally to boot with
+the service's command under `cap_drop: ALL` and `no-new-privileges`, and to answer `mc ready local`;
+verified on CI by the `docker` job going green on the next push. **MinIO is AGPL-3.0.** The service
+block now says so, and says the only footing on which it belongs here: a development-only stand-in for
+Azure Blob Storage, never distributed with, linked into, or deployed alongside GymOS. If AD-44 ever
+makes it more than that, the licence question comes first.
+
+**What was verified, run by run.** `10870ad`: readiness fix — fixture green, 310/318, disk red, MinIO
+red. `3ddb1a7`: MinIO green; disk red again at the same point, now with numbers. `0514367`: **322/322,
+both jobs green, 11m14s.** The `Deploy to UAT` runs on all three pushes failed at `migrate` for the
+paused-database reason above, as expected; they will keep doing so until the owner's decision.
 
 ### This machine, for whoever resumes here
 
