@@ -1227,6 +1227,55 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("invoice_lines", "platform");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Monitoring.JobRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("id");
+
+                    b.Property<long?>("DurationMs")
+                        .HasColumnType("bigint")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)")
+                        .HasColumnName("error");
+
+                    b.Property<DateTimeOffset?>("FinishedAtUtc")
+                        .HasColumnType("datetimeoffset")
+                        .HasColumnName("finished_at_utc");
+
+                    b.Property<string>("Instance")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("instance");
+
+                    b.Property<string>("JobName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("job_name");
+
+                    b.Property<DateTimeOffset>("StartedAtUtc")
+                        .HasColumnType("datetimeoffset")
+                        .HasColumnName("started_at_utc");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id")
+                        .HasName("pk_job_runs");
+
+                    b.HasIndex("JobName", "StartedAtUtc")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("ix_job_runs_name_started");
+
+                    b.ToTable("job_runs", "platform");
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.GymSubscription", b =>
                 {
                     b.Property<Guid>("Id")

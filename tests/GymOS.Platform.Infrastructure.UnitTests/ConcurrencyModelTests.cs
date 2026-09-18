@@ -5,6 +5,7 @@ using GymOS.BuildingBlocks.Infrastructure.Outbox;
 using GymOS.Platform.Domain.Analytics;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Invoices;
+using GymOS.Platform.Domain.Monitoring;
 using GymOS.Platform.Domain.Subscriptions;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -93,6 +94,11 @@ public sealed class ConcurrencyModelTests
         // comment (DailyPlatformStats.cs) for the write-once rule this reflects.
         [typeof(DailyPlatformStats)] = "one writer serialised by IJobLock; rows are written once and never updated",
         [typeof(PlatformMrr)] = "owned by DailyPlatformStats and written once with it; same rule, no separate token",
+
+        // One writer per row — the job host, serialised by IJobLock — and the only update is the
+        // recorder's single `UPDATE … WHERE id = @id` from Running to a final status, issued without
+        // loading the row. Nothing ever updates a finished run.
+        [typeof(JobRun)] = "written by one host under IJobLock; finished by one condition-free UPDATE by id, never through SaveChanges",
     };
 
     [Fact]
