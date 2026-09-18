@@ -33,9 +33,38 @@ public abstract record JobSchedule
     /// <summary>The first due time strictly after <paramref name="nowUtc"/>.</summary>
     public abstract DateTimeOffset NextAfter(DateTimeOffset nowUtc);
 
+    /// <summary>
+    /// How often the job is meant to run: the interval, or one day for a daily schedule. The
+    /// monitoring read side measures staleness in multiples of this.
+    /// </summary>
+    public abstract TimeSpan Period { get; }
+
+    /// <summary>A short human description for a console row: "every 15m", "daily at 03:10 UTC".</summary>
+    public abstract string Describe();
+
     private sealed record IntervalSchedule(TimeSpan Interval) : JobSchedule
     {
         public override DateTimeOffset NextAfter(DateTimeOffset nowUtc) => nowUtc + Interval;
+
+        public override TimeSpan Period => Interval;
+
+        public override string Describe()
+        {
+            if (Interval < TimeSpan.FromMinutes(1))
+            {
+                return $"every {(int)Interval.TotalSeconds}s";
+            }
+
+            int hours = (int)Interval.TotalHours;
+            int minutes = Interval.Minutes;
+
+            return (hours, minutes) switch
+            {
+                (0, _) => $"every {minutes}m",
+                (_, 0) => $"every {hours}h",
+                _ => $"every {hours}h {minutes}m",
+            };
+        }
     }
 
     private sealed record DailySchedule(TimeOnly TimeOfDayUtc) : JobSchedule
@@ -49,5 +78,9 @@ public abstract record JobSchedule
             // never an immediate second run.
             return todayAt > utc ? todayAt : todayAt.AddDays(1);
         }
+
+        public override TimeSpan Period => TimeSpan.FromDays(1);
+
+        public override string Describe() => $"daily at {TimeOfDayUtc:HH\\:mm} UTC";
     }
 }

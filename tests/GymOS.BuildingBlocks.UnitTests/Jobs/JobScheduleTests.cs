@@ -58,4 +58,27 @@ public sealed class JobScheduleTests
             new DateTimeOffset(2026, 8, 10, 15, 30, 0, TimeSpan.Zero),
             schedule.NextAfter(noonAsCyprusTime));
     }
+
+    [Fact]
+    public void AnIntervalSchedulesPeriodIsItsInterval() =>
+        Assert.Equal(TimeSpan.FromMinutes(15), JobSchedule.Every(TimeSpan.FromMinutes(15)).Period);
+
+    [Fact]
+    public void ADailySchedulesPeriodIsOneDay() =>
+        Assert.Equal(TimeSpan.FromDays(1), JobSchedule.DailyAtUtc(new TimeOnly(3, 10)).Period);
+
+    [Theory]
+    [InlineData(15, "every 15m")]
+    [InlineData(60, "every 1h")]
+    [InlineData(90, "every 1h 30m")]
+    public void AnIntervalScheduleDescribesItselfInMinutesAndHours(int minutes, string expected) =>
+        Assert.Equal(expected, JobSchedule.Every(TimeSpan.FromMinutes(minutes)).Describe());
+
+    [Fact]
+    public void ASubMinuteIntervalDescribesItselfInSeconds() =>
+        Assert.Equal("every 20s", JobSchedule.Every(TimeSpan.FromSeconds(20)).Describe());
+
+    [Fact]
+    public void ADailyScheduleDescribesItsUtcTime() =>
+        Assert.Equal("daily at 03:10 UTC", JobSchedule.DailyAtUtc(new TimeOnly(3, 10)).Describe());
 }
