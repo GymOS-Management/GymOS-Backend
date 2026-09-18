@@ -154,7 +154,10 @@ milestone did not ask for.
   registered should fail a test, not production.
 - **Every test isolates its data.** xUnit builds a fresh class instance per method, so a shared
   database name silently couples tests and makes row-counting order-dependent. Use
-  `CreateIsolatedDatabaseAsync` where the assertions depend on the rows present.
+  `CreateIsolatedDatabaseAsync` where the assertions depend on the rows present. **And give it back:**
+  `DropDatabaseAsync` in `DisposeAsync`, or `LeaseDatabaseAsync` with `await using` for a database created
+  inside a test method. A run creates ~300 databases at 32 MB each; the ones nobody drops filled a CI
+  runner's disk on 2026-09-18, with the suite 97% through.
 - **A convention worth having is a test, not a paragraph.** R11, R12, R13, R9, and the concurrency
   model are all enforced by tests that a new module inherits with nothing to write.
 - **Assert the failure message, not just the status.** A helper that fails with a bare status code

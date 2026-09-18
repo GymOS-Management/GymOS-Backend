@@ -225,6 +225,8 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         }
 
         await _host.DisposeAsync();
+        await _sqlServer.DropDatabaseAsync(_host.ConnectionString);
+        await _sqlServer.DropDatabaseAsync(_harnessRoleConnectionString);
     }
 
     [Fact]
@@ -374,7 +376,8 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         // at which point this test quietly started exercising the *other* early return ("checked
         // nothing: no entity implements ITenantScoped") and asserting on its message. It failed
         // loudly, which is the only reason the drift was visible.
-        string unmigrated = await _sqlServer.CreateUnmigratedDatabaseAsync("tenant_isolation_pending");
+        await using SqlServerFixture.DatabaseLease unmigratedLease = await _sqlServer.LeaseUnmigratedDatabaseAsync("tenant_isolation_pending");
+        string unmigrated = unmigratedLease.ConnectionString;
 
         await using var context = new AppDbContext(
             new DbContextOptionsBuilder<AppDbContext>()

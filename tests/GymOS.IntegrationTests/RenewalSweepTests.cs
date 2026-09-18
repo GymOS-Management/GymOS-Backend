@@ -37,7 +37,7 @@ public sealed class RenewalSweepTests : IAsyncLifetime
         // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public Task DisposeAsync() => _sqlServer.DropDatabaseAsync(_connectionString);
 
     private AppDbContext CreateContext()
     {

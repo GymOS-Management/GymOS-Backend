@@ -91,7 +91,7 @@ public sealed class OutboxCaptureTests : IAsyncLifetime
         }
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public Task DisposeAsync() => _sqlServer.DropDatabaseAsync(_connectionString);
 
     private IntegrationDbContext CreateContext(
         CorrelationContext correlationContext,

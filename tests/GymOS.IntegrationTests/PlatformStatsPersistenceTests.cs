@@ -12,19 +12,20 @@ public sealed class PlatformStatsPersistenceTests : IAsyncLifetime
 {
     private readonly SqlServerFixture _sqlServer;
     private PlatformStatsHost _host = null!;
+    private string _connectionString = null!;
 
     public PlatformStatsPersistenceTests(SqlServerFixture sqlServer) => _sqlServer = sqlServer;
 
     public async Task InitializeAsync()
     {
-        string connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("platform_stats");
-        _host = new PlatformStatsHost(connectionString);
+        _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("platform_stats");
+        _host = new PlatformStatsHost(_connectionString);
 
         // Migrations moved into SqlServerFixture, which applies them as the migrator before handing
         // back a connection string: the app role every host connects as owns nothing and holds no DDL.
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public Task DisposeAsync() => _sqlServer.DropDatabaseAsync(_connectionString);
 
     [Fact]
     public async Task AStatRowRoundTripsWithItsPerCurrencyMrr()

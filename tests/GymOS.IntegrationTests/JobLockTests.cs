@@ -22,7 +22,7 @@ public sealed class JobLockTests : IAsyncLifetime
         // No migration: advisory locks live in the server, not the schema.
         _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("job_lock");
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public Task DisposeAsync() => _sqlServer.DropDatabaseAsync(_connectionString);
 
     private AppDbContext CreateContext()
     {

@@ -30,7 +30,8 @@ public sealed class DemoDataSeedingTests
     [Fact]
     public async Task SeedDemoData_FillsAnEmptyPortfolio_WithEveryStateTheDesignPromises()
     {
-        string connectionString = await _sqlServer.CreateDatabaseAsync("demo_seed");
+        await using SqlServerFixture.DatabaseLease connectionStringLease = await _sqlServer.LeaseDatabaseAsync("demo_seed");
+        string connectionString = connectionStringLease.ConnectionString;
 
         await SeedAsync(connectionString);
 
@@ -110,7 +111,8 @@ public sealed class DemoDataSeedingTests
     [Fact]
     public async Task AfterSeeding_TheDashboardHasSomethingToShow()
     {
-        string connectionString = await _sqlServer.CreateDatabaseAsync("demo_seed_dashboard");
+        await using SqlServerFixture.DatabaseLease connectionStringLease = await _sqlServer.LeaseDatabaseAsync("demo_seed_dashboard");
+        string connectionString = connectionStringLease.ConnectionString;
         await SeedAsync(connectionString);
 
         // A normal host on the seeded database — the shape a developer or a UAT prospect sees.
@@ -134,7 +136,8 @@ public sealed class DemoDataSeedingTests
     [Fact]
     public async Task SeedDemoData_WritesNothing_WhenThePortfolioIsNotEmpty()
     {
-        string connectionString = await _sqlServer.CreateDatabaseAsync("demo_seed_twice");
+        await using SqlServerFixture.DatabaseLease connectionStringLease = await _sqlServer.LeaseDatabaseAsync("demo_seed_twice");
+        string connectionString = connectionStringLease.ConnectionString;
 
         await SeedAsync(connectionString);
         await SeedAsync(connectionString);
@@ -148,7 +151,8 @@ public sealed class DemoDataSeedingTests
     [Fact]
     public async Task SeedDemoData_RefusesAProductionHost_BeforeWritingAnything()
     {
-        string connectionString = await _sqlServer.CreateDatabaseAsync("demo_seed_production");
+        await using SqlServerFixture.DatabaseLease connectionStringLease = await _sqlServer.LeaseDatabaseAsync("demo_seed_production");
+        string connectionString = connectionStringLease.ConnectionString;
 
         // The environment guard lets a Production host open an unmanaged test database, so the
         // refusal under test here is the seeder's own, not the guard's.

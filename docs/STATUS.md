@@ -15,24 +15,21 @@ the migration as it stood on its branch and are kept for their reasoning, not th
 
 ### Resume here (end of the 2026-09-18 session)
 
-**`development` is at `0514367` and CI is green — 322 of 322, both jobs, 11m14s — for the first time
-since 3 September.** Four commits landed today, all directly on `development`: the fixture readiness fix
-(merge `10870ad`), MinIO pulled from Quay (`5706a74`), disk instrumentation in CI (`3ddb1a7`), and the
-runner disk reclaim (`0514367`). **Three failures were stacked**, and fixing the first exposed the other
-two — each was named from evidence before anything was touched, and each is written up below. Working
-tree clean, local and origin in sync.
+**CI went green at `0514367` — 322 of 322, both jobs, 11m14s — for the first time since 3 September,
+and the day did not stop there.** Three failures were stacked on `development` (the fixture racing SQL
+Server's start-up, a runner disk the suite had outgrown, MinIO leaving Docker Hub); fixing the first
+exposed the other two, and each was named from evidence before anything was touched. Then the suite's
+disk footprint was fixed at its root, UAT was brought back from Azure's free-tier pause onto a footing
+that lasts, and the first UAT deployment since 25 August succeeded. **Look at the CI run for the last
+push first** — it is the full-suite confirmation of the footprint fix (328 tests now). Working tree
+clean, local and origin in sync.
 
 **The next increment is unchanged from 2026-09-03: M6, starting with its design spec** in
 `docs/superpowers/specs/` on the M5 precedent (monitoring overview, persisted job runs, jobs page;
 devices deferred to Gateway; the two decisions to bring the owner are what the overview shows and how
 long job-run history is kept). Start it in a fresh session.
 
-**One piece of engineering is newly owed, and it should land before M6 grows the suite:** the
-integration suite's disk footprint. Today's answer gave the runner room (below); the durable answer is
-each test class dropping its databases in `DisposeAsync` — the fixture cannot do it alone, because it
-never learns when a class finishes, and `TenantIsolationTests` creates two databases in one
-`InitializeAsync`, so no fixture-side heuristic is safe. 37 classes, mechanical; the fixture gains a
-`DropDatabaseAsync` that refuses the shared database.
+**The footprint fix that this section first recorded as owed is done** — see "Later the same day" below.
 
 **Two things are the owner's, not code:**
 
@@ -177,6 +174,58 @@ makes it more than that, the licence question comes first.
 red. `3ddb1a7`: MinIO green; disk red again at the same point, now with numbers. `0514367`: **322/322,
 both jobs green, 11m14s.** The `Deploy to UAT` runs on all three pushes failed at `migrate` for the
 paused-database reason above, as expected; they will keep doing so until the owner's decision.
+
+### Later the same day: the footprint fix landed, and UAT is back on the free offer
+
+**The owed footprint fix is done, not owed.** `SqlServerFixture` gained `DropDatabaseAsync` — refuses the
+shared database and `master` by name, clears this process's SqlClient pool for the database first,
+then `ALTER DATABASE … SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE`, inside `IF DB_ID(…) IS NOT
+NULL` so a second call is not an error — and `LeaseDatabaseAsync` / `LeaseUnmigratedDatabaseAsync`, which
+return a `DatabaseLease` that drops itself when disposed, for the ten sites that create a database inside
+a test method rather than in `InitializeAsync`. Written test-first: `SqlServerFixtureTests`, six cases
+(drop removes the database and its files; drop succeeds with a pooled connection still open; the shared
+database is refused and survives; a double drop is not an error; a lease drops on dispose; an unmigrated
+lease is unmigrated and still drops). They were red for exactly the three missing members, then green.
+
+**All 41 classes give their databases back**, applied by script with a per-file match count and a
+cross-check afterwards that no class calling any `Create…DatabaseAsync` lacks a `Drop…` or `Lease…`:
+25 hosted classes drop `_host.ConnectionString` at the end of `DisposeAsync` (the host already exposed
+it, so no new fields); `TenantIsolationTests` drops both of its databases; 11 host-less classes replace
+`DisposeAsync() => Task.CompletedTask` with the drop (`PlatformStatsPersistenceTests` needed its
+connection string promoted to a field first); 11 method-level sites became two-line leases. **One was
+missed on the first pass** — `OutboxCaptureTests`, because the survey's regex did not match
+`CreateUnmigratedDatabaseAsync` — and the live run showed it: three `outbox_tests_*` databases still on
+disk after the class had finished. The cross-check with the full pattern is what caught it; it is the
+check to re-run whenever a class is added.
+
+**Measured, not asserted.** A sampler read the container's data directory every 15 seconds during the
+full local run: the count of user databases held at **one class's worth** throughout, and the whole
+`/var/opt/mssql/data` directory was **215 MB** two-thirds of the way through — where the same point used
+to be several gigabytes. Verified on this machine: build **0 warnings, 0 errors**; `dotnet format`
+**exit 0**; **full integration suite 328 of 328** (was 322; six new) in **38m25s** — slow because this
+laptop's Docker disk is slow at `CREATE DATABASE`, exactly as the 2026-09-03 notes said of the other
+machine; CI does the same run in six and a half minutes. The push of this work is the CI confirmation.
+
+**UAT: paused → online, on a footing that lasts.** Why the free offer ran out was read from the code,
+not guessed: `RenewalJob` runs every 15 minutes, so with a replica always on, the serverless database's
+60-minute idle window never opened; at the 0.5 vCore floor the 100,000 vCore-second allowance is ~55
+hours, and the month's was gone 2.3 days after the 1st — which is the 3rd, when the deploys started
+failing. The owner applied two settings by hand (the classifier rightly refused to let the assistant
+change shared cloud resources): **Container App min replicas 0, max 1** (was 1 / 3) so an idle UAT runs
+no jobs and the database pauses, and the free offer's exhaustion behaviour **`BillOverUsage`** (was
+`AutoPause`) so a busy month costs cents rather than going dark. The database came back online at once;
+the failed `Deploy to UAT` for `666efec` was re-run and **succeeded — migrate, deploy, smoke — the first
+successful deployment since 25 August**, on revision `--0000014`, which reports `ScaledToZero` when
+idle. That state broke the workflow's revision wait, which accepted only `Running` and spent its whole
+budget warning on a healthy revision; it now accepts either (`cef2f6d`). Both settings are recorded as
+manual deployment state in `AZURE.md` §1 and §7 with the commands to verify and restore them, and the
+deploy workflow's comment names min replicas 0 as load-bearing — deliberately **not** reasserted by the
+workflow, on the same reasoning it already gives for secrets.
+
+**Still the owner's, unchanged:** ADR-54's rationale; the two Entra/SQL grants plus
+`SCHEMA_DRIFT_ENABLED=true` (UAT is reachable now, so this can actually be done); the `Production`
+environment gating question; the stray local branch `feature/status-close-of-day` (the classifier
+refused the delete — `git branch -D` it by hand or leave it).
 
 ### This machine, for whoever resumes here
 

@@ -24,7 +24,8 @@ public sealed class MigrateOnlyTests
         // against a database nothing has touched; handing it the app role's connection string would
         // fail on `permission denied for schema public` long before it could seed anything, and a
         // pre-migrated database would leave it with nothing to do.
-        string connectionString = await _sqlServer.CreateUnmigratedDatabaseAsync("migrate_only");
+        await using SqlServerFixture.DatabaseLease connectionStringLease = await _sqlServer.LeaseUnmigratedDatabaseAsync("migrate_only");
+        string connectionString = connectionStringLease.ConnectionString;
 
         await MigrateOnlyAsync(SqlServerFixture.AsMigrator(connectionString));
 

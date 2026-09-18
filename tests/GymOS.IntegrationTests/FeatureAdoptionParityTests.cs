@@ -56,6 +56,7 @@ public sealed class FeatureAdoptionParityTests : IAsyncLifetime
     {
         _client.Dispose();
         await _host.DisposeAsync();
+        await _sqlServer.DropDatabaseAsync(_host.ConnectionString);
     }
 
     [Fact]

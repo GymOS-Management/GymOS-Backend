@@ -18,7 +18,8 @@ public sealed class MigrationTests
         // The one suite that must migrate for itself, because applying migrations *is* its subject.
         // It therefore asks for a database the fixture has deliberately left empty, and connects as the
         // migrator — the app role every other suite uses owns nothing and holds no DDL.
-        string appConnectionString = await _sqlServer.CreateUnmigratedDatabaseAsync("migration_tests");
+        await using SqlServerFixture.DatabaseLease appConnectionStringLease = await _sqlServer.LeaseUnmigratedDatabaseAsync("migration_tests");
+        string appConnectionString = appConnectionStringLease.ConnectionString;
 
         DbContextOptions<AppDbContext> migratorOptions = new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlServer(SqlServerFixture.AsMigrator(appConnectionString), TestDatabase.Options)

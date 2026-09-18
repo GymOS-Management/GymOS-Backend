@@ -326,7 +326,9 @@ public sealed class SqlServerFixture : IAsyncLifetime
         //
         // A suite run creates on the order of three hundred databases in one container — one per test
         // method for every class that asks in InitializeAsync, which is nearly all of them (2026-09-18:
-        // 322 tests, ~280 databases, none dropped until the container goes). SQL Server's
+        // 322 tests, ~280 databases). Each class gives its databases back through DropDatabaseAsync
+        // when it is done, so the container holds one class's worth at a time rather than the whole
+        // run's — the run's worth filled a GitHub runner's disk, twice. SQL Server's
         // default for a new one is inherited from `model` — an 8 MB data file and an 8 MB log that
         // grow in 64 MB steps. Three hundred of those is gigabytes of files the run never fills, and the
         // I/O of allocating them is enough to make the engine stop answering: the symptom is a
@@ -567,6 +569,107 @@ public sealed class SqlServerFixture : IAsyncLifetime
         CreateDatabaseAsync($"{prefix}_{Interlocked.Increment(ref _databaseSequence)}");
 
     private int _databaseSequence;
+
+    /// <summary>
+    /// Gives a database back: drops it, and its files with it. Every test class that asks this fixture
+    /// for a database calls this from <c>DisposeAsync</c>; method-scoped databases go through
+    /// <see cref="LeaseDatabaseAsync"/> instead, which calls it on dispose.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why this exists.</b> A run creates on the order of three hundred databases, 32 MB each
+    /// by construction, in the container's writable layer — and until 2026-09-18 dropped none of them,
+    /// because nothing needed it to: a database that is never read again costs nothing but disk. Then
+    /// the disk ran out. A GitHub runner leaves ~11 GB free after the build, the suite's databases
+    /// alone are ~9 GB, and the last two classes failed on <c>CREATE DATABASE</c> with
+    /// <c>MODIFY FILE … operating system error 31</c>, twice, at the same point. Dropping at the end of
+    /// each class keeps the container at one class's worth of databases instead of the run's.</para>
+    ///
+    /// <para><b>The fixture drops because the fixture cannot decide.</b> It never learns when a class
+    /// finishes, and <c>TenantIsolationTests</c> holds two databases through one <c>InitializeAsync</c>,
+    /// so no heuristic here — "drop what the previous prefix created", "drop all but the newest" —
+    /// is safe. Ownership stays with the class; this is the primitive it calls.</para>
+    ///
+    /// <para><b>Pooled connections are the thing that would make this hang.</b> A disposed
+    /// <c>WebApplicationFactory</c> leaves its SqlClient pool behind for the life of the process, and
+    /// a plain <c>DROP DATABASE</c> waits for every connection to close. So this process's pool for
+    /// the database is cleared first, and the database is put in <c>SINGLE_USER WITH ROLLBACK
+    /// IMMEDIATE</c> before the drop, which kills whatever is still attached server-side. The pooled
+    /// connections that were cleared are never asked for again — every database name is unique —
+    /// so nothing observes them going away.</para>
+    ///
+    /// <para><b>Idempotent, and the shared database is refused.</b> <c>DisposeAsync</c> runs on
+    /// failure too, and sometimes twice; a second drop finding nothing is not an error, because a
+    /// cleanup that can fail replaces the failure being cleaned up. The shared database — the one
+    /// every suite that does not ask for isolation connects to — is refused by name rather than
+    /// trusted to callers: a class that dropped it would fail every class after it, with a message
+    /// about a missing database that has nothing to do with the class that removed it.</para>
+    /// </remarks>
+    public async Task DropDatabaseAsync(string connectionString)
+    {
+        string databaseName = new SqlConnectionStringBuilder(connectionString).InitialCatalog;
+        string sharedDatabaseName = new SqlConnectionStringBuilder(ConnectionString).InitialCatalog;
+
+        if (string.IsNullOrWhiteSpace(databaseName)
+            || string.Equals(databaseName, sharedDatabaseName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(databaseName, "master", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Refusing to drop '{databaseName}': it is the shared database every non-isolated suite "
+                    + "connects to (or a system database). Only databases handed out by "
+                    + "CreateDatabaseAsync, CreateIsolatedDatabaseAsync or CreateUnmigratedDatabaseAsync "
+                    + "may be dropped.");
+        }
+
+        using (var pooledTemplate = new SqlConnection(connectionString))
+        {
+            SqlConnection.ClearPool(pooledTemplate);
+        }
+
+        await ExecuteAsync(
+            Unpooled(_container.GetConnectionString(), "master"),
+            $"""
+            IF DB_ID(N'{databaseName}') IS NOT NULL
+            BEGIN
+                ALTER DATABASE [{databaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                DROP DATABASE [{databaseName}];
+            END
+            """);
+    }
+
+    /// <summary>
+    /// A migrated, isolated database that drops itself when disposed — for tests that create a database
+    /// inside the test method rather than in <c>InitializeAsync</c>, where an <c>await using</c> at the
+    /// declaration is the whole of the cleanup.
+    /// </summary>
+    public async Task<DatabaseLease> LeaseDatabaseAsync(string prefix) =>
+        new(this, await CreateDatabaseAsync(prefix));
+
+    /// <summary>
+    /// <see cref="LeaseDatabaseAsync"/> without the migrations — see
+    /// <see cref="CreateUnmigratedDatabaseAsync"/> for the one thing that needs it.
+    /// </summary>
+    public async Task<DatabaseLease> LeaseUnmigratedDatabaseAsync(string prefix) =>
+        new(this, await CreateUnmigratedDatabaseAsync(prefix));
+
+    /// <summary>
+    /// A database held for the length of an <c>await using</c>. Disposing it drops the database
+    /// through <see cref="DropDatabaseAsync"/>, with that method's guarantees.
+    /// </summary>
+    public sealed class DatabaseLease : IAsyncDisposable
+    {
+        private readonly SqlServerFixture _fixture;
+
+        internal DatabaseLease(SqlServerFixture fixture, string connectionString)
+        {
+            _fixture = fixture;
+            ConnectionString = connectionString;
+        }
+
+        /// <summary>Connection string of the leased database, as <see cref="AppPrincipal"/>.</summary>
+        public string ConnectionString { get; }
+
+        public ValueTask DisposeAsync() => new(_fixture.DropDatabaseAsync(ConnectionString));
+    }
 
     public async Task InitializeAsync()
     {

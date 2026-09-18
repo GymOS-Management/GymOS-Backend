@@ -22,7 +22,8 @@ public sealed class SuperAdminSeedingTests
     [Fact]
     public async Task WithNoSeedConfigured_TheHostStarts_AndNoUserExists()
     {
-        string connectionString = await _sqlServer.CreateDatabaseAsync("seed_unconfigured");
+        await using SqlServerFixture.DatabaseLease connectionStringLease = await _sqlServer.LeaseDatabaseAsync("seed_unconfigured");
+        string connectionString = connectionStringLease.ConnectionString;
 
         // Blanked, not removed. WebApplicationFactory loads the host project's user
         // secrets, so a developer who configured a local SuperAdmin would otherwise have
@@ -51,7 +52,8 @@ public sealed class SuperAdminSeedingTests
     [Fact]
     public async Task ARejectedPassword_CreatesNoAccountAtAll()
     {
-        string connectionString = await _sqlServer.CreateDatabaseAsync("seed_weak_password");
+        await using SqlServerFixture.DatabaseLease connectionStringLease = await _sqlServer.LeaseDatabaseAsync("seed_weak_password");
+        string connectionString = connectionStringLease.ConnectionString;
 
         await using AuthenticationHost host = AuthenticationHost.Create(
             connectionString,
@@ -72,7 +74,8 @@ public sealed class SuperAdminSeedingTests
     [Fact]
     public async Task ASecondStartupWithADifferentPassword_LeavesTheExistingAccountUntouched()
     {
-        string connectionString = await _sqlServer.CreateDatabaseAsync("seed_idempotency");
+        await using SqlServerFixture.DatabaseLease connectionStringLease = await _sqlServer.LeaseDatabaseAsync("seed_idempotency");
+        string connectionString = connectionStringLease.ConnectionString;
 
         await using (AuthenticationHost first = AuthenticationHost.Create(connectionString))
         {
@@ -106,7 +109,8 @@ public sealed class SuperAdminSeedingTests
     [Fact]
     public async Task TheSeededPasswordIsStoredAsAnArgon2idHash_NeverInTheClear()
     {
-        string connectionString = await _sqlServer.CreateDatabaseAsync("seed_hash_shape");
+        await using SqlServerFixture.DatabaseLease connectionStringLease = await _sqlServer.LeaseDatabaseAsync("seed_hash_shape");
+        string connectionString = connectionStringLease.ConnectionString;
 
         await using AuthenticationHost host = AuthenticationHost.Create(connectionString);
         using HttpClient client = host.CreateClient();

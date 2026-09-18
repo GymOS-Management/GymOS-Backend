@@ -31,7 +31,7 @@ public sealed class OpenApiExposureTests : IAsyncLifetime
     public async Task InitializeAsync() =>
         _connectionString = await _sqlServer.CreateIsolatedDatabaseAsync("openapi_exposure");
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public Task DisposeAsync() => _sqlServer.DropDatabaseAsync(_connectionString);
 
     [Fact]
     public async Task ScalarReferenceUi_IsServed_WhenExposed()
