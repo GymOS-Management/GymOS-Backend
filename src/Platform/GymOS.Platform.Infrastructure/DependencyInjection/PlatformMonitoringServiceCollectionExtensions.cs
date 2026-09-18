@@ -1,6 +1,8 @@
 using GymOS.BuildingBlocks.Application.Jobs;
 using GymOS.Platform.Application.Monitoring;
+using GymOS.Platform.Application.Monitoring.Abstractions;
 using GymOS.Platform.Infrastructure.Monitoring;
+using GymOS.Platform.Infrastructure.Persistence.Queries;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -25,6 +27,7 @@ public static class PlatformMonitoringServiceCollectionExtensions
 
         services.TryAddScoped<IJobRunRecorder, JobRunRecorder>();
         services.TryAddScoped<JobRunMaintainer>();
+        services.TryAddScoped<IMonitoringQueries, MonitoringQueries>();
 
         return services;
     }
