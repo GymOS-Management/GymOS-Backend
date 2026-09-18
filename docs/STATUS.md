@@ -1,12 +1,141 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-09-03 · **The SQL Server migration is merged, UAT is live and deploys
-itself, and the schema is now in Git as a database project.** The ADR that authorises the migration is
-still only *proposed* — that gate has not moved. The top section is the 2026-09-03 resumption and the
-decisions it took; the sections after it cover the merge itself and the two failures it exposed, then
-picking the branch up on a second machine, then everything that happened after the SQL Server merge,
-and the paragraphs beyond that describe the migration as it stood on its branch and are kept for their
-reasoning, not their branch state.
+**Last updated:** 2026-09-18 · **CI had been red on `development` since 2026-09-03, and it was the
+integration fixture racing SQL Server's own start-up, not the code.** The top section is the 2026-09-18
+session: the failure named with evidence and fixed, the UAT deploy failure diagnosed as Azure's free-tier
+cap (a decision, not code), and the resume point for M6. The sections after it are the 2026-09-03
+resumption and its decisions, then the merge and the two failures it exposed, then picking the branch up
+on a second machine, then everything after the SQL Server merge; the paragraphs beyond that describe
+the migration as it stood on its branch and are kept for their reasoning, not their branch state.
+
+---
+
+## Resumed 2026-09-18: CI red since 09-03 — the fixture raced SQL Server's start-up; UAT is paused by Azure's free-tier cap
+
+### Resume here (end of the 2026-09-18 session)
+
+**`fix/sqlserver-startup-readiness` is merged into `development`** (one file,
+`tests/GymOS.IntegrationTests/SqlServerFixture.cs`, additions only) and pushed. **Look at the CI run
+for that push first**: it is the full-suite verification of the fix — the suite was not run end to end
+on this machine (see below). If it is green, the next increment is unchanged from 2026-09-03: **M6,
+starting with its design spec** in `docs/superpowers/specs/` on the M5 precedent (monitoring overview,
+persisted job runs, jobs page; devices deferred to Gateway; the two decisions to bring the owner are
+what the overview shows and how long job-run history is kept). If it is red, the failure is a
+*different* one from the one fixed here — the fixed one cannot recur in its old shape, because the
+fixture no longer talks to an instance that is still starting — and it goes through the same process:
+name it from evidence before touching anything.
+
+**Two things are the owner's, not code:**
+
+1. **UAT is paused, not broken.** Azure SQL error **42119**: *"This database has reached the monthly free
+   amount allowance for the month of September 2026 and is paused for the remainder."* GymOS_UAT sits on
+   the Azure SQL free offer and spent its vCore-seconds on 3 September; every `Deploy to UAT` since dies
+   in the `migrate` job when the migrator's first connection is refused (`Program.cs:216`, unhandled
+   `SqlException`, exit 139; `deploy` and `smoke` skipped). **UAT is still serving `6fd875d` from
+   25 August.** The choice is the free offer's own setting — auto-pause at the cap (current) or continue
+   with billing — or simply waiting for the allowance to reset on 1 October. Nothing in the repository
+   can change it and nothing in the repository should try.
+2. **The daily green `Schema drift (UAT)` runs have compared nothing.** `preflight` passes and `compare`
+   is *skipped* on every one, because `SCHEMA_DRIFT_ENABLED` is unset — the Entra/SQL grants for
+   `gymos-uat-deploy` are still owed (2026-09-03 list). So no workflow has looked at UAT since
+   3 September. The workflow is honest about it (a skipped job, not a false pass), but a row of green
+   ticks on the Actions page reads as reassurance it is not.
+
+Also still owed from before, unchanged: ADR-54's rationale (author only), required reviewers on the
+`Production` environment. **`feature/status-close-of-day`** still exists locally with one commit,
+`d4d58ec` — a STATUS-only update from 26 August that never reached `development` and was superseded by
+the 09-03 rewrite. Safe to delete; left for the owner to confirm.
+
+### The CI failure, named from evidence
+
+**The symptom:** every `CI` run on `development` since `ceb5b74` (2026-09-03, the PR #8 merge) failed
+with **312 of 312 integration tests** failing at `[1 ms]` each on the same exception —
+`Microsoft.Data.SqlClient.SqlException: Execution Timeout Expired`. `[1 ms]` and a shared exception
+means the **collection fixture's `InitializeAsync` threw** and xUnit failed every test in the collection
+without running one. The stack was `InitializeAsync` → `ExecuteAsync` directly, no
+`CreateUnmigratedDatabaseNamedAsync` frame: **not `CREATE DATABASE`**, which is where the 2026-09-03
+notes on the slow second machine had placed it, but the fixture's *first* statement,
+`ALTER DATABASE [model] SET RECOVERY SIMPLE`. Testcontainers logged the container ready at
+14:36:51.6 and deleted it at 14:37:24.4 — 32.8 seconds, one 30-second command timeout plus overhead.
+
+**It was not the code.** `41116e0` (CI green, 13:06) and `ceb5b74` (CI red, 14:34) have the **same tree
+hash** — `e6b5c9c7…` — the merge commit added nothing. Same image digest in both. The green run's whole
+fixture initialisation (ALTER model, two logins, CREATE DATABASE, every migration, host boot, first
+test) took ~8 seconds; the red run's first ALTER alone blocked past 30. What differed: the runner —
+`ubuntu-24.04` image `20260823.283.1` in northcentralus for green, `20260831.293.1` in centralus for
+red. That is the shift that exposed the race; it is not the cause.
+
+**The cause, reproduced locally against the pinned digest** (Docker Desktop on this machine, fresh
+container each time, the module's own probe loop reimplemented in shell):
+
+```
+13:21:04.00  Starting up database 'model'.
+13:21:04.90  SQL Server is now ready for client connections.     <- sqlcmd SELECT 1 passes from here
+13:21:05.09  Clearing tempdb database.                            <- rebuilt FROM model
+13:21:05.67  Recovery is complete.
+13:21:10.32  The tempdb database has 8 data file(s).             <- start-up task still running
+```
+
+Testcontainers.MsSql's readiness is `sqlcmd -Q "SELECT 1"`, which the engine answers **the moment it
+listens — before `model` and `msdb` finish recovering, and before a background task has expanded tempdb
+to one data file per logical processor** (capped at eight). The fixture's ALTER, issued the instant the
+probe passed, took **3.3–3.4 seconds** against a **~350 ms** baseline on the idle instance, twice. And
+`sys.dm_exec_requests` during the window names the parties, which is what the 2026-08-25 note said every
+guess so far had lacked:
+
+```
+52  background  TASK MANAGER    LCK_M_SCH_M  OBJECT: 1:22:8   (master)
+67  suspended   ALTER DATABASE  LCK_M_SCH_S  OBJECT: 1:28:6   blocked by 52
+```
+
+Session 52 is `spid52s`, the task that logs the eight-file line five seconds later. It holds
+schema-modification locks on master's catalog for the whole expansion; our ALTER queues behind it on a
+Sch-S. On a laptop that queue is three seconds; on a runner with a contended disk it is file-allocation
+I/O with no upper bound, and it crossed thirty. The 2026-08-25 note's discarded assumption — *"the
+instance settling after start-up"* — was **right for this failure class**. The 23-minute-in deadlock it
+was discarded over is a different class, still unexplained, and its capture path is still unexercised.
+
+**Two facts that shaped the fix, both measured rather than assumed.** *"Recovery is complete" is not
+enough:* the tempdb expansion is logged 0.3–5 seconds *after* it, and that is the task holding the
+locks. *The tempdb line cannot be counted:* the engine writes it once at start (`1 data file(s)`) and
+again after expansion (`N`), so "wait for the second" is tempting — but with `--cpuset-cpus=0` there is
+**no expansion and no second line**, and a suite waiting for it would hang on any single-core host. The
+rule the expansion follows is `min(8, cpu_count)`, checked at 16 cores → 8 files, 4 → 4 (the runner's
+count), 1 → 1.
+
+**The fix (`SqlServerFixture.cs`, additions only):**
+
+- **Two wait strategies in place of the module's probe.** `WithWaitStrategy` **replaces**
+  Testcontainers.MsSql's default rather than adding to it — verified, not read: the module's `sqlcmd`
+  executions no longer appear in the Testcontainers log. First, the errorlog's `Recovery is complete`.
+  Second, a custom `IWaitUntil` that connects as `sa` to `master` and is satisfied only when tempdb has
+  `>= min(8, cpu_count)` data files **and** no system session holds a `Sch-M` lock in `master` — the
+  specific blocker and its general form. Its command timeout is 5 seconds and a `SqlException` is
+  "not yet", so a probe blocked by the very lock it is looking for comes back and is retried. Each
+  strategy has a 3-minute ceiling; expiry is a `TimeoutException` naming the strategy, which is the
+  error 312 identical timeouts should have been.
+- **`ExecuteAsync` sets a 120-second command timeout** on the fixture's own DDL, in place of SqlClient's
+  30. This is the lever the 2026-09-03 notes named and did not pull. It is defence in depth, not the
+  fix: the wait strategies stop the fixture meeting the start-up task at all; the timeout keeps a slow
+  `CREATE DATABASE` on a contended disk — or a start-up task the strategies have not met yet — reading
+  as a slow statement rather than as the whole collection failing.
+
+Verified on this machine (SDK 10.0.400, which `global.json`'s `rollForward: latestFeature` accepts):
+build **0 warnings, 0 errors**; `dotnet format --verify-no-changes` **exit 0**; `ActivationApiTests` —
+the class that failed first in every red run — **5 of 5, twice**, with the container reported ready at
+**+13.1 s and +13.3 s** after start against **+5–6 s** before the change, which is the expansion window
+being waited out. **Not verified:** the full 318-test suite on this machine, and the wait strategies'
+timeout path (nothing has yet failed to start). The push to `development` is the full-suite run.
+
+### This machine, for whoever resumes here
+
+- **`gh` is installed** (2.97.0), unlike the 2026-09-03 machine — run logs, job lists and PRs from the
+  CLI all work. **SDK 10.0.400** is on PATH and satisfies the pin. **Docker Desktop is installed but not
+  running at sign-in**; start it before any integration test or the suite fails inside Testcontainers
+  with a pipe error rather than anything about SQL Server.
+- **Git Bash rewrites POSIX-looking arguments into Windows paths** when calling `docker.exe`, so
+  `docker exec … /opt/mssql-tools18/bin/sqlcmd` silently runs a path that does not exist in the
+  container. `export MSYS_NO_PATHCONV=1` first. This cost a round of the reproduction.
 
 ---
 
