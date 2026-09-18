@@ -457,8 +457,20 @@ services:
       - gymos-data
 
   # S3-compatible object storage, for the AD-44 file pipeline before Azure Blob Storage.
+  #
+  # Pulled from Quay, not Docker Hub. MinIO stopped publishing to Docker Hub and the `minio/minio`
+  # repository there now answers `pull access denied … repository does not exist`, which is how
+  # CI's "Start every optional profile" step failed on 2026-09-18 having passed on 2026-09-03 with
+  # no change to this file. Pinned by digest for the same reason the SQL Server image is: a
+  # floating `latest` made "was it the image?" unanswerable after the fact. The tag is what
+  # Quay's `latest` resolved to on 2026-09-18; move it deliberately. Verified to boot with this
+  # service's command, `cap_drop: ALL` and `no-new-privileges`, and to answer `mc ready local`.
+  #
+  # Licence note: MinIO is AGPL-3.0. It is a development-only stand-in for Azure Blob Storage and
+  # is not distributed with, linked into, or deployed alongside GymOS — which is the only footing
+  # on which an AGPL component belongs in this repository at all. Revisit before it is anything else.
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     container_name: gymos-minio
     profiles: ['storage']
     restart: unless-stopped
