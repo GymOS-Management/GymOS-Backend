@@ -90,6 +90,21 @@ jobs:
       # `MODIFY FILE … operating system error 31`) with 310 of 318 tests already passed. The two
       # readings are the evidence for sizing whatever the answer to that is; without them the
       # footprint is an estimate.
+      # The runner image ships toolchains this build never touches, and on 2026-09-18 the suite
+      # needed more than the 11 GB the image left free after the build: 322 tests, ~280 per-test
+      # databases at 32 MB each in the SQL Server container's writable layer, plus the 1.7 GB image
+      # pulled during the step — the last two classes failed with the disk full, twice, at the same
+      # point. Removing the unused toolchains is the capacity half of the answer; the footprint half
+      # (dropping each class's databases when it is done) is owed in the fixture. Nothing the build
+      # uses is on this list: the .NET SDK setup-dotnet installs lives under /usr/share/dotnet, pwsh
+      # (the audit step) under /usr/local/share/powershell, Docker under /var/lib/docker. Paths that
+      # do not exist on a given image are skipped, so an image change here fails nothing.
+      - name: Free runner disk (unused preinstalled toolchains)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL /usr/lib/jvm \
+            /usr/local/.ghcup /opt/ghc /usr/share/swift /usr/share/miniconda /usr/local/share/chromium \
+            /opt/microsoft/msedge /opt/google/chrome /usr/local/julia* 2>/dev/null || true
+
       - name: Disk before tests
         run: df -h / && docker system df
 

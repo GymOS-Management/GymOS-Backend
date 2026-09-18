@@ -324,9 +324,11 @@ public sealed class SqlServerFixture : IAsyncLifetime
         // and nothing else's.
         // Explicit, small files, and they are load-bearing rather than tidy.
         //
-        // A suite run creates on the order of a hundred databases in one container. SQL Server's
+        // A suite run creates on the order of three hundred databases in one container — one per test
+        // method for every class that asks in InitializeAsync, which is nearly all of them (2026-09-18:
+        // 322 tests, ~280 databases, none dropped until the container goes). SQL Server's
         // default for a new one is inherited from `model` — an 8 MB data file and an 8 MB log that
-        // grow in 64 MB steps. A hundred of those is gigabytes of files the run never fills, and the
+        // grow in 64 MB steps. Three hundred of those is gigabytes of files the run never fills, and the
         // I/O of allocating them is enough to make the engine stop answering: the symptom is a
         // transport-level "existing connection was forcibly closed" in whichever test happened to be
         // mid-query, which reads as flakiness in unrelated code.
