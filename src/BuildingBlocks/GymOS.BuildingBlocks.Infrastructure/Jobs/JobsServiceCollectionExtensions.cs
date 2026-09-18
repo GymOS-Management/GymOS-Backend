@@ -13,6 +13,7 @@ public static class JobsServiceCollectionExtensions
 
         services.AddOptions<JobHostOptions>().BindConfiguration(JobHostOptions.SectionName);
         services.AddHostedService<JobHost>();
+        services.TryAddSingleton<IRegisteredJobs, RegisteredJobsCatalog>();
 
         return services;
     }
