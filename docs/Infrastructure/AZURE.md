@@ -205,7 +205,11 @@ confusion:
    remainder"). With zero replicas when nobody is using UAT there are no jobs, the database idles,
    pauses, and the first request wakes both in ~30–60 s. The job host re-baselines from the clock on
    wake and its sweeps derive work from state, so nothing is lost but nightly stats rows for nights
-   nobody used UAT. Verify and restore with:
+   nobody used UAT. **A push is usually that first request**, and a paused database answers it with
+   **error 40613** ("not currently available … retry the connection later") while it resumes; the
+   deploy workflow's `migrate` job retries the migrator on that code (and 40197, 40501) up to six times
+   30 s apart, and on no other code — a red `migrate` with any other error is a real failure. Verify
+   and restore with:
 
    ```bash
    az containerapp show   -n gymos-uat-api -g GymOS-UAT --query 'properties.template.scale' -o json

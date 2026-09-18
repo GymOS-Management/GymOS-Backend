@@ -135,11 +135,52 @@ jobs:
           # Database:MigrateOnly is an existing host mode: apply migrations, log, exit 0. Nothing else
           # runs -- no seeding, no request serving. Reused here rather than reimplemented with
           # `dotnet ef`, so UAT applies migrations through exactly the code path local development does.
-          docker run --rm \
-            -e ASPNETCORE_ENVIRONMENT=Staging \
-            -e Database__MigrateOnly=true \
-            -e ConnectionStrings__Database="$MIGRATOR_CONNECTION_STRING" \
-            "${{ needs.build.outputs.image }}"
+          #
+          # **The database is usually asleep when this runs, and the migrator makes one attempt.**
+          # GymOS_UAT is serverless and pauses after an hour idle -- by design, since 2026-09-18 (see
+          # the `deploy` job's comment on min replicas). The first connection to a paused database is
+          # refused with Azure SQL error 40613 ("not currently available ... retry the connection
+          # later") while it resumes, which takes ~30-60 s; the migrator has no transient-fault retry
+          # (EnableRetryOnFailure is deliberately off -- see AddPlatformPersistence), so it dies at the
+          # first refusal. Run 35385094829 was exactly that: the first push more than an hour after
+          # the last UAT activity failed here, with nothing wrong. So the wake-up wait lives here, in
+          # the workflow, where the seeders' transactions are not in play.
+          #
+          # Retried **only** when the migrator's output carries one of Azure SQL's resume/transient
+          # codes: 40613 (paused or resuming), 40197 (service error processing request), 40501
+          # (service busy). Any other failure -- a migration that does not apply, a bad connection
+          # string, an image that will not start -- fails on the first attempt exactly as before, so
+          # a genuine problem is never masked by a retry loop. Six attempts 30 s apart is ~2.5 min,
+          # comfortably above the resume time. The output is teed to a file for the check and shown
+          # in the log as it was before; the migrator never logs the connection string.
+          attempts=6
+          for attempt in $(seq 1 "$attempts"); do
+            set +e
+            docker run --rm \
+              -e ASPNETCORE_ENVIRONMENT=Staging \
+              -e Database__MigrateOnly=true \
+              -e ConnectionStrings__Database="$MIGRATOR_CONNECTION_STRING" \
+              "${{ needs.build.outputs.image }}" 2>&1 | tee migrate-attempt.log
+            status=${PIPESTATUS[0]}
+            set -e
+
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+
+            if ! grep -qE 'Error Number:(40613|40197|40501),' migrate-attempt.log; then
+              echo "::error::The migrator failed (exit $status) with an error that is not the database waking up. Not retrying."
+              exit "$status"
+            fi
+
+            if [ "$attempt" -eq "$attempts" ]; then
+              echo "::error::GymOS_UAT was still unavailable after $attempts attempts. It is not resuming; check its status in the portal (docs/Infrastructure/AZURE.md section 7)."
+              exit "$status"
+            fi
+
+            echo "::notice::GymOS_UAT is resuming from pause (attempt $attempt of $attempts); waiting 30 s before trying again."
+            sleep 30
+          done
 
   deploy:
     needs: [preflight, build, migrate]
