@@ -1,13 +1,15 @@
 # GymOS — Implementation Status & Continuation Notes
 
-**Last updated:** 2026-09-18 · **CI had been red on `development` since 2026-09-03, and it was three
+**Last updated:** 2026-09-19 · **CI had been red on `development` since 2026-09-03, and it was three
 stacked failures, none of them the code: the integration fixture racing SQL Server's start-up, a runner
 disk the suite had outgrown, and MinIO leaving Docker Hub.** The top section is the 2026-09-18
 session: the failure named with evidence and fixed, the UAT deploy failure diagnosed as Azure's free-tier
-cap (a decision, not code), and the resume point for M6. The sections after it are the 2026-09-03
-resumption and its decisions, then the merge and the two failures it exposed, then picking the branch up
-on a second machine, then everything after the SQL Server merge; the paragraphs beyond that describe
-the migration as it stood on its branch and are kept for their reasoning, not their branch state.
+cap (a decision, not code), and the resume point for M6; **M6 itself is now implemented on
+`development` at `e502a85`**, with its "what landed" subsection under that same session. The sections
+after it are the 2026-09-03 resumption and its decisions, then the merge and the two failures it
+exposed, then picking the branch up on a second machine, then everything after the SQL Server merge;
+the paragraphs beyond that describe the migration as it stood on its branch and are kept for their
+reasoning, not their branch state.
 
 ---
 
@@ -25,17 +27,18 @@ CI: `2722da2`, 328 of 328, both jobs green.** Its `Deploy to UAT` failed — the
 to do, met by a migrator with no retry — and that is fixed too (`2dbae6a`, see "Later still" below).
 Working tree clean, local and origin in sync.
 
-**M6's design spec is written and awaiting the owner's review:**
-`docs/superpowers/specs/2026-09-18-m6-monitoring-design.md`, on the M5 precedent. The two decisions it
-was to bring the owner are taken and recorded in its header: the overview shows **health checks, job
-state, outbox depth and the API process's live metrics** (no `system_metric_snapshots` table — history
-stays in App Insights per AD-11), and job-run history is kept **30 days** with the newest run per job
-always retained. A third, architectural, decision is in §2: **the job host records every run** through
-an `IJobRunRecorder` abstraction, so no job changes and a job that throws in its constructor is still
-recorded. Two findings from the code shaped the scope and are stated in §1: the outbox has **no
-processor and no delivery rows** yet, so only depth is reported and lag defers to the processor
-increment; and `/monitoring/logs` is not built in-app at all (AD-11). **Next: the owner reads the
-spec, then the implementation plan** (`writing-plans` on the spec) — nothing of M6 is implemented.
+**M6 is implemented, on `development`, at `e502a85`.** Ten commits, `f545544..e502a85` — the job host
+recording every run, `platform.job_runs` and its retention, the three `/monitoring/*` endpoints and this
+replica's process metrics — against the spec at
+`docs/superpowers/specs/2026-09-18-m6-monitoring-design.md`. The full suite, one `dotnet test
+GymOS.Backend.slnx` run at `e502a85`: **1,514 passed, 0 failed, 0 skipped** across seven projects.
+Nothing has been pushed yet — **look at the CI run for the push first** before assuming green, the way
+the top of this section already asks for the last push. The "M6 — what landed" subsection below the
+2026-09-18 resumption's other entries has the file map and the deviations found while building it.
+**Next: M7** — settings with consumed categories only (General, Email, Security, Maintenance, retention
+windows), maintenance mode, API rate limiting, and audit CSV export, per the 2026-09-03 decision — then
+the ~19 non-severe findings from the M1–M5 whole-branch review and the gym-scoped-grants spec review,
+both still unstarted.
 
 **The footprint fix that this section first recorded as owed is done** — see "Later the same day" below.
 
@@ -262,6 +265,51 @@ is not resuming. `AZURE.md` §7 item 4 records the behaviour beside the setting 
 the database had paused again in the 35 minutes since the failed run woke it. **Expect this on most
 pushes from now on** — one notice, one retry — and treat a `migrate` failure with any other error
 number as genuine.
+
+### M6 — what landed
+
+Ten commits build the module bottom-up. `f545544` gives `JobSchedule` a `Period` and a `Describe()`;
+`5bc1c02` has the job host record every run through a new `IJobRunRecorder` abstraction; `e4fe60c` adds
+`IRegisteredJobs`, listing every registered job's name and schedule. `4a68594` adds the
+`platform.job_runs` table and `f11f279` the recorder that writes it, on the host's own scope and
+connection so a job's rolled-back transaction cannot take its failure row with it. `90b2102` gives
+`RetentionJob` a fifth step, sweeping runs past the retention window while keeping the newest per job.
+`e441c4b` adds the permission, `monitoring.read`, granted to PlatformAdmin, SupportAgent and ReadOnly
+(and SuperAdmin, which holds everything). `4afaee4` adds the contracts, the stale rule, and the
+handlers; `4f2254f` adds the queries behind them — history heads, run pages, outbox depth. `e502a85`
+wires the three `/monitoring/*` endpoints and this replica's process metrics, and is where the host
+boots again after two commits that could not on their own (item 5 below). `docs/BusinessRules/Monitoring.md`
+and the release-notes section this task also writes carry the shipped rules in full; this is the resume
+summary.
+
+**Registered job names, as the API reports them:** `feature-override-sweep`, `invoice-overdue`,
+`platform-stats`, `subscription-renewal`, `retention`. **Error codes:** `monitoring.job_not_found`
+(404), `monitoring.invalid_status` (400), `monitoring.invalid_range` (400); the status filter parses
+case-insensitively by name.
+
+**Six things worth recording, found while building it rather than assumed from the spec:**
+
+1. The spec's §8 "empty platform" case reads as no outbox rows at all; a booted host always has at
+   least one, because seeding the SuperAdmin raises `UserCreated` and the outbox interceptor captures
+   it in the same transaction. The overview test asserts a non-negative oldest-message age instead of
+   null — there is no host state in which that column is genuinely empty.
+2. `duration_ms` is computed in SQL with `DATEDIFF` from the row's own `started_at_utc`, so the two
+   columns can never disagree with each other regardless of which clock a caller happened to read.
+3. Retention's predicate is a strict `>`, so a tie over the newest `started_at_utc` for one job keeps
+   every tied row rather than under-retaining — the sweep can only ever keep too much, never too little.
+4. `ApiEndpointTests`' bearer-auth tripwire moved 57 → 60 for the three new secured routes.
+5. Two intermediate commits, `4afaee4` and `4f2254f`, do not boot the host on their own — the
+   Application-layer handlers landed before their `IProcessMetrics` implementation, which lives in the
+   host project by design (a process concern, like the health adapter). `e502a85` restores boot.
+   Neither intermediate commit was pushed.
+6. `DateTimeOffset.UtcNow` stayed banned repo-wide; every new test reads time through `SystemClock` or
+   a `FakeClock`, never the BCL property directly.
+
+**Known limitations**, stated in full in `Monitoring.md` §10: a process killed mid-run leaves a
+`Running` row that reads stale after grace and is never rewritten; `GetJobHistoryHeadsAsync` issues two
+grouped queries plus one per job with history (fine at five registered jobs, worth revisiting at
+fifty); the process block is one replica's view, not the fleet's; and `status` on
+`/jobs/{name}/runs` also accepts a defined numeric string such as `"2"`.
 
 ### This machine, for whoever resumes here
 

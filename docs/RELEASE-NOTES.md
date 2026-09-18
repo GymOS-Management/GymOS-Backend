@@ -2,6 +2,56 @@
 
 ---
 
+## M6 — Monitoring
+
+**Suggested version:** `0.8.0`
+**Status:** complete, awaiting review. Business rules: [BusinessRules/Monitoring.md](BusinessRules/Monitoring.md).
+
+Answers the question M1 through M5 left open by construction: is the platform healthy right now, and
+did last night's job actually run. Ships from real sources only — the job host's own record of what it
+did, the outbox's own row count, the API process's own counters — and states in the payload what it
+does not yet know.
+
+### The job host records every run
+
+`JobHost.RunOnceAsync` now writes a `platform.job_runs` row through `IJobRunRecorder` around every
+tick: `Start` before the job resolves (so a constructor that throws is still recorded `Failed`), then
+`Succeed` or `Fail`. A skipped tick — another instance holds the job's lock — is not a run and writes
+nothing. A recorder failure is caught, logged, and never stops the job itself; the recorder writes on
+its own scope and connection, so a job's rolled-back transaction cannot take its failure row with it.
+`error` is always just the exception's type and message, trimmed to 2,000 characters — never a stack,
+never an inner chain — which is what makes the read side safe to hand to support staff (below).
+
+### The monitoring surface: three endpoints behind `monitoring.read`
+
+`GET /api/v1/monitoring/overview` returns four independently sourced blocks — health (reused from
+`/dashboard/health`), every registered job's schedule/last-run/stale flag, outbox depth, and this
+replica's own CPU/memory/uptime. `GET /api/v1/monitoring/jobs` is the jobs block on its own; `GET
+/api/v1/monitoring/jobs/{name}/runs` pages one job's history by time, newest first, 404 on an unknown
+name, `limit` clamped to `1..200`. All three sit behind a new permission, `monitoring.read`, granted to
+SuperAdmin, PlatformAdmin, SupportAgent, and ReadOnly — deliberately including SupportAgent, the
+opposite of M5's `analytics.read`: nothing here is commercially sensitive the way MRR is, and the
+error-trimming rule above is what makes that grant safe.
+
+### Retention: 30 days, the newest run per job always kept
+
+`RetentionJob` gained a fifth step, `JobRunMaintainer.PurgeAsync`: job runs older than
+`Monitoring:JobRunRetentionDays` (default 30) are swept in batches of 5,000, except the newest row of
+every job, so a job that ran once in the spring still shows its last outcome in the autumn. The sweep
+records itself like any other run — a retention job with no visible history would be the one job whose
+health nobody could see.
+
+### What was deferred, and to where
+
+Device state, heartbeats, and `GET /monitoring/devices` wait on the Gateway module, which owns the
+producer. `GET /monitoring/logs` is not built in-app at all — App Insights already holds structured
+logs (AD-11) and the console links out. Outbox lag, retry counts, and dead-letter listing wait on the
+outbox-processor increment, because there is no delivery row yet to compute lag from; only depth is
+reported, with a note in the payload saying so. The retention window becomes a `platform_settings` row
+in M7, alongside the other settings categories that increment ships.
+
+---
+
 ## M3.2 — Subscription assignment
 
 **Suggested version:** `0.7.0`
