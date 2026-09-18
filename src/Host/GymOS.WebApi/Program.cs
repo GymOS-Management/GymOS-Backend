@@ -85,6 +85,9 @@ try
     builder.Services.AddPlatformFeatures();
     builder.Services.AddPlatformAnalytics();
 
+    // M6 monitoring: the job host's run recorder and the monitoring read side.
+    builder.Services.AddPlatformMonitoring(builder.Configuration);
+
     // `/dashboard/health` needs `HealthCheckService`, which ships in the ASP.NET Core shared
     // framework this host references — Application and Infrastructure are plain `Microsoft.NET.Sdk`
     // projects and cannot see it. Registered here, by hand, rather than folded into

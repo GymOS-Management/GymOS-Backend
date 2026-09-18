@@ -97,8 +97,8 @@ public sealed class ConcurrencyModelTests
 
         // One writer per row — the job host, serialised by IJobLock — and the only update is the
         // recorder's single `UPDATE … WHERE id = @id` from Running to a final status, issued without
-        // loading the row. Nothing ever updates a finished run.
-        [typeof(JobRun)] = "written by one host under IJobLock; finished by one condition-free UPDATE by id, never through SaveChanges",
+        // loading the row and guarded by `status = Running` so a finished run is never touched again.
+        [typeof(JobRun)] = "written by one host under IJobLock; finished by one UPDATE by id guarded by status = Running, never through SaveChanges",
     };
 
     [Fact]
