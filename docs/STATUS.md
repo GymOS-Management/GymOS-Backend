@@ -25,10 +25,17 @@ CI: `2722da2`, 328 of 328, both jobs green.** Its `Deploy to UAT` failed — the
 to do, met by a migrator with no retry — and that is fixed too (`2dbae6a`, see "Later still" below).
 Working tree clean, local and origin in sync.
 
-**The next increment is unchanged from 2026-09-03: M6, starting with its design spec** in
-`docs/superpowers/specs/` on the M5 precedent (monitoring overview, persisted job runs, jobs page;
-devices deferred to Gateway; the two decisions to bring the owner are what the overview shows and how
-long job-run history is kept). Start it in a fresh session.
+**M6's design spec is written and awaiting the owner's review:**
+`docs/superpowers/specs/2026-09-18-m6-monitoring-design.md`, on the M5 precedent. The two decisions it
+was to bring the owner are taken and recorded in its header: the overview shows **health checks, job
+state, outbox depth and the API process's live metrics** (no `system_metric_snapshots` table — history
+stays in App Insights per AD-11), and job-run history is kept **30 days** with the newest run per job
+always retained. A third, architectural, decision is in §2: **the job host records every run** through
+an `IJobRunRecorder` abstraction, so no job changes and a job that throws in its constructor is still
+recorded. Two findings from the code shaped the scope and are stated in §1: the outbox has **no
+processor and no delivery rows** yet, so only depth is reported and lag defers to the processor
+increment; and `/monitoring/logs` is not built in-app at all (AD-11). **Next: the owner reads the
+spec, then the implementation plan** (`writing-plans` on the spec) — nothing of M6 is implemented.
 
 **The footprint fix that this section first recorded as owed is done** — see "Later the same day" below.
 
