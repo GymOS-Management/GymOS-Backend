@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.Jobs;
 using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Identity;
+using GymOS.Platform.Infrastructure.Monitoring;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 
 namespace GymOS.Platform.Infrastructure.Jobs;
@@ -8,7 +9,9 @@ namespace GymOS.Platform.Infrastructure.Jobs;
 /// <summary>
 /// The recurring half of data retention (AD-23), on the schedule the two startup maintainers were
 /// always waiting for — STATUS.md's standing instruction to fold them in once the job runner
-/// landed, executed.
+/// landed, executed. Five halves in all: audit partitions, idempotency records, refresh tokens,
+/// activation tokens, and — M6's own history — the job runs this job and its siblings record of
+/// themselves.
 ///
 /// <para>The startup calls stay: first boot on an empty database still needs audit partitions
 /// before the first request, and a process that starts once a month should not wait a day to
@@ -26,17 +29,20 @@ internal sealed class RetentionJob : IScheduledJob
     private readonly IdempotencyRecordMaintainer _idempotencyRecords;
     private readonly RefreshTokenMaintainer _refreshTokens;
     private readonly ActivationTokenMaintainer _activationTokens;
+    private readonly JobRunMaintainer _jobRuns;
 
     public RetentionJob(
         AuditLogPartitionMaintainer auditPartitions,
         IdempotencyRecordMaintainer idempotencyRecords,
         RefreshTokenMaintainer refreshTokens,
-        ActivationTokenMaintainer activationTokens)
+        ActivationTokenMaintainer activationTokens,
+        JobRunMaintainer jobRuns)
     {
         _auditPartitions = auditPartitions;
         _idempotencyRecords = idempotencyRecords;
         _refreshTokens = refreshTokens;
         _activationTokens = activationTokens;
+        _jobRuns = jobRuns;
     }
 
     public string Name => "retention";
@@ -56,5 +62,10 @@ internal sealed class RetentionJob : IScheduledJob
         // Same shape, same reason (ADR-53): every invitation, reset and re-send leaves a row, and
         // spent credentials must not accumulate forever.
         await _activationTokens.PurgeExpiredAsync(cancellationToken);
+
+        // M6: job-run history on its window, newest run per job kept. This run records itself like any
+        // other, and the sweep deletes its own predecessors — a retention job with no visible history
+        // would be the one job whose health nobody could see.
+        await _jobRuns.PurgeAsync(cancellationToken);
     }
 }

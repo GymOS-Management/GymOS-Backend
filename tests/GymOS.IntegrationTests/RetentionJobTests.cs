@@ -1,8 +1,10 @@
 using System.Globalization;
 using GymOS.BuildingBlocks.Infrastructure.Time;
+using GymOS.Platform.Application.Monitoring;
 using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Identity;
 using GymOS.Platform.Infrastructure.Jobs;
+using GymOS.Platform.Infrastructure.Monitoring;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
 using Microsoft.EntityFrameworkCore;
@@ -74,7 +76,9 @@ public sealed class RetentionJobTests : IAsyncLifetime
             new RefreshTokenMaintainer(
                 context, Clock, NullLogger<RefreshTokenMaintainer>.Instance),
             new ActivationTokenMaintainer(
-                context, Clock, NullLogger<ActivationTokenMaintainer>.Instance));
+                context, Clock, NullLogger<ActivationTokenMaintainer>.Instance),
+            new JobRunMaintainer(
+                context, Clock, Options.Create(new MonitoringOptions()), NullLogger<JobRunMaintainer>.Instance));
 
         await job.ExecuteAsync(Clock.UtcNow, CancellationToken.None);
 
