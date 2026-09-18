@@ -23,6 +23,8 @@ when a resource changes.
 | Container App | `gymos-uat-api` | `deploy-uat.yml` |
 | Container registry | **GHCR** (`ghcr.io/<owner>/gymos-api`), not ACR | `deploy-uat.yml` |
 | Deploy identity | app registration `gymos-uat-deploy`, federated OIDC, **no client secret** | `docs/Infrastructure/ENVIRONMENTS.md` |
+| App scale | **min replicas 0**, max 1, 0.5 vCPU / 1 GiB — scale-to-zero is load-bearing, see §7 | set by hand; `deploy-uat.yml` comment |
+| Database compute | `GP_S_Gen5` serverless, 0.5–2 vCores, **Azure SQL free offer** (100,000 vCore-seconds/month, 32 GB), auto-pause 60 min, on exhaustion **bill over-usage** | set by hand, see §7 |
 
 Values not recorded in this repository, and how to read them:
 
@@ -193,3 +195,30 @@ confusion:
    rewrote them on every push would silently undo any correction made against the running app. So
    they are only ever changed by hand, and nothing in Git records their current values.
 3. **Database grants** — applied by runbook, verified by the queries at the end of it.
+4. **Container App scale: min replicas 0.** Deployment state, so the deploy workflow does not reassert
+   it (same reasoning as item 2); set by hand on 2026-09-18. It is what keeps UAT inside the free
+   offer. The offer's 100,000 vCore-seconds a month are sized on the assumption that a serverless
+   database pauses when idle, and with a replica always running it never does: `RenewalJob` touches
+   the database every 15 minutes, so the 60-minute idle window never opens, and at the 0.5 vCore floor
+   the whole month's allowance is ~55 hours — September 2026's was spent by the 3rd, and every `migrate`
+   after that failed with **error 42119** ("reached the monthly free amount allowance … paused for the
+   remainder"). With zero replicas when nobody is using UAT there are no jobs, the database idles,
+   pauses, and the first request wakes both in ~30–60 s. The job host re-baselines from the clock on
+   wake and its sweeps derive work from state, so nothing is lost but nightly stats rows for nights
+   nobody used UAT. Verify and restore with:
+
+   ```bash
+   az containerapp show   -n gymos-uat-api -g GymOS-UAT --query 'properties.template.scale' -o json
+   az containerapp update -n gymos-uat-api -g GymOS-UAT --min-replicas 0 --max-replicas 1
+   ```
+
+5. **Free-offer exhaustion behaviour: bill over-usage, not auto-pause.** The safety valve for item 4:
+   if a busy month does spend the allowance, the database keeps serving and compute past the free
+   amount is billed at the serverless rate, instead of UAT going dark until the 1st. With the app
+   scaling to zero the over-usage should be near nothing; a deploy wakes the database for one billable
+   idle hour, so the cost of a push is roughly one 0.5-vCore hour. Verify and set with:
+
+   ```bash
+   az sql db show   -s gymos-uat -g GymOS-UAT -n GymOS_UAT --query '{status:status,freeLimit:useFreeLimit,onExhaustion:freeLimitExhaustionBehavior,autoPauseMin:autoPauseDelay}' -o json
+   az sql db update -s gymos-uat -g GymOS-UAT -n GymOS_UAT --free-limit-exhaustion-behavior BillOverUsage
+   ```

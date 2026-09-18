@@ -196,6 +196,16 @@ jobs:
       # rewritten here: a workflow that reasserted them on every push would silently undo any
       # correction made against the running app.
       #
+      # Scale is deployment state too, and one setting on it is load-bearing: **min replicas 0**
+      # (set against the app on 2026-09-18, see docs/Infrastructure/AZURE.md). It is what keeps UAT
+      # inside Azure SQL's free offer -- 100,000 vCore-seconds a month on a serverless database that
+      # pauses after an hour idle, sized on the assumption that it pauses. With a replica always
+      # running, RenewalJob touches the database every 15 minutes, the idle hour never comes, and at
+      # the 0.5 vCore floor the allowance is ~55 hours: September 2026's was gone by the 3rd, and every
+      # `migrate` after that failed with error 42119 until October. Zero replicas when nobody is using
+      # UAT means no jobs, an idle database and a pause; the first request wakes both in ~30-60 s. If a
+      # revision ever shows min replicas 1 again, that is the thing to fix, not this workflow.
+      #
       # The image is the SHA-tagged one `build` pushed and `migrate` has already run, so the code
       # being deployed is the code whose migrations are applied.
       - name: Deploy the image to Container Apps
