@@ -226,7 +226,11 @@ jobs:
       #
       # Single-revision mode routes traffic to the newest revision once it is ready, so the
       # condition that actually means "the new build is serving" is `latestReadyRevisionName`
-      # having caught up with `latestRevisionName` -- and that revision reporting `Running`.
+      # having caught up with `latestRevisionName` -- and that revision reporting `Running`, or
+      # `ScaledToZero`, which since 2026-09-18 is what a ready revision nobody has called yet
+      # reports (min replicas 0, see the deploy step). Both mean "provisioned and healthy"; the
+      # difference is only whether a request has arrived. Accepting only `Running` made this loop
+      # spend its whole budget on a healthy revision and warn on every deployment.
       - name: Wait for the new revision to serve traffic
         run: |
           set -euo pipefail
@@ -246,7 +250,7 @@ jobs:
             fi
 
             echo "attempt $attempt: latest=${latest:-none} ready=${ready:-none} runningState=${state}"
-            if [ -n "$latest" ] && [ "$latest" = "$ready" ] && [ "$state" = "Running" ]; then
+            if [ -n "$latest" ] && [ "$latest" = "$ready" ] && { [ "$state" = "Running" ] || [ "$state" = "ScaledToZero" ]; }; then
               exit 0
             fi
             sleep 10
