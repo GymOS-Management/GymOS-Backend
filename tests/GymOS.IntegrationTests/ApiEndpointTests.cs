@@ -227,7 +227,8 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         // 55 → 57 with ADR-53: resend-invitation and reset-password. The two set-password
         // operations landed in the anonymous list above, which is the answer this tripwire exists
         // to make somebody check.
-        Assert.Equal(57, secured.Count);
+        // 57 → 60 in M6 task 10: the three monitoring operations (overview, jobs, job runs).
+        Assert.Equal(60, secured.Count);
     }
 
     /// <summary>

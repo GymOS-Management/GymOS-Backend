@@ -1121,6 +1121,121 @@
         ],
         "type": "object"
       },
+      "JobRunDto": {
+        "properties": {
+          "durationMs": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "finishedAtUtc": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "jobName": {
+            "type": "string"
+          },
+          "startedAtUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "jobName",
+          "instance",
+          "status",
+          "startedAtUtc",
+          "finishedAtUtc",
+          "durationMs",
+          "error"
+        ],
+        "type": "object"
+      },
+      "JobRunsPage": {
+        "properties": {
+          "hasMore": {
+            "type": "boolean"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/JobRunDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs",
+          "hasMore"
+        ],
+        "type": "object"
+      },
+      "JobStateDto": {
+        "properties": {
+          "lastRun": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobRunDto"
+              }
+            ]
+          },
+          "lastSucceededAtUtc": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "nextDueUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "schedule": {
+            "type": "string"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "schedule",
+          "lastRun",
+          "lastSucceededAtUtc",
+          "nextDueUtc",
+          "stale"
+        ],
+        "type": "object"
+      },
       "MarkInvoicePaidRequest": {
         "properties": {
           "paymentReference": {
@@ -1152,6 +1267,78 @@
         "required": [
           "amount",
           "currency"
+        ],
+        "type": "object"
+      },
+      "MonitoringOverview": {
+        "properties": {
+          "health": {
+            "$ref": "#/components/schemas/DashboardHealth"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobStateDto"
+            },
+            "type": "array"
+          },
+          "outbox": {
+            "$ref": "#/components/schemas/OutboxDepth"
+          },
+          "process": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProcessMetrics"
+              }
+            ]
+          }
+        },
+        "required": [
+          "health",
+          "jobs",
+          "outbox",
+          "process"
+        ],
+        "type": "object"
+      },
+      "OutboxDepth": {
+        "properties": {
+          "messagesLast24h": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "oldestMessageAgeSeconds": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "totalMessages": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "totalMessages",
+          "messagesLast24h",
+          "oldestMessageAgeSeconds",
+          "note"
         ],
         "type": "object"
       },
@@ -1749,6 +1936,50 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "ProcessMetrics": {
+        "properties": {
+          "cpuPercent": {
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?(?:[eE][\u002B-]?\\d\u002B)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": "string"
+          },
+          "sampledAtUtc": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "uptimeSeconds": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "workingSetMb": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "cpuPercent",
+          "workingSetMb",
+          "uptimeSeconds",
+          "instance",
+          "sampledAtUtc"
+        ],
         "type": "object"
       },
       "ProvisionGymRequest": {
@@ -5645,6 +5876,216 @@
         ]
       }
     },
+    "/api/v1/monitoring/jobs": {
+      "get": {
+        "description": "The overview\u0027s \u0060jobs\u0060 block on its own, for a page that polls job state. A job is stale when its newest run is still running past one period plus grace, or when it has not succeeded within two periods plus grace (grace is \u0060Monitoring:StaleGrace\u0060, default 5 minutes). A job that has never run is not stale.",
+        "operationId": "GetJobStates",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobStateDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Every registered job\u0027s schedule, last run, next due time and stale flag",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/api/v1/monitoring/jobs/{name}/runs": {
+      "get": {
+        "description": "\u0060name\u0060 is a registered job, or one that still has history under an old name. \u0060from\u0060 and \u0060to\u0060 are optional and inclusive on the run\u0027s start time; \u0060status\u0060 is one of Running, Succeeded, Failed; \u0060limit\u0060 defaults to 50 and is clamped to 200. \u0060hasMore\u0060 means older runs exist \u2014 page by moving \u0060to\u0060 to the oldest \u0060startedAtUtc\u0060 returned. A run\u0027s \u0060error\u0060 is the exception\u0027s type and message only; the stack is in the structured log.",
+        "operationId": "ListJobRuns",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRunsPage"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "One job\u0027s run history, newest first, paged by time",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/api/v1/monitoring/overview": {
+      "get": {
+        "description": "Four independently sourced blocks. \u0060health\u0060 is the same projection \u0060/dashboard/health\u0060 returns. \u0060jobs\u0060 lists every registered job, including ones that have never run (\u0060lastRun: null\u0060); \u0060stale\u0060 is computed on read from the schedule and the run history. \u0060outbox\u0060 is depth only \u2014 lag and dead letters arrive with the outbox processor, and \u0060note\u0060 says so. \u0060process\u0060 is the answering replica\u0027s own CPU, memory and uptime, null until its first sample; fleet-wide numbers are App Insights\u0027.",
+        "operationId": "GetMonitoringOverview",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitoringOverview"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Health, job state, outbox depth and this replica\u0027s process, live",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
     "/api/v1/plans": {
       "get": {
         "description": "Paged. \u0060search\u0060 matches name and code; \u0060isPublic\u0060 filters listed versus unlisted plans. Withdrawn (inactive) plans are excluded unless \u0060includeInactive=true\u0060 \u2014 the catalogue an operator means is the one they can sell from. \u0060pageSize\u0060 is capped server-side.",
@@ -7428,6 +7869,9 @@
     },
     {
       "name": "Analytics"
+    },
+    {
+      "name": "Monitoring"
     },
     {
       "name": "Platform users"

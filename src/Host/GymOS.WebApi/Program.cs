@@ -7,6 +7,7 @@ using GymOS.BuildingBlocks.Infrastructure.DependencyInjection;
 using GymOS.BuildingBlocks.Infrastructure.Jobs;
 using GymOS.Platform.Application.Analytics.Abstractions;
 using GymOS.Platform.Application.DependencyInjection;
+using GymOS.Platform.Application.Monitoring.Abstractions;
 using GymOS.Platform.Infrastructure.DependencyInjection;
 using GymOS.Platform.Infrastructure.Idempotency;
 using GymOS.Platform.Infrastructure.Persistence;
@@ -20,8 +21,10 @@ using GymOS.WebApi.Endpoints;
 using GymOS.WebApi.Extensions;
 using GymOS.WebApi.Health;
 using GymOS.WebApi.Middleware;
+using GymOS.WebApi.Monitoring;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
@@ -93,6 +96,13 @@ try
     // projects and cannot see it. Registered here, by hand, rather than folded into
     // AddPlatformAnalytics for that reason (see IDashboardHealthCheck).
     builder.Services.AddScoped<IDashboardHealthCheck, DashboardHealthCheckAdapter>();
+
+    // M6: this replica's own process metrics. Host-side for the same reason as the health adapter
+    // (System.Diagnostics.Process is not an Application concern). One instance, both roles.
+    builder.Services.TryAddSingleton(TimeProvider.System);
+    builder.Services.AddSingleton<ProcessMetricsSampler>();
+    builder.Services.AddSingleton<IProcessMetrics>(provider => provider.GetRequiredService<ProcessMetricsSampler>());
+    builder.Services.AddHostedService(provider => provider.GetRequiredService<ProcessMetricsSampler>());
 
     // The job runner (M3.4). Jobs register below it; Jobs:Enabled=false turns the host off for
     // tests that drive the sweeps by hand.
@@ -340,6 +350,7 @@ try
     app.MapFeatureEndpoints();
     app.MapDashboardEndpoints();
     app.MapAnalyticsEndpoints();
+    app.MapMonitoringEndpoints();
     app.MapUserEndpoints();
     app.MapRoleEndpoints();
     app.MapAuditLogEndpoints();
