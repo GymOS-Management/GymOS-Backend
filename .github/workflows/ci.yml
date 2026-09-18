@@ -84,12 +84,25 @@ jobs:
       # No LogFileName: each test project must write its own uniquely-named trx into this directory.
       # Naming the file pins every project to the same name, so they overwrite each other and the
       # counts below become "however many tests were in whichever project finished last".
+      # Disk, before and after the tests. The integration suite creates on the order of a hundred
+      # databases inside the SQL Server container's writable layer and drops none of them; on
+      # 2026-09-18 that filled the runner (`No space left on device`, surfacing inside SQL Server as
+      # `MODIFY FILE … operating system error 31`) with 310 of 318 tests already passed. The two
+      # readings are the evidence for sizing whatever the answer to that is; without them the
+      # footprint is an estimate.
+      - name: Disk before tests
+        run: df -h / && docker system df
+
       - name: Tests (unit + architecture + integration via Testcontainers)
         id: tests
         run: |
           dotnet test GymOS.Backend.slnx --configuration Release --no-build --verbosity normal \
             --logger trx \
             --results-directory artifacts/test-results
+
+      - name: Disk after tests
+        if: always() # the run that filled the disk is the one whose numbers matter
+        run: df -h / && docker system df
 
       - name: Upload test results
         if: always() # the failing run is the one whose results are worth reading
