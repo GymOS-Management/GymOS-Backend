@@ -61,6 +61,15 @@ public static class PlatformPermissions
     /// </summary>
     public const string AnalyticsRead = "analytics.read";
 
+    /// <summary>
+    /// The monitoring surface (§3.7): health, job runs, queue depth. Granted to SupportAgent, unlike
+    /// <see cref="AnalyticsRead"/>: a support agent answering "why has this gym not renewed?" needs to
+    /// see that <c>renewal</c> last succeeded an hour ago, and nothing here is commercially sensitive
+    /// the way MRR is. The one field that could carry too much, a run's error text, is trimmed to type
+    /// and message before it is stored (M6 spec §2), which is what makes this grant safe.
+    /// </summary>
+    public const string MonitoringRead = "monitoring.read";
+
     public static readonly IReadOnlyList<PermissionDefinition> All =
     [
         new(GymsRead, ModuleName, "View gyms and their details"),
@@ -79,5 +88,6 @@ public static class PlatformPermissions
         new(FeaturesRead, ModuleName, "View the feature catalogue and a gym's resolved features"),
         new(FeaturesManage, ModuleName, "Edit the feature catalogue and set or clear gym overrides"),
         new(AnalyticsRead, ModuleName, "View the dashboard summary and analytics series"),
+        new(MonitoringRead, ModuleName, "View platform health, job runs and queue depth"),
     ];
 }

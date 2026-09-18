@@ -47,6 +47,7 @@ public static class SystemRoles
                 PlatformPermissions.FeaturesManage,
 
                 PlatformPermissions.AnalyticsRead,
+                PlatformPermissions.MonitoringRead, // M6: operational state is not commercially sensitive; see PlatformPermissions.MonitoringRead.
             ]),
         new(
             SupportAgent,
@@ -64,6 +65,7 @@ public static class SystemRoles
 
                 // Deliberately no analytics.read: a support agent explains a gym's features, and
                 // does not need the platform's revenue to do it.
+                PlatformPermissions.MonitoringRead, // M6: operational state is not commercially sensitive; see PlatformPermissions.MonitoringRead.
             ]),
         new(
             BillingAdmin,
@@ -94,6 +96,7 @@ public static class SystemRoles
                 PlatformPermissions.BillingRead,
                 PlatformPermissions.FeaturesRead,
                 PlatformPermissions.AnalyticsRead,
+                PlatformPermissions.MonitoringRead, // M6: operational state is not commercially sensitive; see PlatformPermissions.MonitoringRead.
             ]),
     ];
 }
