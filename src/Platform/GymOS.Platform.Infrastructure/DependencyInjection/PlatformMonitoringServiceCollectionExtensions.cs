@@ -25,7 +25,10 @@ public static class PlatformMonitoringServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        services.TryAddScoped<IJobRunRecorder, JobRunRecorder>();
+        // AddJobHost (BuildingBlocks) seeds a NullJobRunRecorder so a host without monitoring still
+        // runs its jobs; Replace (not TryAdd) so registration order in Program.cs never decides
+        // which recorder wins — this call always wins when it runs, regardless of call order.
+        services.Replace(ServiceDescriptor.Scoped<IJobRunRecorder, JobRunRecorder>());
         services.TryAddScoped<JobRunMaintainer>();
         services.TryAddScoped<IMonitoringQueries, MonitoringQueries>();
 

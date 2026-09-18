@@ -171,7 +171,8 @@ public sealed partial class JobHost : BackgroundService
         long startedAtTicks = Environment.TickCount64;
         try
         {
-            // Resolved AFTER Start so a constructor that throws is still a recorded failure.
+            // Resolved AFTER Start so a constructor that throws at tick time is still a recorded
+            // failure; one that throws at loop start dies before this point (LogLoopDead).
             var job = (IScheduledJob)scope.ServiceProvider.GetRequiredService(jobType);
             await job.ExecuteAsync(startedAt, stoppingToken);
         }
@@ -183,7 +184,12 @@ public sealed partial class JobHost : BackgroundService
         }
 
         LogFinished(_logger, name, Environment.TickCount64 - startedAtTicks);
-        await TryFinishRecordingAsync(recorder, name, runId, r => recorder.SucceedAsync(r, _clock.UtcNow, stoppingToken));
+
+        // Both finish calls use CancellationToken.None, not the stopping token: a run that
+        // succeeds (or fails) while the host is shutting down still gets its row written as long
+        // as the database is reachable — a success at shutdown must not look like a run that
+        // never finished.
+        await TryFinishRecordingAsync(recorder, name, runId, r => recorder.SucceedAsync(r, _clock.UtcNow, CancellationToken.None));
     }
 
     private async Task<Guid?> TryStartRecordingAsync(

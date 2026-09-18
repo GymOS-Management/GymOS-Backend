@@ -186,6 +186,19 @@ public sealed class MonitoringQueryHandlerTests
     }
 
     [Fact]
+    public async Task FewerRunsThanTheLimitMeansThereIsNoMore()
+    {
+        Fixture fixture = new Fixture().ActingAs(PlatformPermissions.MonitoringRead);
+        fixture.Queries.RunsToReturn = 200; // exactly the clamped limit, not one more
+
+        Result<JobRunsPage> result = await fixture.Dispatcher.QueryAsync(
+            new ListJobRunsQuery("renewal", null, null, "Succeeded", 5000), CancellationToken.None);
+
+        Assert.Equal(200, result.Value.Runs.Count);
+        Assert.False(result.Value.HasMore);
+    }
+
+    [Fact]
     public async Task ACallerWithoutMonitoringReadIsRefused()
     {
         Fixture fixture = new Fixture().ActingAs(); // authenticated, but holds nothing

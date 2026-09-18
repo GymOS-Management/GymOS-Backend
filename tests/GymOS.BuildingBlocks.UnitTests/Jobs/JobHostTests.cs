@@ -89,6 +89,8 @@ public sealed class JobHostTests
 
         public bool ThrowOnStart { get; init; }
 
+        public CancellationToken? SucceedToken { get; private set; }
+
         public Task Finished => _finished.Task;
 
         public Task<Guid> StartAsync(string jobName, string instance, DateTimeOffset startedAtUtc, CancellationToken cancellationToken)
@@ -104,6 +106,7 @@ public sealed class JobHostTests
 
         public Task SucceedAsync(Guid runId, DateTimeOffset finishedAtUtc, CancellationToken cancellationToken)
         {
+            SucceedToken = cancellationToken;
             lock (Calls) { Calls.Add("succeed"); }
             _finished.TrySetResult();
             return Task.CompletedTask;
@@ -175,6 +178,110 @@ public sealed class JobHostTests
         await host.StopAsync(CancellationToken.None);
 
         Assert.True(job.Runs >= 3); // runs 2 and 3 happened after run 1 threw
+    }
+
+    private sealed class GateControlledJob : IScheduledJob
+    {
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Completes once <see cref="ExecuteAsync"/> has been entered — the run is in progress.</summary>
+        public Task Started => _started.Task;
+
+        public string Name => "test.gated";
+
+        public JobSchedule Schedule => JobSchedule.Every(TimeSpan.FromMilliseconds(20));
+
+        public async Task ExecuteAsync(DateTimeOffset now, CancellationToken cancellationToken)
+        {
+            _started.TrySetResult();
+            await _release.Task; // held open until the test releases it, regardless of cancellationToken
+        }
+
+        /// <summary>Lets the in-flight <see cref="ExecuteAsync"/> return, as if the job just succeeded.</summary>
+        public void Release() => _release.TrySetResult();
+    }
+
+    /// <summary>
+    /// Simulates what a real recorder's DB call would do if handed an already-cancelled token:
+    /// throw. Used to prove <see cref="JobHost"/> finishes a successful run with
+    /// <see cref="CancellationToken.None"/> rather than the host's stopping token, so a success
+    /// that lands while the host is shutting down is still recorded.
+    /// </summary>
+    private sealed class ThrowsIfCancelledRecorder : IJobRunRecorder
+    {
+        private readonly TaskCompletionSource _finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public List<string> Calls { get; } = [];
+
+        public Task Finished => _finished.Task;
+
+        public Task<Guid> StartAsync(string jobName, string instance, DateTimeOffset startedAtUtc, CancellationToken cancellationToken)
+        {
+            lock (Calls) { Calls.Add($"start:{jobName}"); }
+            return Task.FromResult(Guid.NewGuid());
+        }
+
+        public Task SucceedAsync(Guid runId, DateTimeOffset finishedAtUtc, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (Calls) { Calls.Add("succeed"); }
+            _finished.TrySetResult();
+            return Task.CompletedTask;
+        }
+
+        public Task FailAsync(Guid runId, DateTimeOffset finishedAtUtc, string error, CancellationToken cancellationToken)
+        {
+            lock (Calls) { Calls.Add("fail"); }
+            _finished.TrySetResult();
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task ASuccessThatFinishesDuringShutdownIsStillRecorded()
+    {
+        // Regression for the final review's finding: SucceedAsync must be called with
+        // CancellationToken.None, not the host's stopping token, so a run that succeeds while
+        // the host is shutting down still gets its row written (a success at shutdown must not
+        // look like a run that never finished).
+        var job = new GateControlledJob();
+        var recorder = new ThrowsIfCancelledRecorder();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(job);
+        services.AddSingleton<IJobLock>(new GrantingLock());
+        services.AddScheduledJob<GateControlledJob>(); // TryAddScoped defers to the singleton above
+        services.AddSingleton<IClock>(new FakeClock(new DateTimeOffset(2026, 8, 10, 12, 0, 0, TimeSpan.Zero)));
+        services.AddSingleton<IJobRunRecorder>(recorder);
+
+        ServiceProvider provider = services.BuildServiceProvider();
+
+        var host = new JobHost(
+            provider.GetServices<ScheduledJobRegistration>(),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IClock>(),
+            Options.Create(new JobHostOptions()),
+            NullLogger<JobHost>.Instance);
+
+        await host.StartAsync(CancellationToken.None);
+        await job.Started.WaitAsync(Timeout); // the job is now mid-run, blocked on the gate
+
+        try
+        {
+            // Cancels the stopping token that flows into RunOnceAsync without waiting for the
+            // (still-blocked) loop to actually stop — StopAsync's own wait throws because the
+            // token it was given to bound that wait is already cancelled; that is expected here.
+            await host.StopAsync(new CancellationToken(canceled: true));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        job.Release(); // let the job's ExecuteAsync return, as if it succeeded just as the host stopped
+        await recorder.Finished.WaitAsync(Timeout);
+
+        Assert.Contains("succeed", recorder.Calls);
     }
 
     private sealed class UnconstructibleJob : IScheduledJob

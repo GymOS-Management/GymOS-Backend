@@ -18,8 +18,11 @@ in the payload, what it does not yet know (outbox lag, fleet-wide process number
 Recording lives in `JobHost.RunOnceAsync`, not in any one job, because the host already owns the run's
 lifecycle — it acquires the lock, resolves the job, times it, and logs start/finish/fail. Putting the
 record there means every job present and future is covered without a change to the job itself, and a
-job that throws inside its own constructor is still recorded as failed, because the host resolves the
-job *after* calling `IJobRunRecorder.StartAsync`.
+job whose constructor throws **at tick time** — after its loop already started successfully — is still
+recorded as failed, because the host resolves the job *after* calling `IJobRunRecorder.StartAsync`. A
+constructor that throws **at loop start**, when the host reads the job's prototype for its `Name` and
+`Schedule`, is a different case entirely and is covered in §10: that job is never listed and never
+recorded, because the loop dies before it ever calls `RunOnceAsync`.
 
 The sequence per tick is **lock → Start → resolve job → `ExecuteAsync` → Succeed**, or on any
 exception **Fail** then rethrow to the existing failure log. A tick where another instance holds the
@@ -125,7 +128,8 @@ and the payload does not pretend to be one.
 
 `/jobs/{name}/runs` takes `from`, `to` (optional, inclusive on `started_at_utc`), `status` (optional,
 one of `Running`, `Succeeded`, `Failed`, **parsed case-insensitively by name** — `Enum.TryParse` with
-`ignoreCase: true`), and `limit` (clamped to `1..200`, default `50`). `from > to` and an unparseable or
+`ignoreCase: true`), and `limit` (`limit <= 0` means the default of 50; values above 200 are clamped to
+200). `from > to` and an unparseable or
 undefined `status` fail before any query runs. `name` is accepted when it names a currently registered
 job **or** has any run history at all, so a renamed or removed job's history stays reachable until
 retention removes it; otherwise the response is `404 monitoring.job_not_found`. `hasMore` is derived
@@ -169,9 +173,9 @@ slow.
 `started_at_utc` per job and the newest *succeeded* `started_at_utc` per job are each one grouped query
 over the whole table; then, for every job that has at least one run, a third query loads that job's
 single newest row (EF Core has no portable window-function projection here, so the alternative is a
-raw-SQL `ROW_NUMBER()`). At five registered jobs this is at most eleven queries against an indexed
-column and is not worth avoiding; at fifty it is worth revisiting, most simply as a single query with a
-window function.
+raw-SQL `ROW_NUMBER()`). At five registered jobs this is at most seven queries (2 + N) against an
+indexed column and is not worth avoiding; at fifty it is worth revisiting, most simply as a single query
+with a window function.
 
 **The process block is one replica's view, not the fleet's.** §6 states this in the payload's own
 shape; it is repeated here because a console built against `/monitoring/overview` without reading the
@@ -182,3 +186,16 @@ with `ignoreCase: true` parses `"2"` to `Succeeded` exactly as it parses `"Succe
 overload does not distinguish a name from an underlying value when the value is a defined one. This is
 not validated against separately; a caller passing `status=2` gets the same result as
 `status=Succeeded`, which is harmless but undocumented.
+
+`RegisteredJobsCatalog` describes jobs once, at the first monitoring request, so a job whose prototype
+fails at that moment is omitted until the process restarts.
+
+**A job whose constructor throws at loop start is neither listed nor recorded.** `JobHost.RunLoopAsync`
+reads each job's `Name` and `Schedule` from a throwaway prototype before the loop's first tick, and
+`RegisteredJobsCatalog` does the same for the monitoring page (§1); a constructor that throws there
+means that loop dies before it ever reaches `RunOnceAsync`, so the job never gets a recorded run, and
+`RegisteredJobsCatalog` omits it from `/monitoring/jobs` and `/monitoring/overview` — it simply does not
+appear, rather than appearing as failed or stale. `JobHost.LogLoopDead` (an Error-level log) is the only
+signal this has happened. Surfacing such a job on the monitoring page would need a way to name it
+without a live instance — a static job name, or a "broken" flag on the DTO — which is a design change
+to the M3.4 job-type contract, not a fix-wave edit; it is a follow-up.

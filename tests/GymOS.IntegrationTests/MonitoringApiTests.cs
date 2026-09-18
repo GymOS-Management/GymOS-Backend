@@ -1,10 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using GymOS.BuildingBlocks.Application.Jobs;
 using GymOS.BuildingBlocks.Infrastructure.Time;
 using GymOS.Platform.Domain.Monitoring;
+using GymOS.Platform.Infrastructure.Monitoring;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -142,6 +145,35 @@ public sealed class MonitoringApiTests : IAsyncLifetime
             new Uri("/api/v1/monitoring/jobs/subscription-renewal/runs?status=Exploded", UriKind.Relative));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AnEmptyOutboxReportsNoOldestMessage()
+    {
+        // TheEmptyPlatformIsAValidOverview covers the non-empty branch (seeding SuperAdmin raises
+        // UserCreated); this covers the branch the overview's OutboxDepth query hits when there
+        // truly are no rows — totalMessages 0 and a null age, not a zero age.
+        await using AppDbContext context = _host.CreateDbContext();
+        await context.Database.ExecuteSqlAsync($"DELETE FROM outbox.messages");
+
+        JsonElement overview = await GetAsync("/api/v1/monitoring/overview");
+
+        JsonElement outbox = overview.GetProperty("outbox");
+        Assert.Equal(0, outbox.GetProperty("totalMessages").GetInt64());
+        Assert.Equal(JsonValueKind.Null, outbox.GetProperty("oldestMessageAgeSeconds").ValueKind);
+    }
+
+    [Fact]
+    public async Task AddPlatformMonitoringReplacesTheNullRecorder()
+    {
+        // AddJobHost (BuildingBlocks) seeds a NullJobRunRecorder so a host without the monitoring
+        // module still runs its jobs; AddPlatformMonitoring must REPLACE it, not merely add
+        // alongside it, so the booted API host always resolves the real recorder regardless of
+        // Program.cs's registration order.
+        using IServiceScope scope = _host.Services.CreateScope();
+        var recorder = scope.ServiceProvider.GetRequiredService<IJobRunRecorder>();
+
+        Assert.IsType<JobRunRecorder>(recorder);
     }
 
     private async Task<JsonElement> GetAsync(string relativeUrl)

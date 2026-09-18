@@ -15,6 +15,12 @@ public static class JobsServiceCollectionExtensions
         services.AddHostedService<JobHost>();
         services.TryAddSingleton<IRegisteredJobs, RegisteredJobsCatalog>();
 
+        // A null recorder so a host that composes the job runner without the monitoring module
+        // still runs its jobs — monitoring must never be why billing did not renew. Platform's
+        // AddPlatformMonitoring replaces this with the real recorder via services.Replace, so
+        // registration order in Program.cs can never let this one win silently when both are called.
+        services.TryAddScoped<IJobRunRecorder, NullJobRunRecorder>();
+
         return services;
     }
 

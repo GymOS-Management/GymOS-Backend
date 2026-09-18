@@ -19,8 +19,9 @@ internal sealed class MonitoringQueries : IMonitoringQueries
     {
         IQueryable<JobRun> runs = _dbContext.Set<JobRun>().AsNoTracking();
 
-        // Newest run per job: group, take the max start, join back. Two round trips over the same
-        // index rather than a window function EF cannot express portably.
+        // Newest run per job: group, take the max start, join back. Two grouped queries (this one
+        // and lastSuccess below) plus one FirstAsync per job that has history — 2 + N round trips
+        // over the same index, rather than a window function EF cannot express portably.
         var newest = await runs
             .GroupBy(run => run.JobName)
             .Select(group => new { JobName = group.Key, StartedAtUtc = group.Max(run => run.StartedAtUtc) })

@@ -15,9 +15,12 @@ does not yet know.
 ### The job host records every run
 
 `JobHost.RunOnceAsync` now writes a `platform.job_runs` row through `IJobRunRecorder` around every
-tick: `Start` before the job resolves (so a constructor that throws is still recorded `Failed`), then
-`Succeed` or `Fail`. A skipped tick — another instance holds the job's lock — is not a run and writes
-nothing. A recorder failure is caught, logged, and never stops the job itself; the recorder writes on
+tick: `Start` before the job resolves (so a constructor that throws **at tick time** is still recorded
+`Failed`), then `Succeed` or `Fail`. A constructor that throws **at loop start**, when the host first
+reads the job's name and schedule, is a different case: that job is never listed and never recorded —
+the loop dies before it reaches `RunOnceAsync` at all, and `JobHost.LogLoopDead` is the only signal
+(known limitation, `Monitoring.md` §10). A skipped tick — another instance holds the job's lock — is
+not a run and writes nothing. A recorder failure is caught, logged, and never stops the job itself; the recorder writes on
 its own scope and connection, so a job's rolled-back transaction cannot take its failure row with it.
 `error` is always just the exception's type and message, trimmed to 2,000 characters — never a stack,
 never an inner chain — which is what makes the read side safe to hand to support staff (below).

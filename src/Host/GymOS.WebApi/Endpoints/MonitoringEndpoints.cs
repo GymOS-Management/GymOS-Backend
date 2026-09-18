@@ -62,7 +62,8 @@ public static class MonitoringEndpoints
             .WithDescription(
                 "`name` is a registered job, or one that still has history under an old name. `from` "
                     + "and `to` are optional and inclusive on the run's start time; `status` is one of "
-                    + "Running, Succeeded, Failed; `limit` defaults to 50 and is clamped to 200. "
+                    + "Running, Succeeded, Failed; `limit` <= 0 means the default of 50, and values "
+                    + "above 200 are clamped to 200. "
                     + "`hasMore` means older runs exist — page by moving `to` to the oldest "
                     + "`startedAtUtc` returned. A run's `error` is the exception's type and message "
                     + "only; the stack is in the structured log.")

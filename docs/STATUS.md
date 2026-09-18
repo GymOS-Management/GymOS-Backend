@@ -27,9 +27,10 @@ CI: `2722da2`, 328 of 328, both jobs green.** Its `Deploy to UAT` failed — the
 to do, met by a migrator with no retry — and that is fixed too (`2dbae6a`, see "Later still" below).
 Working tree clean, local and origin in sync.
 
-**M6 is implemented, on `development`, at `e502a85`.** Ten commits, `f545544..e502a85` — the job host
-recording every run, `platform.job_runs` and its retention, the three `/monitoring/*` endpoints and this
-replica's process metrics — against the spec at
+**M6 is implemented, on `development`, at the head of the branch on 2026-09-19 as `e502a85` plus the
+docs commit (`2cd3c7e`) and a final-review fix commit that follows it.** Ten commits, `f545544..e502a85`
+— the job host recording every run, `platform.job_runs` and its retention, the three `/monitoring/*`
+endpoints and this replica's process metrics — against the spec at
 `docs/superpowers/specs/2026-09-18-m6-monitoring-design.md`. The full suite, one `dotnet test
 GymOS.Backend.slnx` run at `e502a85`: **1,514 passed, 0 failed, 0 skipped** across seven projects.
 Nothing has been pushed yet — **look at the CI run for the push first** before assuming green, the way
@@ -38,7 +39,10 @@ the top of this section already asks for the last push. The "M6 — what landed"
 **Next: M7** — settings with consumed categories only (General, Email, Security, Maintenance, retention
 windows), maintenance mode, API rate limiting, and audit CSV export, per the 2026-09-03 decision — then
 the ~19 non-severe findings from the M1–M5 whole-branch review and the gym-scoped-grants spec review,
-both still unstarted.
+both still unstarted. **Still owed and code, from the final review:** a job whose constructor throws at
+loop start is neither listed on the monitoring page nor recorded (`LogLoopDead`, an Error log, is the
+only signal) — surfacing it needs a static job name or a "broken" flag on the DTO, a design change to
+the M3.4 job-type contract, not a fix-wave edit; that is a follow-up, not yet scheduled.
 
 **The footprint fix that this section first recorded as owed is done** — see "Later the same day" below.
 
@@ -280,7 +284,7 @@ handlers; `4f2254f` adds the queries behind them — history heads, run pages, o
 wires the three `/monitoring/*` endpoints and this replica's process metrics, and is where the host
 boots again after two commits that could not on their own (item 5 below). `docs/BusinessRules/Monitoring.md`
 and the release-notes section this task also writes carry the shipped rules in full; this is the resume
-summary.
+summary. `2cd3c7e` is the docs commit on top of that; a final-review fix commit follows it (§ above).
 
 **Registered job names, as the API reports them:** `feature-override-sweep`, `invoice-overdue`,
 `platform-stats`, `subscription-renewal`, `retention`. **Error codes:** `monitoring.job_not_found`
@@ -308,8 +312,11 @@ case-insensitively by name.
 **Known limitations**, stated in full in `Monitoring.md` §10: a process killed mid-run leaves a
 `Running` row that reads stale after grace and is never rewritten; `GetJobHistoryHeadsAsync` issues two
 grouped queries plus one per job with history (fine at five registered jobs, worth revisiting at
-fifty); the process block is one replica's view, not the fleet's; and `status` on
-`/jobs/{name}/runs` also accepts a defined numeric string such as `"2"`.
+fifty); the process block is one replica's view, not the fleet's; `status` on
+`/jobs/{name}/runs` also accepts a defined numeric string such as `"2"`; and, found in the final
+review, a job whose constructor throws at loop start is neither listed nor recorded — `LogLoopDead` is
+the only signal, and surfacing it on the page is a follow-up (needs a static job name or a "broken"
+flag on the DTO, not a fix-wave edit).
 
 ### This machine, for whoever resumes here
 

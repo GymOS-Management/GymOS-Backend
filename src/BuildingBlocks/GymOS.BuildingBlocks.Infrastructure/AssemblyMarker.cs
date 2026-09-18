@@ -1,3 +1,9 @@
+using System.Runtime.CompilerServices;
+
+// NullJobRunRecorder is internal — nothing outside this assembly should construct it, callers
+// depend on IJobRunRecorder — but AddJobHost's registration of it needs a direct assertion.
+[assembly: InternalsVisibleTo("GymOS.BuildingBlocks.UnitTests")]
+
 namespace GymOS.BuildingBlocks.Infrastructure;
 
 /// <summary>

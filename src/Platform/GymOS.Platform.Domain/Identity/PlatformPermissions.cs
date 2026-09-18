@@ -64,7 +64,7 @@ public static class PlatformPermissions
     /// <summary>
     /// The monitoring surface (§3.7): health, job runs, queue depth. Granted to SupportAgent, unlike
     /// <see cref="AnalyticsRead"/>: a support agent answering "why has this gym not renewed?" needs to
-    /// see that <c>renewal</c> last succeeded an hour ago, and nothing here is commercially sensitive
+    /// see that <c>subscription-renewal</c> last succeeded an hour ago, and nothing here is commercially sensitive
     /// the way MRR is. The one field that could carry too much, a run's error text, is trimmed to type
     /// and message before it is stored (M6 spec §2), which is what makes this grant safe.
     /// </summary>

@@ -5928,7 +5928,7 @@
     },
     "/api/v1/monitoring/jobs/{name}/runs": {
       "get": {
-        "description": "\u0060name\u0060 is a registered job, or one that still has history under an old name. \u0060from\u0060 and \u0060to\u0060 are optional and inclusive on the run\u0027s start time; \u0060status\u0060 is one of Running, Succeeded, Failed; \u0060limit\u0060 defaults to 50 and is clamped to 200. \u0060hasMore\u0060 means older runs exist \u2014 page by moving \u0060to\u0060 to the oldest \u0060startedAtUtc\u0060 returned. A run\u0027s \u0060error\u0060 is the exception\u0027s type and message only; the stack is in the structured log.",
+        "description": "\u0060name\u0060 is a registered job, or one that still has history under an old name. \u0060from\u0060 and \u0060to\u0060 are optional and inclusive on the run\u0027s start time; \u0060status\u0060 is one of Running, Succeeded, Failed; \u0060limit\u0060 \u003C= 0 means the default of 50, and values above 200 are clamped to 200. \u0060hasMore\u0060 means older runs exist \u2014 page by moving \u0060to\u0060 to the oldest \u0060startedAtUtc\u0060 returned. A run\u0027s \u0060error\u0060 is the exception\u0027s type and message only; the stack is in the structured log.",
         "operationId": "ListJobRuns",
         "parameters": [
           {
