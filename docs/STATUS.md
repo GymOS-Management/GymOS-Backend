@@ -89,7 +89,16 @@ across seven projects (Application 302, SharedKernel 131, Domain 454, BuildingBl
 Infrastructure 115, Architecture 153, Integration 392; the integration project took 24m37s on this
 laptop). The first run of that suite was red and is what produced `2cd43ab` — see "What the suite
 caught" below. The "H1 — what landed" subsection below (alongside M6's and M7's) has the file map and
-every deviation found while building it.
+every deviation found while building it. **Pushed as `74e85fb` on 2026-09-19 (the final-review fix commit,
+fifteen items, is that head): `Deploy to UAT` green — preflight, build, migrate, deploy, smoke, summary —
+so UAT serves H1; CI green, `build-and-test` 29m49s (inside the 40-minute budget), 1,640 tests on the
+runner (Infrastructure 116 — the fix commit added the null-tenant cache-hit test the local 1,639 run
+predates).** Working tree clean, local and origin in sync. **Next:** the remaining owed list in "Known
+open items" (the maintainer's unlocked plan read behind its call-site audit, value-vs-intent, the
+`GET /features` subqueries, the plan-edit race hook, the UTC-midnight `IClock` seam, the Serilog
+two-host bootstrap race, the dependency majors, M6's constructor-throw follow-up, the integration
+teardown cost) and the owner items (Key Vault, `email.smtp_username`, ADR-54, the e2e CI token) — then
+the gym-facing modules, which have no spec yet; Members carries grants-spec steps 3–5.
 
 **Next: the owed list that remains after H1** — the maintainer's unlocked plan read, which stays blocked
 on a call-site audit (three of its four callers hold no transaction, so a lock there buys nothing until
