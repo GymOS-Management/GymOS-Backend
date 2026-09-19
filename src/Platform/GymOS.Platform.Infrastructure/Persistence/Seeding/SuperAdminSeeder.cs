@@ -22,6 +22,8 @@ namespace GymOS.Platform.Infrastructure.Persistence.Seeding;
 public sealed partial class SuperAdminSeeder
 {
     private readonly AppDbContext _dbContext;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IAdvisoryLock _advisoryLock;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IClock _clock;
     private readonly IOptions<SuperAdminSeedOptions> _seedOptions;
@@ -60,6 +62,8 @@ public sealed partial class SuperAdminSeeder
 
     public SuperAdminSeeder(
         AppDbContext dbContext,
+        IUnitOfWork unitOfWork,
+        IAdvisoryLock advisoryLock,
         IPasswordHasher passwordHasher,
         IClock clock,
         IOptions<SuperAdminSeedOptions> seedOptions,
@@ -67,6 +71,8 @@ public sealed partial class SuperAdminSeeder
         ILogger<SuperAdminSeeder> logger)
     {
         _dbContext = dbContext;
+        _unitOfWork = unitOfWork;
+        _advisoryLock = advisoryLock;
         _passwordHasher = passwordHasher;
         _clock = clock;
         _seedOptions = seedOptions;
@@ -94,6 +100,14 @@ public sealed partial class SuperAdminSeeder
             LogSkippedPendingMigrations(_logger);
             return;
         }
+
+        // The same lock, transaction and reason as PlatformIdentitySeeder and FeatureCatalogSeeder:
+        // the exists-check and the insert below are one atomic step against the same seeder in another
+        // replica, so two hosts booting against one empty database produce one account and one
+        // "already exists" log line — not a DbUpdateException from ux on normalized_email.
+        await using IUnitOfWorkTransaction transaction =
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
+        await _advisoryLock.AcquireAsync(SeedingLocks.CatalogSeed, cancellationToken);
 
         string email = options.Email!.Trim();
         string normalizedEmail = User.Normalize(email);
@@ -130,7 +144,8 @@ public sealed partial class SuperAdminSeeder
         user.AssignRole(superAdminRole.Id);
 
         _dbContext.Set<User>().Add(user);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         LogCreated(_logger, email);
     }

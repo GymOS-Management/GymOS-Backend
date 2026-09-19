@@ -1,6 +1,7 @@
 using System.Net;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Infrastructure.Persistence;
+using GymOS.Platform.Infrastructure.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -104,6 +105,53 @@ public sealed class SuperAdminSeedingTests
         await using AsyncServiceScope scope = second.Services.CreateAsyncScope();
         AppDbContext dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         Assert.Single(await dbContext.Set<User>().ToListAsync());
+    }
+
+    [Fact]
+    public async Task TwoConcurrentSeeders_OnAnEmptyTable_CreateOneSuperAdmin()
+    {
+        // Two replicas' seeders racing against one empty users table — the M4.1 close-out review's
+        // unprotected check-then-act. Without the lock both pass the exists-check and both insert; the
+        // unique index on normalized_email then takes one of them down with a bare DbUpdateException
+        // instead of the "already exists" log line. Same shape as the identity and catalogue seeders'
+        // race tests: this races the seeder directly rather than two in-process host boots, because two
+        // WebApplicationFactory<Program> hosts booting concurrently in one process trip over Program.cs's
+        // static Serilog bootstrap logger (a real, pre-existing, unrelated race — see STATUS) before
+        // either seeder gets a chance to run. The advisory lock's scope is the seeder's own transaction
+        // regardless of how many hosts share the process, so racing the seeder is the faithful test of it.
+        await using SqlServerFixture.DatabaseLease lease = await _sqlServer.LeaseDatabaseAsync("seed_race");
+
+        await using AuthenticationHost host = AuthenticationHost.Create(lease.ConnectionString);
+        using HttpClient client = host.CreateClient();
+        using HttpResponseMessage ready = await client.GetAsync(new Uri("/health/ready", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+
+        // The normal boot already seeded one SuperAdmin (default settings). Delete it so the two
+        // seeders below race against a genuinely empty table, the same starting point
+        // IdentitySeedingTests/FeatureCatalogSeedingTests use for their race tests.
+        await using (AppDbContext arrange = host.CreateDbContext())
+        {
+            User seeded = await arrange.Set<User>()
+                .SingleAsync(user => user.Email == AuthenticationHost.SuperAdminEmail);
+            arrange.Remove(seeded); // UserRoleConfiguration cascades user_roles on delete.
+            await arrange.SaveChangesAsync();
+
+            Assert.Empty(await arrange.Set<User>().ToListAsync());
+        }
+
+        await using AsyncServiceScope firstScope = host.Services.CreateAsyncScope();
+        await using AsyncServiceScope secondScope = host.Services.CreateAsyncScope();
+
+        SuperAdminSeeder firstSeeder = firstScope.ServiceProvider.GetRequiredService<SuperAdminSeeder>();
+        SuperAdminSeeder secondSeeder = secondScope.ServiceProvider.GetRequiredService<SuperAdminSeeder>();
+
+        await Task.WhenAll(
+            firstSeeder.SeedAsync(CancellationToken.None),
+            secondSeeder.SeedAsync(CancellationToken.None));
+
+        await using AppDbContext verify = host.CreateDbContext();
+        User onlyUser = await verify.Set<User>().SingleAsync();
+        Assert.Equal(AuthenticationHost.SuperAdminEmail, onlyUser.Email);
     }
 
     [Fact]
