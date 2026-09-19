@@ -37,6 +37,10 @@ public interface IUnitOfWork
     /// the second attempt would try to write the first attempt's poisoned state alongside its own
     /// and fail the same way. Calling this first makes the retry start from what is actually
     /// committed, exactly as if it were a fresh request.</para>
+    ///
+    /// <para><b>Banned outside <c>SetGymFeaturesCommandHandler</c>'s retry</b> (BannedSymbols.txt, RS0030):
+    /// it clears every tracked entity in the scope, not only the caller's, so any other use would
+    /// silently drop rows another component staged into the same context.</para>
     /// </summary>
     void DiscardTrackedChanges();
 }

@@ -20,13 +20,18 @@ internal sealed class FakePlanRepository : IPlanRepository
     /// <summary>Set to make <see cref="ExpectVersion"/> behave as a stale-version write.</summary>
     public ulong? ConflictingVersion { get; set; }
 
+    public List<Guid> LockedReads { get; } = [];
+
     public void Seed(SubscriptionPlan plan) => _plans.Add(plan);
 
     public Task<SubscriptionPlan?> FindByIdAsync(Guid planId, CancellationToken cancellationToken) =>
         Task.FromResult(_plans.SingleOrDefault(plan => plan.Id == planId));
 
-    public Task<SubscriptionPlan?> FindByIdForUpdateAsync(Guid planId, CancellationToken cancellationToken) =>
-        FindByIdAsync(planId, cancellationToken); // in-memory: no rows, no locks
+    public Task<SubscriptionPlan?> FindByIdForUpdateAsync(Guid planId, CancellationToken cancellationToken)
+    {
+        LockedReads.Add(planId); // in-memory: no rows, no locks — but a test can see the intent
+        return FindByIdAsync(planId, cancellationToken);
+    }
 
     public Task<SubscriptionPlan?> FindByIdForShareAsync(Guid planId, CancellationToken cancellationToken) =>
         FindByIdAsync(planId, cancellationToken); // in-memory: no rows, no locks

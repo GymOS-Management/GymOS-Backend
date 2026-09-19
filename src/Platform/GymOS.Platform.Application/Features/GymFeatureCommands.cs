@@ -190,7 +190,9 @@ internal sealed class SetGymFeaturesCommandHandler
             //
             // A second failure past this point is a different, real conflict — not this race — and
             // is left to surface as the 409 it is.
+#pragma warning disable RS0030 // Banned API: the one sanctioned call site — the retry must start from committed state, see the comment above and BannedSymbols.txt.
             _unitOfWork.DiscardTrackedChanges();
+#pragma warning restore RS0030
             return await ExecuteAsync(command, cancellationToken);
         }
     }

@@ -3,3 +3,4 @@ P:System.DateTime.UtcNow;Inject IClock instead — rule R2 / AD-40
 P:System.DateTime.Today;Inject IClock instead — rule R2 / AD-40
 P:System.DateTimeOffset.Now;Inject IClock instead — rule R2 / AD-40
 P:System.DateTimeOffset.UtcNow;Inject IClock instead — rule R2 / AD-40 (SystemClock is the sole sanctioned call site)
+M:GymOS.BuildingBlocks.Application.Abstractions.IUnitOfWork.DiscardTrackedChanges;Clears the whole scope's change tracker, including rows AuditTrail and other components staged — only SetGymFeaturesCommandHandler's retry may call it (GymFeatureCommands.cs); see IUnitOfWork

@@ -124,7 +124,14 @@ internal sealed class AssignSubscriptionCommandHandler
             return Result.Failure<SubscriptionDetail>(SubscriptionErrors.GymDeleted);
         }
 
-        SubscriptionPlan? plan = await _plans.FindByIdAsync(command.PlanId, cancellationToken);
+        // One transaction from the plan read to the save: WithdrawRedundantAsync below decides what is
+        // "redundant" against this plan's features, so the plan is read under UPDLOCK and a concurrent
+        // plan feature edit waits until this commits (the SetGymFeaturesCommandHandler precedent). Every
+        // early return below disposes the transaction uncommitted — nothing has been written by then.
+        await using IUnitOfWorkTransaction transaction =
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        SubscriptionPlan? plan = await _plans.FindByIdForUpdateAsync(command.PlanId, cancellationToken);
         if (plan is null)
         {
             return Result.Failure<SubscriptionDetail>(PlanErrors.NotFound(command.PlanId));
@@ -283,6 +290,8 @@ internal sealed class AssignSubscriptionCommandHandler
             cancellationToken);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
 
         return await SubscriptionWrites.ReadBackAsync(
             _subscriptionQueries, command.GymId, cancellationToken);

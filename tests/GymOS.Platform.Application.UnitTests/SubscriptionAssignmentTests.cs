@@ -159,6 +159,27 @@ public sealed class SubscriptionAssignmentTests
     }
 
     [Fact]
+    public async Task AssigningAPlan_DecidesRedundancyAgainstALockedPlanInsideOneTransaction()
+    {
+        // What counts as a "redundant" override is decided against this plan's features, and the
+        // withdraw runs in the same use case — so the plan is read under UPDLOCK inside a transaction
+        // that spans both (the SetGymFeatures precedent). An unlocked read let a concurrent plan feature
+        // edit change the answer between the read and the withdraw (M5 whole-branch review).
+        var context = new Context(Manage);
+        Gym gym = context.GivenGym();
+        SubscriptionPlan plan = context.GivenPlan(amount: 49.99m);
+
+        Result<SubscriptionDetail> result = await context.Dispatcher.SendAsync(
+            new AssignSubscriptionCommand(gym.Id, plan.Id, "Monthly", "EUR", null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, context.UnitOfWork.TransactionCount);
+        Assert.Equal(plan.Id, Assert.Single(context.Plans.LockedReads));
+        Assert.Equal(plan.Id, Assert.Single(context.FeatureExceptions.CalledWithLivePlanIds));
+    }
+
+    [Fact]
     public async Task AssigningAPlanWithATrial_StartsTrialing()
     {
         var context = new Context(Manage);
