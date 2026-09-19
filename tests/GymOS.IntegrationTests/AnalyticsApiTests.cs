@@ -105,6 +105,27 @@ public sealed class AnalyticsApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    /// <summary>
+    /// The control <c>SupportAgentCannotReadTheSeries</c> lacked: deleting the <c>analytics.read</c>
+    /// grant from any of these roles left every M5 test green, because nothing asserted a role that
+    /// holds it gets through. SuperAdmin is not a control — it grants everything and proves nothing
+    /// about the row.
+    /// </summary>
+    [Theory]
+    [InlineData("PlatformAdmin")]
+    [InlineData("BillingAdmin")]
+    [InlineData("ReadOnly")]
+    public async Task ARoleHoldingAnalyticsReadCanReadTheSeries(string role)
+    {
+        using HttpClient holder = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, role, $"{role.ToLowerInvariant()}.series@gymos.test");
+
+        using HttpResponseMessage response = await holder.GetAsync(
+            new Uri("/api/v1/analytics/churn?from=2026-08-01&to=2026-08-01", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     private async Task<JsonElement> GetAsync(string relativeUrl)
     {
         using HttpResponseMessage response = await _client.GetAsync(new Uri(relativeUrl, UriKind.Relative));

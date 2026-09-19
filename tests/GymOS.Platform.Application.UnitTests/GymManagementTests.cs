@@ -426,6 +426,24 @@ public sealed class GymManagementTests
     }
 
     [Fact]
+    public async Task DeletingAGym_AsksTheMaintainerToWithdrawWhatThePlanMadeRedundant()
+    {
+        var context = new GymTestContext().ActingAs(Delete);
+        Gym gym = context.GivenActiveGym();
+
+        Result result = await context.Dispatcher.SendAsync(
+            new DeleteGymCommand(gym.Id, "acme-gym", null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+
+        // With no live plan after deletion — so every override is judged against the defaults alone.
+        // GymFeatureLifecycleTests sees the outcome; this pins that the handler asked, once, correctly.
+        Assert.Equal(gym.Id, Assert.Single(context.FeatureExceptions.CalledForGymIds));
+        Assert.Null(Assert.Single(context.FeatureExceptions.CalledWithLivePlanIds));
+    }
+
+    [Fact]
     public async Task DeletingAnAlreadyDeletedGym_Succeeds()
     {
         var context = new GymTestContext().ActingAs(Delete);
@@ -615,5 +633,70 @@ public sealed class GymManagementTests
         // Reads are guarded too: a gym's owner name and contact details are commercial information.
         await Assert.ThrowsAsync<PermissionDeniedException>(() =>
             context.Dispatcher.QueryAsync(new GetGymQuery(Guid.NewGuid()), CancellationToken.None));
+    }
+
+    // ── The features.read gate on write routes ──────────────────────────────────
+
+    private const string FeaturesRead = PlatformPermissions.FeaturesRead;
+
+    // TheoryData<string, Func<GymTestContext, Gym, ICommand<Result<GymDetail>>>> does not compile here:
+    // GymTestContext is internal, and a public Theory method (xUnit requires public) cannot take a
+    // parameter whose type argument is less accessible than the method (CS0051). InlineData plus this
+    // private route-dispatch switch keeps the same six routes and the same two assertions per route
+    // without putting GymTestContext into any public signature.
+    private static ICommand<Result<GymDetail>> WriteRouteCommand(string route, GymTestContext context, Gym gym) =>
+        route switch
+        {
+            "provision" => Provision("features-gym"),
+            "update" => new UpdateGymCommand(
+                gym.Id, "Acme Fitness", "Grace", "grace@acme.test", null, "GR", "Europe/Athens", "EUR", "1"),
+            "activate" => new ActivateGymCommand(context.GivenProvisioningGym("activate-gym").Id, null),
+            "suspend" => new SuspendGymCommand(gym.Id, "Non-payment", null),
+            "reactivate" => new ReactivateGymCommand(context.GivenSuspendedGym("reactivate-gym").Id, null),
+            "branding" => new UpdateGymBrandingCommand(gym.Id, "logo.png", null, "#1A2B3C", null, null, null, "1"),
+            _ => throw new ArgumentOutOfRangeException(nameof(route), route, "Unknown write route."),
+        };
+
+    [Theory]
+    [InlineData("provision")]
+    [InlineData("update")]
+    [InlineData("activate")]
+    [InlineData("suspend")]
+    [InlineData("reactivate")]
+    [InlineData("branding")]
+    public async Task AWriterHoldingFeaturesRead_GetsTheResolvedFeaturesBack(string route)
+    {
+        // GymWrites.ReadBackAsync asks IPermissionEvaluator for features.read and includes the resolved
+        // catalogue only when it is held. Until H1 the fake returned null whether or not it was asked,
+        // so this branch was never exercised on any write route.
+        var context = new GymTestContext().ActingAs(Create, Update, Suspend, FeaturesRead).WithFeatureCatalogue();
+        Gym gym = context.GivenActiveGym();
+
+        Result<GymDetail> result = await context.Dispatcher.SendAsync(
+            WriteRouteCommand(route, context, gym), CancellationToken.None);
+
+        Assert.True(result.IsSuccess, route);
+        Assert.NotNull(result.Value.Features);
+    }
+
+    [Theory]
+    [InlineData("provision")]
+    [InlineData("update")]
+    [InlineData("activate")]
+    [InlineData("suspend")]
+    [InlineData("reactivate")]
+    [InlineData("branding")]
+    public async Task AWriterWithoutFeaturesRead_GetsNullFeatures(string route)
+    {
+        // The other half of the gate: no features.read, no features — and the fake would throw if the
+        // handler asked for them anyway, so a null here is a real null.
+        var context = new GymTestContext().ActingAs(Create, Update, Suspend);
+        Gym gym = context.GivenActiveGym();
+
+        Result<GymDetail> result = await context.Dispatcher.SendAsync(
+            WriteRouteCommand(route, context, gym), CancellationToken.None);
+
+        Assert.True(result.IsSuccess, route);
+        Assert.Null(result.Value.Features);
     }
 }

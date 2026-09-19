@@ -61,6 +61,26 @@ public sealed class DashboardApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, activity.StatusCode);
     }
 
+    /// <summary>
+    /// The control <c>SupportAgentIsRefusedTheDashboardButKeepsTheAuditFeed</c> lacked: deleting the
+    /// <c>analytics.read</c> grant from any of these roles left every M5 test green, because nothing
+    /// asserted a role that holds it gets through. SuperAdmin is not a control — it grants everything
+    /// and proves nothing about the row.
+    /// </summary>
+    [Theory]
+    [InlineData("PlatformAdmin")]
+    [InlineData("BillingAdmin")]
+    [InlineData("ReadOnly")]
+    public async Task ARoleHoldingAnalyticsReadCanReadTheSummary(string role)
+    {
+        using HttpClient holder = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, role, $"{role.ToLowerInvariant()}.summary@gymos.test");
+
+        using HttpResponseMessage response = await holder.GetAsync(Summary);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     [Fact]
     public async Task TheSummaryIsLiveRatherThanYesterdaysRow()
     {

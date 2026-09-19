@@ -78,6 +78,10 @@ internal sealed class GymTestContext
 
     public FakeAuditTrail AuditTrail { get; } = new();
 
+    public FakeFeatureRepository FeatureCatalogue { get; } = new();
+
+    public FakePlanRepository Plans { get; } = new();
+
     public IDispatcher Dispatcher => _provider.GetRequiredService<IDispatcher>();
 
     /// <summary>
@@ -95,6 +99,17 @@ internal sealed class GymTestContext
             Permissions.Granted.Add(permission);
         }
 
+        return this;
+    }
+
+    /// <summary>
+    /// Wires the feature fake so a caller holding <c>features.read</c> gets features back on a write
+    /// route's read-back. Without this, granting <c>features.read</c> makes <see cref="FakeGymQueries"/>
+    /// throw — on purpose.
+    /// </summary>
+    public GymTestContext WithFeatureCatalogue()
+    {
+        GymQueries.FeatureQueries = new FakeFeatureQueries(FeatureCatalogue, Plans, Subscriptions);
         return this;
     }
 

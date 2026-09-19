@@ -83,11 +83,22 @@ public sealed class MonthlyRecurringRevenueTests
     [Fact]
     public void AZeroDecimalCurrencyRoundsToWholeUnits()
     {
-        // JPY has no minor units. A normalisation that assumed hundredths would produce an amount
-        // Money itself refuses to hold, and this is the currency that catches it.
+        // JPY has no minor units. 12,005 a year is not divisible by 12 (1,000.4166…), so a normalisation
+        // that kept hundredths, or rounded to them, produces an amount Money refuses to hold for JPY.
+        // The M5 fixture used 12,000, which divides exactly and so could not fail.
         IReadOnlyList<Money> mrr = MonthlyRecurringRevenue.Calculate(
-            [new MrrContribution(SubscriptionStatus.Active, BillingCycle.Yearly,
-                Money.Of(12_000m, Currency.Of("JPY")))]);
+            [new MrrContribution(SubscriptionStatus.Active, BillingCycle.Yearly, Money.Of(12_005m, Currency.Of("JPY")))]);
+
+        Assert.Equal(Money.Of(1_000m, Currency.Of("JPY")), Assert.Single(mrr));
+    }
+
+    [Fact]
+    public void AZeroDecimalCurrencyRoundsHalfEvenToTheWholeUnit()
+    {
+        // 12,006 / 12 = 1,000.5 exactly. Half-even lands on 1,000; away-from-zero would say 1,001. Pins
+        // the direction MonthlyRecurringRevenue documents.
+        IReadOnlyList<Money> mrr = MonthlyRecurringRevenue.Calculate(
+            [new MrrContribution(SubscriptionStatus.Active, BillingCycle.Yearly, Money.Of(12_006m, Currency.Of("JPY")))]);
 
         Assert.Equal(Money.Of(1_000m, Currency.Of("JPY")), Assert.Single(mrr));
     }

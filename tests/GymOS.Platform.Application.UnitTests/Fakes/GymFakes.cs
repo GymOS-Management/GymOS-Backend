@@ -87,9 +87,8 @@ internal sealed class FakeGymQueries : IGymQueries
     public ulong RowVersion { get; set; } = 1;
 
     /// <summary>
-    /// Assign the feature fake to have the detail carry resolved features, as the real projection does
-    /// by delegating to <see cref="IFeatureQueries"/>. Left null in the many tests that predate M4 and
-    /// care about nothing here — an empty block is the honest answer when no catalogue was seeded.
+    /// Left null in tests that never grant <c>features.read</c>; a test that does must wire it, or the
+    /// fake throws.
     /// </summary>
     public IFeatureQueries? FeatureQueries { get; set; }
 
@@ -135,9 +134,17 @@ internal sealed class FakeGymQueries : IGymQueries
 
         GymBranding? branding = _gyms.Branding.SingleOrDefault(candidate => candidate.GymId == gymId);
 
-        IReadOnlyList<ResolvedFeatureDetail>? features = !includeFeatures || FeatureQueries is null
-            ? null
-            : await FeatureQueries.ResolveForGymAsync(gymId, cancellationToken);
+        // The real projection always resolves features when asked. Returning null here instead was a
+        // shape production never produces, and it let the features.read gate on every gym write route
+        // go unexercised (M4.1 close-out): wire the feature fake or do not ask.
+        IReadOnlyList<ResolvedFeatureDetail>? features = null;
+        if (includeFeatures)
+        {
+            IFeatureQueries featureQueries = FeatureQueries ?? throw new InvalidOperationException(
+                "The test asked GymDetail to include features but wired no IFeatureQueries fake. " +
+                "Call GymTestContext.WithFeatureCatalogue() or set FakeGymQueries.FeatureQueries.");
+            features = await featureQueries.ResolveForGymAsync(gymId, cancellationToken);
+        }
 
         return new GymDetail(
             gym.Id,
