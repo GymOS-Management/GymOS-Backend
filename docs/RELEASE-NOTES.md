@@ -2,6 +2,86 @@
 
 ---
 
+## M7 — Settings & Hardening
+
+**Suggested version:** `0.9.0`
+**Status:** complete, awaiting review. Business rules: [BusinessRules/Settings.md](BusinessRules/Settings.md).
+
+An administrator can now change SMTP credentials, lockout thresholds and token lifetimes without a
+redeploy; the platform can be closed for maintenance without stopping the process; every API call is
+rate-limited, not just sign-in; and the audit trail — real since M1 — can be pulled as a file. All four
+share one source of truth: a code-declared catalog of 24 keys says what a setting *is*, and a database
+row that may not exist says what it is *set to*.
+
+### The declared catalog, resolved row → configuration → default
+
+`PlatformSettingDefinitions.All` is the catalog — General, Email, Security, Maintenance and Retention,
+24 keys — exactly as `PlatformPermissions.All` is for permissions. `GET /settings` enumerates the
+catalog, not the table, so every key appears whether or not a row exists; a row is written only when
+someone changes a value, and deleting one (`PUT` with `null`) returns the key honestly to configuration
+or its own code default. Sensitive values (the SMTP password) are protected with ASP.NET Data
+Protection, key ring in `platform.data_protection_keys` — in the database because UAT scales to zero —
+and **unprotected beside the ciphertext until Key Vault exists**, the standing gap now recorded with
+its closing commands in `AZURE.md` §7.
+
+### `ISettings<T>` over the existing options classes: last-valid-on-failure, never a blocking read
+
+`ISettings<EmailOptions>`, `ISettings<LoginPolicyOptions>`, `ISettings<JwtOptions>` (lifetime only),
+`ISettings<MonitoringOptions>` (retention only), and the new `ISettings<MaintenanceOptions>` /
+`ISettings<RateLimitOptions>` replace `IOptions<T>` at nine call sites, mechanically. The binder is a
+singleton: on a bad row it serves the last value that ever validated, or configuration plus code
+defaults when none exists yet, and only throws if that fails too — a platform whose email settings are
+broken by a bad row must still sign people in. Reads are stale-while-revalidate: a synchronous
+`.Current` never blocks on a database round trip except on a cold process.
+
+### Maintenance mode, rate limiting, and CSV export
+
+`POST /settings/maintenance-mode`, behind `X-Confirm-Action: maintenance` (AD-6), and
+`MaintenanceModeMiddleware` — sitting after authentication and before authorization — close the
+platform to everyone except a caller holding `settings.manage` (SuperAdmin only; the JWT carries no
+role claim to check directly), with a 503 and `Retry-After: 300`. A global rate limiter now caps every
+authenticated caller per user id and every anonymous one per IP, on top of the existing sign-in
+limiter, every number read live from the settings catalog inside the partition factory —
+`security.api_requests_per_minute`, `security.anonymous_requests_per_minute`,
+`security.sign_in_attempts_per_window` and `security.sign_in_window_seconds`. `GET
+/api/v1/audit-logs/export` streams the trail as RFC 4180 CSV — nine columns, no `old_values`/
+`new_values`, a 366-day maximum window, CSV-injection guarding on formula-leading characters — behind a
+new permission, `audit.export`, deliberately withheld from SupportAgent.
+
+### Deviations recorded while building
+
+`security.sign_in_window_seconds` overlays a new `Security:RateLimiting:SignInWindowSeconds` integer
+path, not the `TimeSpan` `SignInWindow` path the design named — an integer value at a `TimeSpan` path
+binds as days, not seconds. The catalog shipped at 24 keys, not the plan's 25: an invented
+`branding.primary_color` with no consumer was removed before review. The `platform_settings` check
+constraint is written as paired `IS [NOT] NULL` clauses, because the design's `<>` form is not valid
+T-SQL. Six `appsettings.json` keys that restated C# defaults were deleted so those settings report
+`Source: Default` honestly rather than `Source: Configuration`. Full accounting, including the rate
+limiter's missing `Retry-After` metadata and the middleware order change, is in `Settings.md` and
+`STATUS.md`'s "what landed" section.
+
+### Error codes
+
+`settings.unknown_key`, `settings.wrong_category`, `settings.invalid_value`, `settings.invalid_state`,
+`settings.use_maintenance_endpoint`, `settings.duplicate_key`, `settings.unknown_category`,
+`settings.email_disabled`, `settings.confirmation_required`, `settings.confirmation_mismatch`,
+`settings.maintenance` (503), `security.rate_limited` (429), `audit.export_range`.
+
+### Permissions
+
+`settings.read` (SuperAdmin, PlatformAdmin, ReadOnly), `settings.manage` (SuperAdmin only),
+`audit.export` (SuperAdmin, PlatformAdmin).
+
+### What was deferred, and to where
+
+Tenant and gateway settings scopes, `setting_definitions` as a table and JSON Schema wait on AD-45's
+layered service. Branding, Storage, AI and Payment categories arrive with the providers they
+configure. Key Vault protection of the Data Protection ring is the owner's action. Cross-replica cache
+invalidation waits on the outbox processor; distributed rate limiting waits on a shared store for more
+than one real replica.
+
+---
+
 ## M6 — Monitoring
 
 **Suggested version:** `0.8.0`

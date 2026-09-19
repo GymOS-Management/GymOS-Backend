@@ -226,3 +226,30 @@ confusion:
    az sql db show   -s gymos-uat -g GymOS-UAT -n GymOS_UAT --query '{status:status,freeLimit:useFreeLimit,onExhaustion:freeLimitExhaustionBehavior,autoPauseMin:autoPauseDelay}' -o json
    az sql db update -s gymos-uat -g GymOS-UAT -n GymOS_UAT --free-limit-exhaustion-behavior BillOverUsage
    ```
+
+6. **Data Protection key ring: `platform.data_protection_keys`, unprotected until Key Vault.** M7
+   protects sensitive settings (the SMTP password, and whatever else is marked sensitive in
+   `PlatformSettingDefinitions`) with ASP.NET Data Protection, whose key ring lives in the database
+   rather than on disk — deliberately, so a replica that comes back with a fresh file system after
+   scaling to zero can still decrypt yesterday's row. Deployment state, so the deploy workflow does not
+   create or reference a vault (same reasoning as items 2 and 4): **until the vault exists, the ring
+   sits unprotected beside the ciphertext it decrypts**, so a full database dump exposes every
+   sensitive setting. `docs/BusinessRules/Settings.md` §3 states this as the module's standing gap. To
+   close it:
+
+   ```bash
+   az keyvault create --name <vault> -g GymOS-UAT --location swedencentral
+   az identity show   --name id-gymos-api-uat -g GymOS-UAT --query principalId -o tsv   # or the Container App's system-assigned identity, if used instead
+   az keyvault set-policy --name <vault> --object-id <principal-id> --key-permissions get unwrapKey wrapKey
+   az containerapp update -n gymos-uat-api -g GymOS-UAT \
+     --set-env-vars DataProtection__KeyVaultKeyId=https://<vault>.vault.azure.net/keys/<name>/<version>
+   ```
+
+   Verify with:
+
+   ```bash
+   az containerapp show -n gymos-uat-api -g GymOS-UAT --query 'properties.template.containers[0].env'
+   ```
+
+   The ciphertext format does not change when this lands — Data Protection re-wraps the keys in the
+   ring, not the payloads already encrypted with them, so no re-protection of existing rows is needed.

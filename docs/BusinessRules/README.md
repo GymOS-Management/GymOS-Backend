@@ -25,6 +25,11 @@ resolution rule, the twelve keys, and why an override is stored only while it di
 live-versus-recorded split, MRR's exact definition, why churn keeps its two causes apart, and every
 column and endpoint deferred for lack of a real source.
 
+**Settings & hardening are implemented** — [`Settings.md`](Settings.md) records M7 as built: the
+24-key declared catalog resolved row → configuration → default, sensitive values under Data
+Protection with the key ring in the database until Key Vault, a confirmed maintenance-mode toggle, a
+global rate limiter tuned live from the same catalog, and the audit trail's CSV export.
+
 **The rest are drafts, not specifications.** They record what the frozen architecture already decides,
 what is assumed (marked `(?)`), and what is genuinely unanswered. The Golden Rule
 (GymOS-Specification/PRODUCT-PRINCIPLES.md) is the scope authority: a rule listed here is not a

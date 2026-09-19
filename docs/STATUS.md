@@ -5,7 +5,9 @@ stacked failures, none of them the code: the integration fixture racing SQL Serv
 disk the suite had outgrown, and MinIO leaving Docker Hub.** The top section is the 2026-09-18
 session: the failure named with evidence and fixed, the UAT deploy failure diagnosed as Azure's free-tier
 cap (a decision, not code), and the resume point for M6; **M6 itself is now implemented on
-`development` at `e502a85`**, with its "what landed" subsection under that same session. The sections
+`development` at `e502a85`**, with its "what landed" subsection under that same session. **M7 —
+Settings & Hardening — is now implemented on `development` too**, eleven commits `b5dd5cb..39bb010`
+plus this docs commit, with its own "what landed" subsection alongside M6's. The sections
 after it are the 2026-09-03 resumption and its decisions, then the merge and the two failures it
 exposed, then picking the branch up on a second machine, then everything after the SQL Server merge;
 the paragraphs beyond that describe the migration as it stood on its branch and are kept for their
@@ -48,23 +50,22 @@ teardown cost itself — the drop path could run in the background at class end,
 one migrated database and lease only when they mutate — a performance increment with its own numbers,
 not a line in a workflow. The "M6 — what landed" subsection below the 2026-09-18 resumption's other
 entries has the file map and the deviations found while building it.
-**M7's design spec is written and awaiting the owner's review:**
-`docs/superpowers/specs/2026-09-19-m7-settings-and-hardening-design.md`, on the M6 precedent. Four
-decisions are taken and recorded in its header: sensitive values under **Data Protection with the key
-ring in the database** and Key Vault protection when the vault exists (the standing gap goes in AZURE.md
-§7); `POST /settings/test-email` **tests the SMTP connection and sends nothing**, so ADR-53 stands;
-**SuperAdmins pass in maintenance mode**, everyone else gets 503; and settings reach consumers through
-**`ISettingsProvider` + typed `ISettings<T>`** returning the existing options classes, validated by their
-existing validators at write time. Two additive deviations from §2.7 are named in §3: separate `value` /
-`protected_value` columns so the audit interceptor can redact by name, and a `Retention` category. **Next:
-the owner reads the spec, then the implementation plan** — nothing of M7 is implemented. M7 is settings
-with consumed categories only (General, Email, Security, Maintenance, Retention), maintenance mode, API
-rate limiting, and audit CSV export, per the 2026-09-03 decision — then
-the ~19 non-severe findings from the M1–M5 whole-branch review and the gym-scoped-grants spec review,
-both still unstarted. **Still owed and code, from the final review:** a job whose constructor throws at
-loop start is neither listed on the monitoring page nor recorded (`LogLoopDead`, an Error log, is the
-only signal) — surfacing it needs a static job name or a "broken" flag on the DTO, a design change to
-the M3.4 job-type contract, not a fix-wave edit; that is a follow-up, not yet scheduled.
+**M7 — Settings & Hardening — is implemented at the head of `development`** (commits
+`b5dd5cb..39bb010`, eleven commits, against
+`docs/superpowers/specs/2026-09-19-m7-settings-and-hardening-design.md`), on the M6 precedent: the
+24-key declared settings catalog with `ISettingsProvider` and typed `ISettings<T>`, sensitive values
+under Data Protection with the key ring in the database, a confirmed maintenance-mode toggle, a global
+API rate limiter tuned live from the same catalog, and `GET /audit-logs/export` as streamed CSV. The
+full suite, one `dotnet test GymOS.Backend.slnx` run at the head of the branch: **1,598 passed, 0 failed, 0 skipped** across seven projects (Application 287, SharedKernel 131, Domain 453, BuildingBlocks 92, Infrastructure 107, Architecture 153, Integration 375; the integration project took 24m23s on this laptop).
+Look at the CI run for the push before trusting anything beyond that local run. The "M7 — what landed"
+subsection below (alongside M6's) has the file map and every deviation found while building it. **Next:
+the owed list** — the ~19 non-severe findings from the M1–M5 whole-branch review, the gym-scoped-grants
+spec review, M6's constructor-throw follow-up (a job whose constructor throws at loop start is neither
+listed nor recorded — `LogLoopDead` is the only signal, and surfacing it needs a static job name or a
+"broken" flag on the DTO, a design change to the M3.4 job-type contract, not a fix-wave edit), the
+integration teardown cost (M6's measured ~18 minutes of `CREATE DATABASE` + migrate + `DROP` per CI
+run), and Key Vault as the owner's action (AZURE.md §7, item 6) — then the gym-facing modules, which
+have no spec yet.
 
 **The footprint fix that this section first recorded as owed is done** — see "Later the same day" below.
 
@@ -339,6 +340,86 @@ fifty); the process block is one replica's view, not the fleet's; `status` on
 review, a job whose constructor throws at loop start is neither listed nor recorded — `LogLoopDead` is
 the only signal, and surfacing it on the page is a follow-up (needs a static job name or a "broken"
 flag on the DTO, not a fix-wave edit).
+
+### M7 — what landed
+
+Eleven commits, `b5dd5cb..39bb010`, build the module bottom-up against
+`docs/superpowers/specs/2026-09-19-m7-settings-and-hardening-design.md`. `b5dd5cb` declares the
+catalog — `PlatformSettingDefinitions.All`, 24 keys across five categories, each typed and ranged.
+`4b76b68` adds `platform.platform_settings` and the Data Protection key ring
+(`platform.data_protection_keys`), the `PlatformSetting` aggregate, the migration, and the two new
+packages. `bd4a4c7` adds the three permissions — `settings.read`, `settings.manage` (SuperAdmin only),
+`audit.export`. `f7db191` is `ISettingsProvider`: rows, configuration, defaults, Data Protection for
+sensitive values. `85eb123` adds `ISettings<T>` binding rows over configuration into the existing
+options classes, with the nine consumer call sites changing type only. `3dc7e83` is the write pipeline
+— validate the batch, validate the would-be options, write, invalidate. `d2b1780` wires `GET`/`PUT
+/settings`. `d6dceea` adds `POST /settings/test-email`. `3a7329a` adds maintenance mode — the
+confirmed toggle and the middleware. `e4d3262` adds the global rate limiter, every number a live
+setting. `39bb010` adds `GET /audit-logs/export` as streamed CSV, and its own audit record.
+`docs/BusinessRules/Settings.md` and the release-notes section this task also writes carry the shipped
+rules in full; this is the resume summary.
+
+**Twelve things worth recording, each a controller ruling made while building rather than something
+the spec or plan got to decide in advance:**
+
+1. `security.sign_in_window_seconds` overlays a new integer path
+   `Security:RateLimiting:SignInWindowSeconds`, not the `TimeSpan` `SignInWindow` path the design's own
+   table named — an integer value at a `TimeSpan` path binds as *days*, not seconds. Every duration key
+   in the catalog carries a unit (`SettingDefinition.Unit`) and is converted to a `TimeSpan` string only
+   when the property it overlays is itself a `TimeSpan`; this is the one key where the property is an
+   `int`, so no conversion happens and the path had to change to match.
+2. The catalog shipped with **24** keys, matching the design's own table; the plan's verification list
+   said 25 and named an invented `branding.primary_color` with no consumer, removed before review.
+3. The check constraint on `platform_settings` is
+   `(value IS NULL AND protected_value IS NOT NULL) OR (value IS NOT NULL AND protected_value IS NULL)`
+   — the design's `<>` form is not valid T-SQL for this comparison.
+4. Six `appsettings.json` keys that only restated C# code defaults were deleted —
+   `Jwt:AccessTokenLifetime`, the four `LoginPolicy:*` keys, and `RateLimiting:SignInAttemptsPerWindow`
+   — replaced by `//`-prefixed comments, so those settings honestly report `Source: Default` rather than
+   `Source: Configuration` when no row exists.
+5. `ISettings<T>` (`SettingsBinder<T>`) is a **singleton** binder guarded by a `Lock`: on an invalid
+   overlay it serves the last value that ever validated, else configuration plus code defaults (the
+   state `ValidateOnStart` already proved at boot), and throws only if that fails too. The provider
+   (`SettingsProvider`) serves stale-while-revalidate to synchronous readers (`GetOverlayNow()`),
+   blocking only on a cold process; async readers (`GetEffectiveAsync`, `GetOverlayAsync`) always await
+   a fresh load. `Invalidate()` marks the snapshot stale rather than dropping it.
+6. Enums travel as strings on the wire: `SettingView.Category`/`ValueType`/`Source` are `.ToString()`
+   names, and both `GET ?category=` and the `PUT` body's `category` are parsed case-insensitively with
+   `Enum.TryParse(ignoreCase: true)` **and** `Enum.IsDefined` together (`settings.unknown_category` on
+   either failing).
+7. A batch naming the same key twice is refused (`settings.duplicate_key`) before any other check,
+   because `ISettingsRepository.FindByKeyAsync` queries the database, not the EF change tracker, and a
+   second occurrence would not see the first occurrence's in-memory change.
+8. "SuperAdmin passes in maintenance mode" is implemented as holding `settings.manage`, granted to
+   SuperAdmin alone — the JWT carries no role claim for the middleware to check directly.
+9. The email-disabled check lives on `ISmtpConnectionTester.IsEmailEnabled`, a member of its own,
+   because Application must not depend on Infrastructure and so cannot see `EmailOptions` itself.
+   `MailKitSmtpConnectionTester` catches `SmtpCommandException` explicitly rather than relying on
+   `MailKit.ProtocolException` to cover it — verified against MailKit 4.17 that the two do not share
+   that base type. `server` in the test result is MailKit's advertised capability list, not a greeting
+   banner (MailKit exposes no banner past `ConnectAsync`) — an honest but oddly named field.
+10. `SlidingWindowRateLimiter` — the global limiter's kind — reports no `Retry-After` metadata on
+    rejection; the fallback is a fixed 10 seconds, one segment of its own six-segment, one-minute
+    window. `UseRateLimiter()` moved to after `UseAuthentication()` so the partition factory can read
+    the subject claim; final `Program.cs` order: authentication, rate limiter, maintenance middleware,
+    authorization.
+11. CSV rows carry exactly one CRLF — the `StreamWriter`'s own, not one written by `AuditCsv` itself —
+    and the column order is the spec's own. The OpenAPI response declares `text/csv` via
+    `Produces<string>(contentType: "text/csv")`, documentation only; the handler's real return is
+    `Results.Stream`.
+12. Package versions pinned: `Microsoft.AspNetCore.DataProtection.EntityFrameworkCore` 10.0.11,
+    `Azure.Extensions.AspNetCore.DataProtection.Keys` 1.6.4, `Azure.Identity` 1.21.0.
+
+**Known limitations**, stated in full in `Settings.md` §13: TTL staleness (30 seconds across replicas,
+and for a synchronous reader on the same replica between a write's `Invalidate()` and the background
+refresh landing); a wedged background refresh suppresses further refresh attempts while the stale
+snapshot keeps serving; rate-limit partitions keep the old number until their own window rolls over;
+limits are per replica; the audit export has no row cap beyond the 366-day window and does not guard a
+literal CRLF embedded inside a field's own content; the Data Protection key ring sits unprotected
+beside the ciphertext until Key Vault exists (AZURE.md §7, item 6); `TryParseCategory` admits a defined
+category's numeric string, the same shape as M6's `status` parameter; and a settings row whose
+populated column disagrees with the catalog's `IsSensitive` flag is treated as if the row did not
+exist, logged rather than thrown.
 
 ### This machine, for whoever resumes here
 
