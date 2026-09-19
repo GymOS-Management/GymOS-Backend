@@ -3,6 +3,7 @@ using GymOS.Platform.Application.Identity;
 using GymOS.Platform.Application.Identity.Activation;
 using GymOS.Platform.Application.Identity.Users;
 using GymOS.Platform.Application.Invoices;
+using GymOS.Platform.Application.Settings;
 using GymOS.Platform.Application.Subscriptions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -22,6 +23,7 @@ public static class PlatformApplicationServiceCollectionExtensions
         services.AddHandlersFromAssembly(typeof(AssemblyMarker).Assembly);
         services.TryAddScoped<SessionFactory>();
         services.TryAddScoped<SuperAdminGuard>();
+        services.TryAddScoped<SettingsWriter>();
         services.TryAddScoped<InvoiceIssuer>();
         services.TryAddScoped<ActivationIssuer>();
         services.TryAddScoped<SubscriptionRenewalService>();
