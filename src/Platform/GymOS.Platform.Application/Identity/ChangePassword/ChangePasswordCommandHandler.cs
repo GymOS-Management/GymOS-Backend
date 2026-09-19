@@ -1,9 +1,9 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.Platform.Application.Identity.Abstractions;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
-using Microsoft.Extensions.Options;
 
 namespace GymOS.Platform.Application.Identity.ChangePassword;
 
@@ -26,7 +26,7 @@ internal sealed class ChangePasswordCommandHandler : ICommandHandler<ChangePassw
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditTrail _auditTrail;
     private readonly IClock _clock;
-    private readonly IOptions<LoginPolicyOptions> _policy;
+    private readonly ISettings<LoginPolicyOptions> _policy;
 
     public ChangePasswordCommandHandler(
         IUserRepository users,
@@ -35,7 +35,7 @@ internal sealed class ChangePasswordCommandHandler : ICommandHandler<ChangePassw
         IUnitOfWork unitOfWork,
         IAuditTrail auditTrail,
         IClock clock,
-        IOptions<LoginPolicyOptions> policy)
+        ISettings<LoginPolicyOptions> policy)
     {
         _users = users;
         _refreshTokens = refreshTokens;
@@ -73,12 +73,12 @@ internal sealed class ChangePasswordCommandHandler : ICommandHandler<ChangePassw
             // Counted and audited: without this the endpoint was an unlimited, traceless oracle,
             // and a successful guess ends every session — locking the real owner out silently.
             await _users.RecordFailedLoginAsync(
-                user, now, _policy.Value.MaxFailedAttempts, _policy.Value.LockoutDuration, cancellationToken);
+                user, now, _policy.Current.MaxFailedAttempts, _policy.Current.LockoutDuration, cancellationToken);
             await FailAsync(user, "wrong_current_password", cancellationToken);
             return Result.Failure(AuthenticationErrors.InvalidCurrentPassword);
         }
 
-        Result policyCheck = PasswordPolicy.Validate(command.NewPassword, _policy.Value.MinimumPasswordLength);
+        Result policyCheck = PasswordPolicy.Validate(command.NewPassword, _policy.Current.MinimumPasswordLength);
         if (policyCheck.IsFailure)
         {
             return policyCheck;

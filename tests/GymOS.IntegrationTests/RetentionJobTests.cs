@@ -7,6 +7,7 @@ using GymOS.Platform.Infrastructure.Jobs;
 using GymOS.Platform.Infrastructure.Monitoring;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Auditing;
+using GymOS.TestingSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -78,7 +79,7 @@ public sealed class RetentionJobTests : IAsyncLifetime
             new ActivationTokenMaintainer(
                 context, Clock, NullLogger<ActivationTokenMaintainer>.Instance),
             new JobRunMaintainer(
-                context, Clock, Options.Create(new MonitoringOptions()), NullLogger<JobRunMaintainer>.Instance));
+                context, Clock, new FakeSettings<MonitoringOptions>(new MonitoringOptions()), NullLogger<JobRunMaintainer>.Instance));
 
         await job.ExecuteAsync(Clock.UtcNow, CancellationToken.None);
 

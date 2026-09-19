@@ -3,9 +3,9 @@ using GymOS.Platform.Application.Monitoring;
 using GymOS.Platform.Domain.Monitoring;
 using GymOS.Platform.Infrastructure.Monitoring;
 using GymOS.Platform.Infrastructure.Persistence;
+using GymOS.TestingSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -56,7 +56,7 @@ public sealed class JobRunMaintainerTests : IAsyncLifetime
 
         await using AppDbContext context = CreateContext();
         var maintainer = new JobRunMaintainer(
-            context, Clock, Options.Create(new MonitoringOptions { JobRunRetentionDays = 30 }),
+            context, Clock, new FakeSettings<MonitoringOptions>(new MonitoringOptions { JobRunRetentionDays = 30 }),
             NullLogger<JobRunMaintainer>.Instance);
 
         await maintainer.PurgeAsync(CancellationToken.None);
@@ -73,7 +73,7 @@ public sealed class JobRunMaintainerTests : IAsyncLifetime
 
         await using AppDbContext context = CreateContext();
         var maintainer = new JobRunMaintainer(
-            context, Clock, Options.Create(new MonitoringOptions()), NullLogger<JobRunMaintainer>.Instance);
+            context, Clock, new FakeSettings<MonitoringOptions>(new MonitoringOptions()), NullLogger<JobRunMaintainer>.Instance);
 
         await maintainer.PurgeAsync(CancellationToken.None);
         await maintainer.PurgeAsync(CancellationToken.None);

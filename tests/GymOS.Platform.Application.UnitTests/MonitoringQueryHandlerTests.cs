@@ -7,6 +7,7 @@ using GymOS.Platform.Application.Analytics.Abstractions;
 using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Application.Monitoring;
 using GymOS.Platform.Application.Monitoring.Abstractions;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Application.UnitTests.Fakes;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Monitoring;
@@ -15,7 +16,6 @@ using GymOS.TestingSupport;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace GymOS.Platform.Application.UnitTests;
@@ -85,7 +85,7 @@ public sealed class MonitoringQueryHandlerTests
             services.AddSingleton<IMonitoringQueries>(Queries);
             services.AddSingleton<IRegisteredJobs>(new FakeRegisteredJobs());
             services.AddSingleton<IClock>(Clock);
-            services.AddSingleton(Options.Create(new MonitoringOptions()));
+            services.AddSingleton<ISettings<MonitoringOptions>>(new FakeSettings<MonitoringOptions>(new MonitoringOptions()));
             services.AddSingleton<IDashboardHealthCheck>(new FakeDashboardHealthCheck());
             services.AddSingleton<IProcessMetrics>(new FakeProcessMetrics());
 

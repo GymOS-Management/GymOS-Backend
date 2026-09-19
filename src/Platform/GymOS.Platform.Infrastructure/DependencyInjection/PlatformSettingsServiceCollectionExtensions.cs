@@ -1,5 +1,9 @@
+using GymOS.Platform.Application.Identity;
+using GymOS.Platform.Application.Monitoring;
 using GymOS.Platform.Application.Settings;
 using GymOS.Platform.Application.Settings.Abstractions;
+using GymOS.Platform.Infrastructure.Email;
+using GymOS.Platform.Infrastructure.Identity;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Settings;
 using Microsoft.AspNetCore.DataProtection;
@@ -35,6 +39,26 @@ public static class PlatformSettingsServiceCollectionExtensions
         services.TryAddScoped<ISettingProtector, DataProtectionSettingProtector>();
         services.TryAddSingleton<ISettingsProvider, SettingsProvider>();
 
+        services.AddBoundSettings<EmailOptions>(EmailOptions.SectionName);
+        services.AddBoundSettings<LoginPolicyOptions>(LoginPolicyOptions.SectionName);
+        services.AddBoundSettings<JwtOptions>(JwtOptions.SectionName);
+        services.AddBoundSettings<MonitoringOptions>(MonitoringOptions.SectionName);
+        services.AddBoundSettings<MaintenanceOptions>(MaintenanceOptions.SectionName);
+        services.AddBoundSettings<RateLimitOptions>(RateLimitOptions.SectionName);
+
+        services.TryAddScoped<ISettingsValidator, OptionsSettingsValidator>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddBoundSettings<T>(this IServiceCollection services, string sectionName) where T : class, new()
+    {
+        services.TryAddSingleton(new SettingsBinding<T>(sectionName));
+
+        // Singleton, not scoped: the last-valid fallback SettingsBinder<T> keeps across an invalid
+        // overlay must survive past the request that hit it, or every fresh scope after would rebind
+        // from nothing and throw. Its dependencies are all singleton-safe (see SettingsBinder<T>'s doc).
+        services.TryAddSingleton<ISettings<T>, SettingsBinder<T>>();
         return services;
     }
 }

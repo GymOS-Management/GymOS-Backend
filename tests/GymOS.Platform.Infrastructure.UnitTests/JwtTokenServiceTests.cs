@@ -1,6 +1,6 @@
 using GymOS.Platform.Application.Identity.Abstractions;
 using GymOS.Platform.Infrastructure.Identity;
-using Microsoft.Extensions.Options;
+using GymOS.TestingSupport;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Xunit;
 
@@ -127,7 +127,7 @@ public sealed class JwtTokenServiceTests
         };
 
         configure?.Invoke(options);
-        return new JwtTokenService(Options.Create(options));
+        return new JwtTokenService(new FakeSettings<JwtOptions>(options));
     }
 
     private static JsonWebToken Decode(string token) => new JsonWebTokenHandler().ReadJsonWebToken(token);

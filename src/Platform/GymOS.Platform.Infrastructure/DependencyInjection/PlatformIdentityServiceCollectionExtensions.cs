@@ -9,6 +9,7 @@ using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.Platform.Infrastructure.Persistence.Repositories;
 using GymOS.Platform.Infrastructure.Persistence.Seeding;
+using GymOS.Platform.Infrastructure.Settings;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -79,18 +80,11 @@ public static class PlatformIdentityServiceCollectionExtensions
         services.TryAddScoped<IRefreshTokenGenerator, RefreshTokenGenerator>();
         services.TryAddScoped<IActivationTokenGenerator, ActivationTokenGenerator>();
 
-        // The transport is chosen by configuration, so every path that sends mail is exercised in
-        // development and in tests without an SMTP server existing (ADR-53).
-        bool emailEnabled = configuration.GetSection(EmailOptions.SectionName).GetValue<bool>("Enabled");
-
-        if (emailEnabled)
-        {
-            services.TryAddScoped<IEmailSender, SmtpEmailSender>();
-        }
-        else
-        {
-            services.TryAddScoped<IEmailSender, LoggingEmailSender>();
-        }
+        // The transport is chosen per call from the live Email settings (M7 spec §4), not once at
+        // start-up, so a change to Email:Enabled takes effect without a restart (ADR-53).
+        services.TryAddScoped<SmtpEmailSender>();
+        services.TryAddScoped<LoggingEmailSender>();
+        services.TryAddScoped<IEmailSender, SwitchingEmailSender>();
 
         services.TryAddScoped<IActivationLinks, ActivationLinks>();
 

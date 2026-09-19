@@ -14,6 +14,14 @@ namespace GymOS.Platform.Infrastructure.Settings;
 /// <see cref="SettingsProviderOptions.CacheTtlSeconds"/>, invalidated after every write by the write
 /// handlers; other replicas simply wait out the TTL rather than being told to reload. A definition
 /// resolves row, then configuration, then its own default — see <see cref="LoadAsync"/>.
+///
+/// <para>Stale-while-revalidate for synchronous readers (<see cref="GetOverlayNow"/>): a write's
+/// <see cref="Invalidate"/> marks the snapshot stale rather than dropping it, so a synchronous caller
+/// such as <see cref="SettingsBinder{T}"/> always has something to return immediately and only ever
+/// blocks on the very first load of a cold process. The async readers
+/// (<see cref="GetEffectiveAsync"/>, <see cref="GetOverlayAsync"/>) still await a fresh load whenever
+/// the snapshot is stale or past its TTL, which is what lets the write path's own re-read see its
+/// just-written row.</para>
 /// </summary>
 internal sealed partial class SettingsProvider : ISettingsProvider, IDisposable
 {
@@ -25,6 +33,8 @@ internal sealed partial class SettingsProvider : ISettingsProvider, IDisposable
     private readonly SemaphoreSlim _reloadLock = new(1, 1);
 
     private volatile Snapshot? _snapshot;
+    private volatile bool _stale;
+    private int _refreshInFlight;
 
     public SettingsProvider(
         IServiceScopeFactory scopeFactory,
@@ -66,11 +76,60 @@ internal sealed partial class SettingsProvider : ISettingsProvider, IDisposable
         return snapshot.Overlay;
     }
 
-    public void Invalidate() => _snapshot = null;
+    public IReadOnlyDictionary<string, string?> GetOverlayNow()
+    {
+        Snapshot? snapshot = _snapshot;
+        if (snapshot is null)
+        {
+            // Cold process: there is no stale snapshot to serve while a refresh happens in the
+            // background, so this one call pays the same blocking cost every other reader already pays
+            // on the very first request after start-up.
+            return GetSnapshotAsync(CancellationToken.None).GetAwaiter().GetResult().Overlay;
+        }
+
+        if (!IsFresh(snapshot))
+        {
+            TriggerBackgroundRefresh();
+        }
+
+        return snapshot.Overlay;
+    }
+
+    public void Invalidate() => _stale = true;
 
     /// <summary>Releases the reload semaphore. The provider is a singleton, so this runs once, at
     /// host shutdown.</summary>
     public void Dispose() => _reloadLock.Dispose();
+
+    /// <summary>Starts exactly one background reload if none is already in flight; fire-and-forget from
+    /// the synchronous <see cref="GetOverlayNow"/> path, so a burst of stale reads triggers a single
+    /// refresh rather than one per caller.</summary>
+    private void TriggerBackgroundRefresh()
+    {
+        if (Interlocked.CompareExchange(ref _refreshInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await GetSnapshotAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                // GetSnapshotAsync already falls back to the previous snapshot and logs on a reload
+                // failure; this only catches something going wrong around that, such as the semaphore
+                // having been disposed during shutdown.
+                LogReloadFailed(_logger, exception);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _refreshInFlight, 0);
+            }
+        });
+    }
 
     private async Task<Snapshot> GetSnapshotAsync(CancellationToken ct)
     {
@@ -93,6 +152,7 @@ internal sealed partial class SettingsProvider : ISettingsProvider, IDisposable
             {
                 Snapshot loaded = await LoadAsync(ct).ConfigureAwait(false);
                 _snapshot = loaded;
+                _stale = false;
                 return loaded;
             }
             catch (Exception exception)
@@ -113,7 +173,7 @@ internal sealed partial class SettingsProvider : ISettingsProvider, IDisposable
     }
 
     private bool IsFresh(Snapshot? snapshot) =>
-        snapshot is not null && snapshot.LoadedAt + _ttl >= _clock.UtcNow;
+        snapshot is not null && !_stale && snapshot.LoadedAt + _ttl >= _clock.UtcNow;
 
     private async Task<Snapshot> LoadAsync(CancellationToken ct)
     {
@@ -144,14 +204,29 @@ internal sealed partial class SettingsProvider : ISettingsProvider, IDisposable
             {
                 string? value = null;
                 bool decrypted = true;
-                try
+                if (definition.IsSensitive && row.ProtectedValue is null)
                 {
-                    value = definition.IsSensitive ? protector.Unprotect(definition.Key, row.ProtectedValue!) : row.Value;
-                }
-                catch (CryptographicException exception)
-                {
-                    LogUnprotectFailed(_logger, definition.Key, exception);
+                    // The check constraint on platform_settings (ck_platform_settings_one_value) only
+                    // forbids both value and protected_value being null, or neither — it does not tie
+                    // the populated column to the catalog's IsSensitive flag. A row for a sensitive
+                    // definition with `value` set and `protected_value` null satisfies the constraint
+                    // and reaches here, so this guard is load-bearing, not defensive: without it, the
+                    // Unprotect call below throws ArgumentNullException and takes the whole reload down.
+                    LogUnprotectFailed(_logger, definition.Key, new InvalidOperationException(
+                        $"Sensitive setting '{definition.Key}' has a null protected value."));
                     decrypted = false;
+                }
+                else
+                {
+                    try
+                    {
+                        value = definition.IsSensitive ? protector.Unprotect(definition.Key, row.ProtectedValue!) : row.Value;
+                    }
+                    catch (CryptographicException exception)
+                    {
+                        LogUnprotectFailed(_logger, definition.Key, exception);
+                        decrypted = false;
+                    }
                 }
 
                 if (decrypted)

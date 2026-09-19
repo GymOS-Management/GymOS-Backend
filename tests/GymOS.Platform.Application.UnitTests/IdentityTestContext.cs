@@ -4,13 +4,13 @@ using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.Platform.Application.DependencyInjection;
 using GymOS.Platform.Application.Identity;
 using GymOS.Platform.Application.Identity.Abstractions;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Application.UnitTests.Fakes;
 using GymOS.Platform.Domain.Identity;
 using GymOS.TestingSupport;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 
 namespace GymOS.Platform.Application.UnitTests;
 
@@ -64,7 +64,7 @@ internal sealed class IdentityTestContext
         services.AddSingleton<ICurrentUser>(CurrentUser);
         services.AddSingleton<IPermissionEvaluator>(Permissions);
         services.AddSingleton<IAuditTrail>(AuditTrail);
-        services.AddSingleton(Options.Create(policy));
+        services.AddSingleton<ISettings<LoginPolicyOptions>>(new FakeSettings<LoginPolicyOptions>(policy));
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
 
         _provider = services.BuildServiceProvider();

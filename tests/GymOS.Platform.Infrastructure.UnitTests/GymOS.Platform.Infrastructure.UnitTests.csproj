@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Platform\GymOS.Platform.Infrastructure\GymOS.Platform.Infrastructure.csproj" />
+    <ProjectReference Include="..\GymOS.TestingSupport\GymOS.TestingSupport.csproj" />
   </ItemGroup>
 </Project>

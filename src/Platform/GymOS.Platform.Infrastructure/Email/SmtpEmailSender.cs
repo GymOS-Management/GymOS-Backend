@@ -1,8 +1,8 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
+using GymOS.Platform.Application.Settings.Abstractions;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using MimeKit;
 
 namespace GymOS.Platform.Infrastructure.Email;
@@ -21,7 +21,7 @@ namespace GymOS.Platform.Infrastructure.Email;
 /// </summary>
 internal sealed partial class SmtpEmailSender : IEmailSender
 {
-    private readonly EmailOptions _options;
+    private readonly ISettings<EmailOptions> _settings;
     private readonly ILogger<SmtpEmailSender> _logger;
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Sent '{Subject}' to {Recipient}.")]
@@ -33,11 +33,11 @@ internal sealed partial class SmtpEmailSender : IEmailSender
     private static partial void LogFailed(
         ILogger logger, string subject, string recipient, Exception exception);
 
-    public SmtpEmailSender(IOptions<EmailOptions> options, ILogger<SmtpEmailSender> logger)
+    public SmtpEmailSender(ISettings<EmailOptions> settings, ILogger<SmtpEmailSender> logger)
     {
-        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(settings);
 
-        _options = options.Value;
+        _settings = settings;
         _logger = logger;
     }
 
@@ -46,6 +46,8 @@ internal sealed partial class SmtpEmailSender : IEmailSender
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(message);
+
+        EmailOptions options = _settings.Current;
 
         var mime = new MimeMessage
         {
@@ -57,7 +59,7 @@ internal sealed partial class SmtpEmailSender : IEmailSender
             }.ToMessageBody(),
         };
 
-        mime.From.Add(new MailboxAddress(_options.From.DisplayName, _options.From.Address));
+        mime.From.Add(new MailboxAddress(options.From.DisplayName, options.From.Address));
         mime.To.Add(MailboxAddress.Parse(message.To));
 
         try
@@ -65,17 +67,17 @@ internal sealed partial class SmtpEmailSender : IEmailSender
             using var client = new SmtpClient();
 
             await client.ConnectAsync(
-                _options.Smtp.Host,
-                _options.Smtp.Port,
-                _options.Smtp.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None,
+                options.Smtp.Host,
+                options.Smtp.Port,
+                options.Smtp.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None,
                 cancellationToken);
 
-            if (!string.IsNullOrWhiteSpace(_options.Smtp.Username))
+            if (!string.IsNullOrWhiteSpace(options.Smtp.Username))
             {
                 // An empty password is passed as empty rather than refused: some relays authenticate
                 // on the username alone, and Mailpit accepts anything.
                 await client.AuthenticateAsync(
-                    _options.Smtp.Username, _options.Smtp.Password ?? string.Empty, cancellationToken);
+                    options.Smtp.Username, options.Smtp.Password ?? string.Empty, cancellationToken);
             }
 
             await client.SendAsync(mime, cancellationToken);

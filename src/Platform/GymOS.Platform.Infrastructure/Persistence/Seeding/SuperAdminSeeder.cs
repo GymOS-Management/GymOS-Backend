@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Application.Identity;
 using GymOS.Platform.Application.Identity.Abstractions;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
 using Microsoft.EntityFrameworkCore;
@@ -24,7 +25,7 @@ public sealed partial class SuperAdminSeeder
     private readonly IPasswordHasher _passwordHasher;
     private readonly IClock _clock;
     private readonly IOptions<SuperAdminSeedOptions> _seedOptions;
-    private readonly IOptions<LoginPolicyOptions> _loginPolicy;
+    private readonly ISettings<LoginPolicyOptions> _loginPolicy;
     private readonly ILogger<SuperAdminSeeder> _logger;
 
     [LoggerMessage(Level = LogLevel.Warning, Message =
@@ -62,7 +63,7 @@ public sealed partial class SuperAdminSeeder
         IPasswordHasher passwordHasher,
         IClock clock,
         IOptions<SuperAdminSeedOptions> seedOptions,
-        IOptions<LoginPolicyOptions> loginPolicy,
+        ISettings<LoginPolicyOptions> loginPolicy,
         ILogger<SuperAdminSeeder> logger)
     {
         _dbContext = dbContext;
@@ -105,7 +106,7 @@ public sealed partial class SuperAdminSeeder
 
         // The seeded password meets the same bar as one a user would choose: a weak
         // initial credential is not less dangerous for having come from configuration.
-        Result policyCheck = PasswordPolicy.Validate(options.Password, _loginPolicy.Value.MinimumPasswordLength);
+        Result policyCheck = PasswordPolicy.Validate(options.Password, _loginPolicy.Current.MinimumPasswordLength);
         if (policyCheck.IsFailure)
         {
             LogPasswordRejected(_logger, policyCheck.Error!.Message);

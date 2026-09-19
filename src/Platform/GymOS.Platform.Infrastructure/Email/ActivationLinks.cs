@@ -1,7 +1,7 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Application.Identity.Abstractions;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Domain.Identity;
-using Microsoft.Extensions.Options;
 
 namespace GymOS.Platform.Infrastructure.Email;
 
@@ -27,23 +27,27 @@ internal sealed class ActivationLinks : IActivationLinks
     /// </summary>
     private const string SetPasswordPath = "set-password";
 
-    private readonly EmailOptions _options;
+    private readonly ISettings<EmailOptions> _settings;
     private readonly IEmailSender _sender;
 
-    public ActivationLinks(IOptions<EmailOptions> options, IEmailSender sender)
+    public ActivationLinks(ISettings<EmailOptions> settings, IEmailSender sender)
     {
-        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(settings);
 
-        _options = options.Value;
+        _settings = settings;
         _sender = sender;
     }
 
-    public TimeSpan LifetimeFor(ActivationPurpose purpose) => purpose switch
+    public TimeSpan LifetimeFor(ActivationPurpose purpose)
     {
-        ActivationPurpose.Invitation => TimeSpan.FromHours(_options.InvitationLifetimeHours),
-        ActivationPurpose.PasswordReset => TimeSpan.FromHours(_options.PasswordResetLifetimeHours),
-        _ => throw new ArgumentOutOfRangeException(nameof(purpose), purpose, "Unknown activation purpose."),
-    };
+        EmailOptions options = _settings.Current;
+        return purpose switch
+        {
+            ActivationPurpose.Invitation => TimeSpan.FromHours(options.InvitationLifetimeHours),
+            ActivationPurpose.PasswordReset => TimeSpan.FromHours(options.PasswordResetLifetimeHours),
+            _ => throw new ArgumentOutOfRangeException(nameof(purpose), purpose, "Unknown activation purpose."),
+        };
+    }
 
     public Task<EmailSendResult> SendAsync(
         ActivationPurpose purpose,
@@ -71,13 +75,15 @@ internal sealed class ActivationLinks : IActivationLinks
 
     private string BuildUrl(string rawToken)
     {
+        EmailOptions options = _settings.Current;
+
         // The base is forced to end in a slash before the route is resolved against it. Without
         // that, .NET treats the last segment as a file name and replaces it, so
         // `https://host/console` + `set-password` gives `https://host/set-password` — the same
         // sub-path loss the leading slash used to cause, arriving by a different route.
-        string root = _options.ConsoleBaseUrl.EndsWith('/')
-            ? _options.ConsoleBaseUrl
-            : _options.ConsoleBaseUrl + "/";
+        string root = options.ConsoleBaseUrl.EndsWith('/')
+            ? options.ConsoleBaseUrl
+            : options.ConsoleBaseUrl + "/";
 
         // The token is base64url — URL-safe by construction — but it is escaped anyway rather than
         // interpolated: the encoding is a property of the generator, and a link that breaks the day

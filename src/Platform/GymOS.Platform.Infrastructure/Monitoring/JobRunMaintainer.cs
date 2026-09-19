@@ -1,10 +1,10 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Application.Monitoring;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace GymOS.Platform.Infrastructure.Monitoring;
 
@@ -20,7 +20,7 @@ public sealed partial class JobRunMaintainer
 
     private readonly AppDbContext _dbContext;
     private readonly IClock _clock;
-    private readonly IOptions<MonitoringOptions> _options;
+    private readonly ISettings<MonitoringOptions> _settings;
     private readonly ILogger<JobRunMaintainer> _logger;
 
     [LoggerMessage(Level = LogLevel.Information,
@@ -32,17 +32,17 @@ public sealed partial class JobRunMaintainer
     private static partial void LogPurgeFailed(ILogger logger, Exception exception);
 
     public JobRunMaintainer(
-        AppDbContext dbContext, IClock clock, IOptions<MonitoringOptions> options, ILogger<JobRunMaintainer> logger)
+        AppDbContext dbContext, IClock clock, ISettings<MonitoringOptions> settings, ILogger<JobRunMaintainer> logger)
     {
         _dbContext = dbContext;
         _clock = clock;
-        _options = options;
+        _settings = settings;
         _logger = logger;
     }
 
     public async Task PurgeAsync(CancellationToken cancellationToken)
     {
-        int retentionDays = _options.Value.JobRunRetentionDays;
+        int retentionDays = _settings.Current.JobRunRetentionDays;
         DateTimeOffset cutoff = _clock.UtcNow.AddDays(-retentionDays);
         int removedTotal = 0;
 

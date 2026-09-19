@@ -1,5 +1,7 @@
+using GymOS.Platform.Application.Identity;
 using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Domain.Settings;
+using GymOS.Platform.Infrastructure.Email;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -87,6 +89,69 @@ public sealed class SettingsProviderTests : IAsyncLifetime
         provider.Invalidate();
         IReadOnlyList<EffectiveSetting> all = await provider.GetEffectiveAsync(CancellationToken.None);
         Assert.Equal("s3cret", Find(all, "email.smtp_password").Value);
+    }
+
+    [Fact]
+    public async Task ABoundOptionsClassSeesARowWithoutARestart()
+    {
+        using (IServiceScope first = _host.Services.CreateScope())
+        {
+            Assert.Equal(5, first.ServiceProvider.GetRequiredService<ISettings<LoginPolicyOptions>>().Current.MaxFailedAttempts);
+        }
+
+        await SeedRowAsync("security.max_failed_attempts", plain: "3");
+        var provider = _host.Services.GetRequiredService<ISettingsProvider>();
+        provider.Invalidate();
+
+        // Force the reload deterministically rather than racing the background refresh that
+        // GetOverlayNow() (which ISettings<T>.Current reads through) only ever kicks off — the async
+        // path is what the write handlers themselves re-read through after invalidating.
+        await provider.GetOverlayAsync(CancellationToken.None);
+
+        using IServiceScope next = _host.Services.CreateScope();
+        Assert.Equal(3, next.ServiceProvider.GetRequiredService<ISettings<LoginPolicyOptions>>().Current.MaxFailedAttempts);
+    }
+
+    [Fact]
+    public async Task AnInvalidRowKeepsTheLastValidValuesInForce()
+    {
+        using (IServiceScope scope = _host.Services.CreateScope())
+        {
+            Assert.False(scope.ServiceProvider.GetRequiredService<ISettings<EmailOptions>>().Current.Enabled); // the valid bind to fall back to
+        }
+
+        // Enabling email with a console URL that is not absolute fails EmailOptions' own validator.
+        await SeedRowAsync("email.enabled", plain: "true");
+        await SeedRowAsync("general.console_base_url", plain: "not a url");
+        var provider = _host.Services.GetRequiredService<ISettingsProvider>();
+        provider.Invalidate();
+        await provider.GetOverlayAsync(CancellationToken.None); // force the reload deterministically
+
+        // A fresh scope, resolving the ISettings<EmailOptions> singleton anew: the last-valid fallback
+        // is process-wide, not memoized per request, so it survives past the scope that first hit the
+        // broken row.
+        using IServiceScope next = _host.Services.CreateScope();
+        Assert.False(next.ServiceProvider.GetRequiredService<ISettings<EmailOptions>>().Current.Enabled); // last valid, not the broken row
+    }
+
+    [Fact]
+    public async Task GetOverlayNowServesTheStaleSnapshotUntilAnAwaitedReadRefreshesIt()
+    {
+        var provider = _host.Services.GetRequiredService<ISettingsProvider>();
+
+        // Warm the snapshot so GetOverlayNow() has something cached to serve.
+        IReadOnlyDictionary<string, string?> warm = await provider.GetOverlayAsync(CancellationToken.None);
+        Assert.False(warm.ContainsKey("Email:Smtp:Host"));
+
+        await SeedRowAsync("email.smtp_host", plain: "row.example.test");
+        provider.Invalidate();
+
+        // Immediately after Invalidate(), the synchronous reader still gets the previous snapshot: a
+        // background refresh was kicked off, but this call never blocks on it.
+        Assert.False(provider.GetOverlayNow().ContainsKey("Email:Smtp:Host"));
+
+        IReadOnlyDictionary<string, string?> refreshed = await provider.GetOverlayAsync(CancellationToken.None);
+        Assert.Equal("row.example.test", refreshed["Email:Smtp:Host"]);
     }
 
     private async Task SeedRowAsync(string key, string? plain = null, string? protectedValue = null)

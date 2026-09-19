@@ -1,10 +1,10 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.Platform.Application.Identity.Abstractions;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace GymOS.Platform.Application.Identity.SignIn;
 
@@ -27,7 +27,7 @@ internal sealed partial class SignInCommandHandler
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditTrail _auditTrail;
     private readonly IClock _clock;
-    private readonly IOptions<LoginPolicyOptions> _policy;
+    private readonly ISettings<LoginPolicyOptions> _policy;
     private readonly ILogger<SignInCommandHandler> _logger;
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Sign-in succeeded for user {UserId}.")]
@@ -45,7 +45,7 @@ internal sealed partial class SignInCommandHandler
         IUnitOfWork unitOfWork,
         IAuditTrail auditTrail,
         IClock clock,
-        IOptions<LoginPolicyOptions> policy,
+        ISettings<LoginPolicyOptions> policy,
         ILogger<SignInCommandHandler> logger)
     {
         _users = users;
@@ -97,7 +97,7 @@ internal sealed partial class SignInCommandHandler
             // Tallied at the store, not on the aggregate: parallel guesses must each count and each
             // be answered "invalid credentials", never with a version conflict (audit finding 7).
             await _users.RecordFailedLoginAsync(
-                user, now, _policy.Value.MaxFailedAttempts, _policy.Value.LockoutDuration, cancellationToken);
+                user, now, _policy.Current.MaxFailedAttempts, _policy.Current.LockoutDuration, cancellationToken);
             return await FailAsync(
                 "wrong_password", normalizedEmail, command, user.Id,
                 AuthenticationErrors.InvalidCredentials, cancellationToken);

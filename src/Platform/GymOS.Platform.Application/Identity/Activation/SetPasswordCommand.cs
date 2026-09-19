@@ -3,9 +3,9 @@ using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
 using GymOS.Platform.Application.Identity.Abstractions;
 using GymOS.Platform.Application.Identity.SignIn;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.SharedKernel.Results;
-using Microsoft.Extensions.Options;
 
 namespace GymOS.Platform.Application.Identity.Activation;
 
@@ -44,7 +44,7 @@ internal sealed class SetPasswordCommandHandler : ICommandHandler<SetPasswordCom
     private readonly IAuditTrail _auditTrail;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
-    private readonly IOptions<LoginPolicyOptions> _policy;
+    private readonly ISettings<LoginPolicyOptions> _policy;
 
     public SetPasswordCommandHandler(
         IUserActivationTokenRepository tokens,
@@ -55,7 +55,7 @@ internal sealed class SetPasswordCommandHandler : ICommandHandler<SetPasswordCom
         IAuditTrail auditTrail,
         IUnitOfWork unitOfWork,
         IClock clock,
-        IOptions<LoginPolicyOptions> policy)
+        ISettings<LoginPolicyOptions> policy)
     {
         _tokens = tokens;
         _generator = generator;
@@ -101,7 +101,7 @@ internal sealed class SetPasswordCommandHandler : ICommandHandler<SetPasswordCom
         }
 
         Result policyCheck = PasswordPolicy.Validate(
-            command.NewPassword, _policy.Value.MinimumPasswordLength);
+            command.NewPassword, _policy.Current.MinimumPasswordLength);
 
         if (policyCheck.IsFailure)
         {

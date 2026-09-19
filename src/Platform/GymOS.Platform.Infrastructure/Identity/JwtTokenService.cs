@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using GymOS.Platform.Application.Identity.Abstractions;
-using Microsoft.Extensions.Options;
+using GymOS.Platform.Application.Settings.Abstractions;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -15,15 +15,15 @@ namespace GymOS.Platform.Infrastructure.Identity;
 /// </summary>
 internal sealed class JwtTokenService : IAccessTokenIssuer
 {
-    private readonly IOptions<JwtOptions> _options;
+    private readonly ISettings<JwtOptions> _settings;
 
-    public JwtTokenService(IOptions<JwtOptions> options) => _options = options;
+    public JwtTokenService(ISettings<JwtOptions> settings) => _settings = settings;
 
     public IssuedAccessToken Issue(AccessTokenRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        JwtOptions options = _options.Value;
+        JwtOptions options = _settings.Current;
 
         // Second precision, floored: JWT time claims are integer seconds (RFC 7519),
         // so rounding up would hand out a token that is valid one tick before its own

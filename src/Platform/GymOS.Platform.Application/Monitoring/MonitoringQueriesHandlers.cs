@@ -4,10 +4,10 @@ using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
 using GymOS.Platform.Application.Analytics.Abstractions;
 using GymOS.Platform.Application.Monitoring.Abstractions;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Monitoring;
 using GymOS.SharedKernel.Results;
-using Microsoft.Extensions.Options;
 
 namespace GymOS.Platform.Application.Monitoring;
 
@@ -31,7 +31,7 @@ internal sealed class GetMonitoringOverviewQueryHandler : IQueryHandler<GetMonit
     private readonly IRegisteredJobs _registeredJobs;
     private readonly IProcessMetrics _processMetrics;
     private readonly IClock _clock;
-    private readonly IOptions<MonitoringOptions> _options;
+    private readonly ISettings<MonitoringOptions> _settings;
 
     public GetMonitoringOverviewQueryHandler(
         IDashboardHealthCheck healthCheck,
@@ -39,14 +39,14 @@ internal sealed class GetMonitoringOverviewQueryHandler : IQueryHandler<GetMonit
         IRegisteredJobs registeredJobs,
         IProcessMetrics processMetrics,
         IClock clock,
-        IOptions<MonitoringOptions> options)
+        ISettings<MonitoringOptions> settings)
     {
         _healthCheck = healthCheck;
         _queries = queries;
         _registeredJobs = registeredJobs;
         _processMetrics = processMetrics;
         _clock = clock;
-        _options = options;
+        _settings = settings;
     }
 
     public async Task<Result<MonitoringOverview>> HandleAsync(GetMonitoringOverviewQuery query, CancellationToken cancellationToken)
@@ -60,7 +60,7 @@ internal sealed class GetMonitoringOverviewQueryHandler : IQueryHandler<GetMonit
 
         return Result.Success(new MonitoringOverview(
             health,
-            JobStateAssembler.Assemble(_registeredJobs.All, heads, now, _options.Value.StaleGrace),
+            JobStateAssembler.Assemble(_registeredJobs.All, heads, now, _settings.Current.StaleGrace),
             outbox,
             _processMetrics.Current));
     }
@@ -71,15 +71,15 @@ internal sealed class GetJobStatesQueryHandler : IQueryHandler<GetJobStatesQuery
     private readonly IMonitoringQueries _queries;
     private readonly IRegisteredJobs _registeredJobs;
     private readonly IClock _clock;
-    private readonly IOptions<MonitoringOptions> _options;
+    private readonly ISettings<MonitoringOptions> _settings;
 
     public GetJobStatesQueryHandler(
-        IMonitoringQueries queries, IRegisteredJobs registeredJobs, IClock clock, IOptions<MonitoringOptions> options)
+        IMonitoringQueries queries, IRegisteredJobs registeredJobs, IClock clock, ISettings<MonitoringOptions> settings)
     {
         _queries = queries;
         _registeredJobs = registeredJobs;
         _clock = clock;
-        _options = options;
+        _settings = settings;
     }
 
     public async Task<Result<IReadOnlyList<JobStateDto>>> HandleAsync(GetJobStatesQuery query, CancellationToken cancellationToken)
@@ -89,7 +89,7 @@ internal sealed class GetJobStatesQueryHandler : IQueryHandler<GetJobStatesQuery
         DateTimeOffset now = _clock.UtcNow;
         IReadOnlyDictionary<string, JobHistoryHead> heads = await _queries.GetJobHistoryHeadsAsync(cancellationToken);
 
-        return Result.Success(JobStateAssembler.Assemble(_registeredJobs.All, heads, now, _options.Value.StaleGrace));
+        return Result.Success(JobStateAssembler.Assemble(_registeredJobs.All, heads, now, _settings.Current.StaleGrace));
     }
 }
 

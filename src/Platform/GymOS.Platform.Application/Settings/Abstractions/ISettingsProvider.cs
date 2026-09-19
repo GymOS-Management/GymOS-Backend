@@ -12,6 +12,12 @@ public interface ISettingsProvider
     /// for layering onto <see cref="Microsoft.Extensions.Configuration.IConfiguration"/>.</summary>
     Task<IReadOnlyDictionary<string, string?>> GetOverlayAsync(CancellationToken ct);
 
-    /// <summary>Drops the cached snapshot so the next read reloads from the database.</summary>
+    /// <summary>The last loaded overlay, possibly one refresh stale; triggers a background refresh when
+    /// stale or missing; blocks only when no snapshot has ever been loaded.</summary>
+    IReadOnlyDictionary<string, string?> GetOverlayNow();
+
+    /// <summary>Marks the cached snapshot stale so the next read reloads from the database — the
+    /// snapshot itself is kept so a synchronous reader (<see cref="GetOverlayNow"/>) still has
+    /// something to serve while that reload happens.</summary>
     void Invalidate();
 }

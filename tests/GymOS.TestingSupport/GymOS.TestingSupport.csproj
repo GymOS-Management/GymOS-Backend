@@ -1,10 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    RESPONSIBILITY: Test building blocks shared by every test project — FakeClock now;
-    fixtures and builders as they earn their place. Not a test project itself.
-    DEPENDENCIES: BuildingBlocks.Application (the abstractions it fakes).
+    RESPONSIBILITY: Test building blocks shared by every test project — FakeClock,
+    FakeSettings<T>; fixtures and builders as they earn their place. Not a test project itself.
+    DEPENDENCIES: BuildingBlocks.Application (the abstractions it fakes),
+    Platform.Application (ISettings<T> for FakeSettings<T>).
   -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\BuildingBlocks\GymOS.BuildingBlocks.Application\GymOS.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\src\Platform\GymOS.Platform.Application\GymOS.Platform.Application.csproj" />
   </ItemGroup>
 </Project>

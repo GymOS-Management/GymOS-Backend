@@ -1,6 +1,6 @@
 using GymOS.Platform.Application.Identity.Abstractions;
+using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Domain.Identity;
-using Microsoft.Extensions.Options;
 
 namespace GymOS.Platform.Application.Identity;
 
@@ -19,14 +19,14 @@ internal sealed class SessionFactory
     private readonly IAccessTokenIssuer _accessTokenIssuer;
     private readonly IRefreshTokenGenerator _refreshTokenGenerator;
     private readonly IRefreshTokenRepository _refreshTokens;
-    private readonly IOptions<LoginPolicyOptions> _policy;
+    private readonly ISettings<LoginPolicyOptions> _policy;
 
     public SessionFactory(
         IIdentityQueries identityQueries,
         IAccessTokenIssuer accessTokenIssuer,
         IRefreshTokenGenerator refreshTokenGenerator,
         IRefreshTokenRepository refreshTokens,
-        IOptions<LoginPolicyOptions> policy)
+        ISettings<LoginPolicyOptions> policy)
     {
         _identityQueries = identityQueries;
         _accessTokenIssuer = accessTokenIssuer;
@@ -62,7 +62,7 @@ internal sealed class SessionFactory
 
         string rawRefreshToken = _refreshTokenGenerator.GenerateRawToken();
         string refreshTokenHash = _refreshTokenGenerator.ComputeHash(rawRefreshToken);
-        DateTimeOffset refreshExpiresAtUtc = now.Add(_policy.Value.RefreshTokenLifetime);
+        DateTimeOffset refreshExpiresAtUtc = now.Add(_policy.Current.RefreshTokenLifetime);
 
         replacing?.Revoke(now, ipAddress, RevocationReasons.Rotated, refreshTokenHash);
         _refreshTokens.Add(RefreshToken.Issue(user.Id, refreshTokenHash, refreshExpiresAtUtc, ipAddress));
