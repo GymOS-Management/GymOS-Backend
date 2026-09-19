@@ -121,7 +121,7 @@ try
     builder.Services.AddJobHost();
 
     builder.Services.AddGymOSAuthentication();
-    builder.Services.AddGymOSRateLimiting(builder.Configuration);
+    builder.Services.AddGymOSRateLimiting();
     builder.Services.AddGymOSForwardedHeaders(builder.Configuration);
 
     // Second enforcement layer (AD-5): no handler runs without the permission its request
@@ -303,8 +303,8 @@ try
         }
     }
 
-    // First in the pipeline: the rate limiter partitions on the client IP and every audit row
-    // records it, so the address has to be corrected before anything reads it.
+    // First in the pipeline: several downstream steps (the rate limiter's IP partition, every
+    // audit row) read the client address, so it has to be corrected before anything reads it.
     app.UseGymOSForwardedHeaders(app.Configuration);
 
     app.UseExceptionHandler();
@@ -325,12 +325,17 @@ try
                     ? Serilog.Events.LogEventLevel.Error
                     : Serilog.Events.LogEventLevel.Information);
 
-    app.UseRateLimiter();
     app.UseAuthentication();
+
+    // After authentication (Task 10): the global limiter's partition selector reads
+    // HttpContext.User to key an authenticated caller by user id rather than address, and before
+    // authentication that principal is always empty. The sign-in policy is unaffected — it keys
+    // on the client IP regardless.
+    app.UseRateLimiter();
 
     // M7 spec §6: after authentication, so IPermissionEvaluator can resolve who the caller is;
     // before authorization, so a refused caller is turned away with 503 before any route policy or
-    // handler runs. Task 10 will move UseRateLimiter after authentication — untouched here.
+    // handler runs.
     app.UseMiddleware<MaintenanceModeMiddleware>();
 
     app.UseAuthorization();
