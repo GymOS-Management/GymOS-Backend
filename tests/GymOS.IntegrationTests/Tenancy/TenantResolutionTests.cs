@@ -141,6 +141,37 @@ public sealed class TenantResolutionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AGymScopedGrantHoldsNothingOnAPlatformRoute()
+    {
+        // Grants spec F1 — the escalation itself. SupportAgent holds audit.read. A SupportAgent grant
+        // scoped to one gym must not make the platform-wide audit log readable; before H1 the
+        // permission join filtered on UserId alone and it did.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "scoped-grant-gym");
+        using HttpClient scoped = await SignedInWithGrantForAsync(gym);
+
+        using HttpResponseMessage response = await scoped.GetAsync(
+            new Uri("/api/v1/audit-logs", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AGymScopedGrantHoldsItsPermissionsOnThatGymsRoutes()
+    {
+        // The negative control for the test above (grants spec §4, test 2): an evaluator that returned
+        // nothing at all for a gym-scoped caller would pass it and be useless. SupportAgent holds
+        // gyms.read; on the gym the grant names, that is a 200 — and the tenant was set for it.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "scoped-grant-home-gym");
+        using HttpClient scoped = await SignedInWithGrantForAsync(gym);
+
+        using HttpResponseMessage response = await scoped.GetAsync(
+            new Uri($"/api/v1/gyms/{gym}", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(gym.ToString(), ResolvedTenant(response));
+    }
+
+    [Fact]
     public async Task AMalformedGymIdIsNotFound_AndSetsNoTenant()
     {
         // Not evidence that the middleware handles malformed input: every gym route declares

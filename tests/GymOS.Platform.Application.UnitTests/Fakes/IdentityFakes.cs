@@ -115,24 +115,39 @@ internal sealed class FakeIdentityQueries : IIdentityQueries
 {
     public Dictionary<Guid, UserProfile> Profiles { get; } = [];
 
+    /// <summary>Platform grants per user.</summary>
     public Dictionary<Guid, IReadOnlyCollection<string>> Permissions { get; } = [];
 
-    public Dictionary<Guid, UserSecuritySnapshot> Snapshots { get; } = [];
+    /// <summary>Grants naming one tenant, per (user, tenant).</summary>
+    public Dictionary<(Guid UserId, Guid TenantId), IReadOnlyCollection<string>> TenantPermissions { get; } = [];
+
+    public Dictionary<Guid, UserSecurityIdentity> Identities { get; } = [];
 
     public Task<UserProfile?> GetProfileAsync(Guid userId, CancellationToken cancellationToken) =>
         Task.FromResult(Profiles.TryGetValue(userId, out UserProfile? profile) ? profile : null);
 
-    public Task<UserSecuritySnapshot?> GetSecuritySnapshotAsync(
-        Guid userId,
-        CancellationToken cancellationToken) =>
-        Task.FromResult(Snapshots.TryGetValue(userId, out UserSecuritySnapshot? snapshot) ? snapshot : null);
+    public Task<UserSecurityIdentity?> GetSecurityIdentityAsync(Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult(Identities.TryGetValue(userId, out UserSecurityIdentity? identity) ? identity : null);
 
     public Task<IReadOnlyCollection<string>> GetEffectivePermissionsAsync(
         Guid userId,
         CancellationToken cancellationToken) =>
-        Task.FromResult(Permissions.TryGetValue(userId, out IReadOnlyCollection<string>? permissions)
-            ? permissions
-            : []);
+        GetEffectivePermissionsAsync(userId, tenantId: null, cancellationToken);
+
+    public Task<IReadOnlyCollection<string>> GetEffectivePermissionsAsync(
+        Guid userId,
+        Guid? tenantId,
+        CancellationToken cancellationToken)
+    {
+        IEnumerable<string> platform = Permissions.TryGetValue(userId, out IReadOnlyCollection<string>? held) ? held : [];
+        IEnumerable<string> tenant = tenantId is { } acting
+            && TenantPermissions.TryGetValue((userId, acting), out IReadOnlyCollection<string>? scoped)
+                ? scoped
+                : [];
+
+        return Task.FromResult<IReadOnlyCollection<string>>(
+            platform.Union(tenant, StringComparer.Ordinal).OrderBy(key => key, StringComparer.Ordinal).ToList());
+    }
 }
 
 /// <summary>

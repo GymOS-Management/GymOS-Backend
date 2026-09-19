@@ -53,7 +53,7 @@ public sealed class SignInCommandHandlerTests
         AccessTokenRequest request = Assert.Single(context.AccessTokens.Requests);
         Assert.Equal(user.Id, request.UserId);
         Assert.Equal(user.SecurityStamp, request.SecurityStamp);
-        Assert.Equal(["users.read", "users.manage"], request.Permissions);
+        Assert.Equal(["users.manage", "users.read"], request.Permissions);
         Assert.Equal(IdentityTestContext.Start, request.IssuedAtUtc);
     }
 

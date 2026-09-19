@@ -91,10 +91,10 @@ public static class AuthenticationExtensions
 
         ICallerSnapshot snapshot = context.HttpContext.RequestServices.GetRequiredService<ICallerSnapshot>();
 
-        UserSecuritySnapshot? current;
+        UserSecurityIdentity? current;
         try
         {
-            current = await snapshot.GetAsync(userId, context.HttpContext.RequestAborted);
+            current = await snapshot.GetIdentityAsync(userId, context.HttpContext.RequestAborted);
         }
         catch (OperationCanceledException) when (context.HttpContext.RequestAborted.IsCancellationRequested)
         {

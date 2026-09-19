@@ -166,7 +166,7 @@ public sealed class SessionLifecycleTests
         Assert.Equal(user.Email, result.Value.Profile.Email);
         Assert.Equal(nameof(UserStatus.Active), result.Value.Profile.Status);
         Assert.Equal(["SuperAdmin"], result.Value.Profile.Roles);
-        Assert.Equal(["users.read", "audit.read"], result.Value.Permissions);
+        Assert.Equal(["audit.read", "users.read"], result.Value.Permissions);
     }
 
     [Fact]

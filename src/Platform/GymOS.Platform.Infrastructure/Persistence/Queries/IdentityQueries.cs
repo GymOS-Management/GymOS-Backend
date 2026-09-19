@@ -51,9 +51,7 @@ internal sealed class IdentityQueries : IIdentityQueries
                 projection.Roles);
     }
 
-    public async Task<UserSecuritySnapshot?> GetSecuritySnapshotAsync(
-        Guid userId,
-        CancellationToken cancellationToken)
+    public async Task<UserSecurityIdentity?> GetSecurityIdentityAsync(Guid userId, CancellationToken cancellationToken)
     {
         var user = await _dbContext.Set<User>()
             .AsNoTracking()
@@ -61,26 +59,29 @@ internal sealed class IdentityQueries : IIdentityQueries
             .Select(candidate => new { candidate.SecurityStamp, candidate.Status })
             .SingleOrDefaultAsync(cancellationToken);
 
-        if (user is null)
-        {
-            return null;
-        }
-
-        IReadOnlyCollection<string> permissions =
-            await GetEffectivePermissionsAsync(userId, cancellationToken);
-
-        return new UserSecuritySnapshot(userId, user.SecurityStamp, user.Status.ToString(), permissions);
+        return user is null
+            ? null
+            : new UserSecurityIdentity(userId, user.SecurityStamp, user.Status.ToString());
     }
+
+    public Task<IReadOnlyCollection<string>> GetEffectivePermissionsAsync(
+        Guid userId,
+        CancellationToken cancellationToken) =>
+        GetEffectivePermissionsAsync(userId, tenantId: null, cancellationToken);
 
     public async Task<IReadOnlyCollection<string>> GetEffectivePermissionsAsync(
         Guid userId,
+        Guid? tenantId,
         CancellationToken cancellationToken)
     {
-        // user_roles → roles → role_permissions → permissions, distinct: a user holding
-        // two roles that both grant `users.read` has it once (AD-22: roles are bundles).
+        // Grants spec D3: platform grants (TenantId null) ∪ grants naming the acting tenant. With no
+        // acting tenant the second disjunct collapses to `TenantId == null` — exactly the platform set,
+        // by construction rather than by a special case. Before H1 this filtered on UserId alone, which
+        // would have handed a gym-scoped role's permissions to every route the day such a grant existed.
         return await _dbContext.Set<UserRole>()
             .AsNoTracking()
-            .Where(assignment => assignment.UserId == userId)
+            .Where(assignment => assignment.UserId == userId
+                && (assignment.TenantId == null || assignment.TenantId == tenantId))
             .Join(
                 _dbContext.Set<RolePermission>(),
                 assignment => assignment.RoleId,

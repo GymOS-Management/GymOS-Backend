@@ -150,7 +150,7 @@ public sealed class RefreshSessionCommandHandlerTests
         Result<AuthenticatedSession> second = await RefreshAsync(context, "raw-refresh-1");
 
         Assert.True(second.IsSuccess);
-        Assert.Equal(["users.read", "users.manage"], context.AccessTokens.Requests[^1].Permissions);
+        Assert.Equal(["users.manage", "users.read"], context.AccessTokens.Requests[^1].Permissions);
     }
 
     private static Task<Result<AuthenticatedSession>> RefreshAsync(
