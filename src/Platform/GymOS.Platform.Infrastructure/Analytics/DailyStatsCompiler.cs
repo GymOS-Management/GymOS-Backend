@@ -63,15 +63,11 @@ internal sealed class DailyStatsCompiler
         DateTimeOffset dayStart = new(statDate, TimeOnly.MinValue, TimeSpan.Zero);
         DateTimeOffset dayEnd = dayStart.AddDays(1);
 
-        IQueryable<Gym> livingGyms = _dbContext.Set<Gym>()
-            .AsNoTracking()
-            .Where(gym => gym.Status != GymStatus.Deleted);
-
         // Two families of count, and they deliberately read differently:
         //
         // Population counts (Total/Active/Suspended/Provisioning) describe who is a tenant RIGHT
-        // NOW, so they run over livingGyms and exclude anything deleted — a deleted gym is not a
-        // tenant any more.
+        // NOW, so they run over PlatformPopulationQueries.LivingGyms and exclude anything deleted — a
+        // deleted gym is not a tenant any more.
         //
         // Event counts (New/Canceled/Expired) record what HAPPENED on this day, regardless of the
         // gym's status now. A gym created and deleted on the same day must still show up as one
@@ -88,10 +84,8 @@ internal sealed class DailyStatsCompiler
         // single snapshot, which makes the identity true by construction rather than by luck; the
         // guard in `DailyPlatformStats.Record` is the belt to this braces. It also turns four round
         // trips into one.
-        Dictionary<GymStatus, int> population = await livingGyms
-            .GroupBy(gym => gym.Status)
-            .Select(group => new { Status = group.Key, Count = group.Count() })
-            .ToDictionaryAsync(row => row.Status, row => row.Count, cancellationToken);
+        IReadOnlyDictionary<GymStatus, int> population =
+            await PlatformPopulationQueries.CountLivingGymsByStatusAsync(_dbContext, cancellationToken);
 
         int Living(GymStatus status) => population.TryGetValue(status, out int count) ? count : 0;
 
@@ -136,14 +130,8 @@ internal sealed class DailyStatsCompiler
                 .Distinct()
                 .CountAsync(cancellationToken));
 
-        var contributions = await _dbContext.Set<GymSubscription>()
-            .AsNoTracking()
-            .Where(subscription => SubscriptionStatusTransitions.Billing.Contains(subscription.Status))
-            .Select(subscription => new { subscription.Status, subscription.BillingCycle, subscription.Price })
-            .ToListAsync(cancellationToken);
-
         IReadOnlyList<Money> mrr = MonthlyRecurringRevenue.Calculate(
-            contributions.Select(row => new MrrContribution(row.Status, row.BillingCycle, row.Price)));
+            await PlatformPopulationQueries.BillingContributionsAsync(_dbContext, cancellationToken));
 
         _stats.Add(DailyPlatformStats.Record(statDate, counts, mrr, now));
         await _unitOfWork.SaveChangesAsync(cancellationToken);

@@ -20,14 +20,15 @@ public sealed class DailyPlatformStatsConfiguration : IEntityTypeConfiguration<D
             .IsUnique()
             .HasDatabaseName("ux_daily_platform_stats_date");
 
-        builder.Metadata
-            .FindNavigation(nameof(DailyPlatformStats.Mrr))!
-            .SetPropertyAccessMode(PropertyAccessMode.Field);
-
         builder.HasMany(stats => stats.Mrr)
             .WithOne()
             .HasForeignKey(mrr => mrr.StatsId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Field access through the navigation builder, after HasMany, so it does not depend on
+        // convention discovery having already found the navigation — the `FindNavigation(...)!` this
+        // replaces threw NullReferenceException if HasMany had not run first.
+        builder.Navigation(stats => stats.Mrr).UsePropertyAccessMode(PropertyAccessMode.Field);
 
         // No row version: one writer, serialised by IJobLock, and rows are never updated. See the aggregate.
     }

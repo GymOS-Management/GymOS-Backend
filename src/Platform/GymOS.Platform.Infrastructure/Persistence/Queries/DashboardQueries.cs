@@ -3,6 +3,7 @@ using GymOS.Platform.Application.Analytics.Abstractions;
 using GymOS.Platform.Domain.Analytics;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Subscriptions;
+using GymOS.Platform.Infrastructure.Analytics;
 using GymOS.SharedKernel.Currencies;
 using Microsoft.EntityFrameworkCore;
 
@@ -21,38 +22,30 @@ internal sealed class DashboardQueries : IDashboardQueries
 
     public async Task<DashboardSummary> GetSummaryAsync(CancellationToken cancellationToken)
     {
-        IQueryable<Gym> livingGyms = _dbContext.Set<Gym>()
-            .AsNoTracking()
-            .Where(gym => gym.Status != GymStatus.Deleted);
-
-        int totalGyms = await livingGyms.CountAsync(cancellationToken);
-        int activeGyms = await livingGyms.CountAsync(gym => gym.Status == GymStatus.Active, cancellationToken);
-        int suspendedGyms = await livingGyms.CountAsync(gym => gym.Status == GymStatus.Suspended, cancellationToken);
-        int provisioningGyms = await livingGyms.CountAsync(
-            gym => gym.Status == GymStatus.Provisioning, cancellationToken);
+        // One round trip for the four population counts rather than four — and the same definition of
+        // "living" the nightly compiler uses, from the same place.
+        IReadOnlyDictionary<GymStatus, int> population =
+            await PlatformPopulationQueries.CountLivingGymsByStatusAsync(_dbContext, cancellationToken);
+        int Living(GymStatus status) => population.TryGetValue(status, out int count) ? count : 0;
 
         int liveSubscriptions = await _dbContext.Set<GymSubscription>()
             .AsNoTracking()
             .CountAsync(subscription => SubscriptionStatusTransitions.Live.Contains(subscription.Status), cancellationToken);
 
-        // Same billing set, same calculator DailyStatsCompiler uses for the nightly row — one
-        // definition of the platform's headline number, computed live instead of read back.
-        var contributions = await _dbContext.Set<GymSubscription>()
-            .AsNoTracking()
-            .Where(subscription => SubscriptionStatusTransitions.Billing.Contains(subscription.Status))
-            .Select(subscription => new { subscription.Status, subscription.BillingCycle, subscription.Price })
-            .ToListAsync(cancellationToken);
-
         IReadOnlyList<Money> mrr = MonthlyRecurringRevenue.Calculate(
-            contributions.Select(row => new MrrContribution(row.Status, row.BillingCycle, row.Price)));
+            await PlatformPopulationQueries.BillingContributionsAsync(_dbContext, cancellationToken));
 
         return new DashboardSummary(
-            totalGyms,
-            activeGyms,
-            suspendedGyms,
-            provisioningGyms,
+            population.Values.Sum(),
+            Living(GymStatus.Active),
+            Living(GymStatus.Suspended),
+            Living(GymStatus.Provisioning),
             liveSubscriptions,
-            mrr.Select(amount => new MoneyDto(amount.Amount, amount.Currency.Code)).ToList());
+
+            // Ordinal by code, the order /analytics/revenue already uses, so the two surfaces agree.
+            mrr.OrderBy(amount => amount.Currency.Code, StringComparer.Ordinal)
+                .Select(amount => new MoneyDto(amount.Amount, amount.Currency.Code))
+                .ToList());
     }
 
     public async Task<IReadOnlyList<ActivityEntry>> GetRecentActivityAsync(

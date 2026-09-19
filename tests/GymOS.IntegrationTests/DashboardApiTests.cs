@@ -90,6 +90,39 @@ public sealed class DashboardApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheSummarysMrrIsOrderedByCurrencyCode()
+    {
+        // /analytics/revenue sorts each day's currencies ordinally; the live summary did not sort at all,
+        // so the two surfaces could disagree on order for the same numbers. GBP is assigned first so an
+        // unsorted projection (insertion order) is caught.
+        PlatformApiHelpers.PlanCreated plan = await PlatformApiHelpers.CreatePlanAsync(_client, "DASHTWO", amount: 20m);
+        await AddPriceAsync(plan, "GBP", 30m);
+        Guid gbpGym = await PlatformApiHelpers.CreateGymAsync(_client, "gbp-gym");
+        Guid eurGym = await PlatformApiHelpers.CreateGymAsync(_client, "eur-gym");
+        await PlatformApiHelpers.AssignAsync(_client, gbpGym, plan.Id, currency: "GBP");
+        await PlatformApiHelpers.AssignAsync(_client, eurGym, plan.Id);
+
+        JsonElement mrr = (await SummaryAsync()).GetProperty("mrr");
+
+        Assert.Equal(
+            ["EUR", "GBP"],
+            mrr.EnumerateArray().Select(entry => entry.GetProperty("currency").GetString()).ToList());
+    }
+
+    private async Task AddPriceAsync(PlatformApiHelpers.PlanCreated plan, string currency, decimal amount)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, new Uri($"/api/v1/plans/{plan.Id}/prices", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { billingCycle = "Monthly", currency, amount }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{plan.RowVersion}\"");
+
+        using HttpResponseMessage priced = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, priced.StatusCode);
+    }
+
+    [Fact]
     public async Task HealthReportsChecksWithoutLeakingExceptionDetails()
     {
         // This also proves out IDashboardHealthCheck's registration: /health resolves it from the
