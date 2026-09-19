@@ -74,6 +74,15 @@ internal sealed partial class ApiReferenceBrowserLauncher : IHostedService
             // UseShellExecute hands the URL to the OS default handler — the only form that
             // works without hard-coding a browser per platform.
             using Process? browser = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            if (browser is null)
+            {
+                // With UseShellExecute, null means the OS handed the URL to a handler that was already
+                // running — the usual case on Windows when a browser is open — or that nothing accepted
+                // it. Neither is "opened"; say what is actually known.
+                LogHandedToExistingHandler(_logger, url);
+                return;
+            }
+
             LogOpened(_logger, url);
         }
         catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
@@ -92,4 +101,7 @@ internal sealed partial class ApiReferenceBrowserLauncher : IHostedService
 
     [LoggerMessage(EventId = 6102, Level = LogLevel.Warning, Message = "Could not open the API reference at {Url}")]
     private static partial void LogFailed(ILogger logger, string url, Exception exception);
+
+    [LoggerMessage(EventId = 6103, Level = LogLevel.Information, Message = "API reference at {Url} was handed to the default handler; no new browser process was started")]
+    private static partial void LogHandedToExistingHandler(ILogger logger, string url);
 }

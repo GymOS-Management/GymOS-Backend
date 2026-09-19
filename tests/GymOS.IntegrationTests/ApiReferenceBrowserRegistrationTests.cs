@@ -43,9 +43,7 @@ public sealed class ApiReferenceBrowserRegistrationTests
             settings: new Dictionary<string, string?> { ["OpenApi:LaunchBrowser"] = "false" }));
 
     /// <summary>
-    /// The override works in both directions, but note it cannot rescue a containerised host —
-    /// that guard is checked before the setting is consulted for the default only, so an explicit
-    /// <c>true</c> still wins. Documented here because it is the surprising half.
+    /// The override works in both directions, including inside a container: the three guards decide the default, and an explicit setting replaces the default.
     /// </summary>
     [Fact]
     public void AnExplicitTrue_OverridesTheEnvironmentDefault() =>
@@ -53,7 +51,22 @@ public sealed class ApiReferenceBrowserRegistrationTests
             Environments.Production,
             settings: new Dictionary<string, string?> { ["OpenApi:LaunchBrowser"] = "true" }));
 
-    private static bool IsRegistered(string environment, Dictionary<string, string?>? settings = null)
+    /// <summary>
+    /// The one deployment where opening a browser is not merely useless but confusing. Set by the
+    /// official .NET base images; read through a seam so this test does not depend on where CI runs.
+    /// </summary>
+    [Fact]
+    public void InsideAContainer_NothingIsRegisteredByDefault() =>
+        Assert.False(IsRegistered(Environments.Development, inContainer: true));
+
+    [Fact]
+    public void InsideAContainer_AnExplicitTrueStillWins() =>
+        Assert.True(IsRegistered(
+            Environments.Development,
+            settings: new Dictionary<string, string?> { ["OpenApi:LaunchBrowser"] = "true" },
+            inContainer: true));
+
+    private static bool IsRegistered(string environment, Dictionary<string, string?>? settings = null, bool inContainer = false)
     {
         var services = new ServiceCollection();
 
@@ -61,7 +74,11 @@ public sealed class ApiReferenceBrowserRegistrationTests
             .AddInMemoryCollection(settings ?? [])
             .Build();
 
-        services.AddGymOSApiReferenceBrowser(configuration, new StubEnvironment(environment));
+        services.AddGymOSApiReferenceBrowser(
+            configuration,
+            new StubEnvironment(environment),
+            readEnvironmentVariable: name =>
+                string.Equals(name, "DOTNET_RUNNING_IN_CONTAINER", StringComparison.Ordinal) && inContainer ? "true" : null);
 
         return services.Any(descriptor => descriptor.ServiceType == typeof(IHostedService));
     }

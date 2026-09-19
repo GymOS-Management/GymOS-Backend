@@ -111,23 +111,30 @@ public static partial class OpenApiExtensions
     /// <see cref="ApiReferenceBrowserLauncher"/> for why this is an application concern rather
     /// than a <c>launchSettings.json</c> one.
     ///
-    /// <para>Registered only where it makes sense: the reference has to be published, the
-    /// environment has to be Development, and the process must not be containerised. Anything
-    /// else and this adds no service at all, so there is nothing to misfire.</para>
+    /// <para>Three guards decide the <em>default</em>: the reference has to be published, the
+    /// environment has to be Development, and the process must not be containerised
+    /// (<c>DOTNET_RUNNING_IN_CONTAINER</c>). An explicit <c>OpenApi:LaunchBrowser</c> replaces that
+    /// default in both directions — that is the switch a developer flips on purpose, including inside
+    /// a container they have arranged a browser for. When the answer is "no", nothing is registered,
+    /// so there is nothing that can misfire.</para>
     /// </summary>
     public static IServiceCollection AddGymOSApiReferenceBrowser(
         this IServiceCollection services,
         IConfiguration configuration,
-        IHostEnvironment environment)
+        IHostEnvironment environment,
+        Func<string, string?>? readEnvironmentVariable = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
 
+        readEnvironmentVariable ??= Environment.GetEnvironmentVariable;
+
         // Set by the official .NET base images; the check costs nothing and removes the one
-        // deployment where opening a browser is not merely useless but confusing.
+        // deployment where opening a browser is not merely useless but confusing. Read through the
+        // seam so the decision is testable wherever the tests themselves happen to run.
         bool inContainer = string.Equals(
-            Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+            readEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
             "true",
             StringComparison.OrdinalIgnoreCase);
 
