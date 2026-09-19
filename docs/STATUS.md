@@ -8,7 +8,10 @@ cap (a decision, not code), and the resume point for M6; **M6 itself is now impl
 `development` at `e502a85`**, with its "what landed" subsection under that same session. **M7 —
 Settings & Hardening — is now implemented on `development` too**, eleven commits, `b62f859..39bb010`
 (range notation excludes the base), plus this docs commit, plus the final-review fix commit that
-follows, with its own "what landed" subsection alongside M6's. The sections
+follows, with its own "what landed" subsection alongside M6's. **H1 — Hardening — is implemented on
+`development` on top of it**, nine tasks in ten implementation commits, `22c8cc1..2cd43ab`, plus this
+docs commit and the final-review fix commit that follows, with its own "what landed" subsection
+alongside the other two. The sections
 after it are the 2026-09-03 resumption and its decisions, then the merge and the two failures it
 exposed, then picking the branch up on a second machine, then everything after the SQL Server merge;
 the paragraphs beyond that describe the migration as it stood on its branch and are kept for their
@@ -61,7 +64,8 @@ API rate limiter tuned live from the same catalog, and `GET /audit-logs/export` 
 full suite, one `dotnet test GymOS.Backend.slnx` run at the head of the branch: **1,598 passed, 0 failed, 0 skipped** across seven projects (Application 287, SharedKernel 131, Domain 453, BuildingBlocks 92, Infrastructure 107, Architecture 153, Integration 375; the integration project took 24m23s on this laptop).
 Look at the CI run for the push before trusting anything beyond that local run. The "M7 — what landed"
 subsection below (alongside M6's) has the file map and every deviation found while building it. **Next:
-the owed list** — the ~19 non-severe findings from the M1–M5 whole-branch review, the gym-scoped-grants
+the owed list** — superseded by H1's own **Next** below, which is the current one —
+the ~19 non-severe findings from the M1–M5 whole-branch review, the gym-scoped-grants
 spec review, M6's constructor-throw follow-up (a job whose constructor throws at loop start is neither
 listed nor recorded — `LogLoopDead` is the only signal, and surfacing it needs a static job name or a
 "broken" flag on the DTO, a design change to the M3.4 job-type contract, not a fix-wave edit), the
@@ -71,17 +75,46 @@ have no spec yet.
 
 **The footprint fix that this section first recorded as owed is done** — see "Later the same day" below.
 
-**H1 — Hardening — is in flight on `development` (2026-09-19).** Spec
-`docs/superpowers/specs/2026-09-19-h1-hardening-design.md` (`03219d3`, corrected in `01f702f`) and plan
-`docs/superpowers/plans/2026-09-19-h1-hardening.md` (`f45b241`) are committed; nine tasks, executed
-subagent-driven with the ledger at `.superpowers/sdd/2026-09-19-h1-hardening/progress.md` (git-ignored —
-if it is gone, `git log` after `f45b241` is the record). Scope, chosen with the owner: gym-scoped-grants
-spec steps 1–2 (tenant resolution before authorization, tenant-aware permissions keyed by user and
-tenant) plus every unblocked review finding. **Found while writing the spec:** the churn-dating fix this
-file still lists as open (`ExpiredAtUtc`, the `canceled_at_utc` index) shipped in `7672bb6` on
-2026-08-14; the paragraphs below that call it open are stale until H1's docs task rewrites them. If you
-are resuming mid-H1: read the ledger, then `git log --oneline f45b241..HEAD`, and continue from the first
-task without a `complete` line.
+**H1 — Hardening — is implemented at the head of `development`** (nine tasks in ten implementation
+commits, `22c8cc1..2cd43ab` — range notation excludes the base, so `7b2e0a4` is the first — plus this
+docs commit, eleven in all, plus the final-review fix commit that follows, against
+`docs/superpowers/specs/2026-09-19-h1-hardening-design.md`, `03219d3`,
+corrected in `01f702f`; plan `f45b241`). Executed subagent-driven with the ledger at
+`.superpowers/sdd/2026-09-19-h1-hardening/progress.md` (git-ignored — if it is gone,
+`git log --oneline f45b241..HEAD` is the record). Scope, chosen with the owner: gym-scoped-grants spec
+steps 1–2 (tenant resolution before authorization, tenant-aware permissions keyed by user and tenant)
+plus every unblocked review finding. No new endpoint, no new permission. The full suite, one
+`dotnet test GymOS.Backend.slnx` run at the head of the branch: **1,639 passed, 0 failed, 0 skipped**
+across seven projects (Application 302, SharedKernel 131, Domain 454, BuildingBlocks 92,
+Infrastructure 115, Architecture 153, Integration 392; the integration project took 24m37s on this
+laptop). The first run of that suite was red and is what produced `2cd43ab` — see "What the suite
+caught" below. The "H1 — what landed" subsection below (alongside M6's and M7's) has the file map and
+every deviation found while building it.
+
+**Next: the owed list that remains after H1** — the maintainer's unlocked plan read, which stays blocked
+on a call-site audit (three of its four callers hold no transaction, so a lock there buys nothing until
+those sites are audited); the value-versus-intent decision on overrides, which is the owner's and not the
+implementer's; `GET /features`' two correlated subqueries per gym per feature, deliberately unoptimized
+and pinned by `FeatureAdoptionParityTests`; the plan-edit race test's missing deterministic interleaving
+hook; the UTC-midnight `IClock` seam in `AuthenticationHost.Create` that
+`ADeletedGymLeavesThePopulationButStillCountsAsChurn` races; the three dependency majors
+(`BannedApiAnalyzers`, `Test.Sdk`, `xunit.runner.visualstudio`, none routine); M6's constructor-throw
+follow-up (a job whose constructor throws at loop start is neither listed nor recorded — surfacing it is
+a design change to the M3.4 job-type contract); the integration teardown cost (M6's measured ~18 minutes
+of `CREATE DATABASE` + migrate + `DROP` per CI run); and the owner's items — Key Vault for the Data
+Protection ring (AZURE.md §7, item 6), UAT's free-tier pause, the `SCHEMA_DRIFT_ENABLED` grants,
+ADR-54's rationale, and required reviewers on the `Production` environment. The gym-scoped-grants spec's
+**D7/D9 review** is the one "do this first" item H1 did not take, and it now belongs to Members. Then
+the gym-facing modules, which have no spec yet.
+
+**New and owed, found by H1 rather than closed by it: the Serilog frozen-logger race.** Booting two
+`WebApplicationFactory<Program>` hosts concurrently inside one test process throws
+`InvalidOperationException: The logger is already frozen` from `Program.cs`'s static
+`Serilog.Log.Logger` bootstrap (`ReloadableLogger.Freeze()`). Pre-existing, not introduced by H1, and
+found by Task 3's first race-test shape; not fixed, because it is out of H1's scope. The likely fix is
+`preserveStaticLogger: true` on the host builder, or a non-static bootstrap logger. The seeder race test
+was rewritten to race two seeders from two DI scopes of a single host instead, which proves the same
+thing without two hosts.
 
 **Two things are the owner's, not code:**
 
@@ -437,6 +470,99 @@ beside the ciphertext until Key Vault exists (AZURE.md §7, item 6); `TryParseCa
 category's numeric string, the same shape as M6's `status` parameter; and a settings row whose
 populated column disagrees with the catalog's `IsSensitive` flag is treated as if the row did not
 exist, logged rather than thrown.
+
+### H1 — what landed
+
+Ten commits, `22c8cc1..2cd43ab` (range notation excludes the base, so `7b2e0a4` is the first), against
+`docs/superpowers/specs/2026-09-19-h1-hardening-design.md`, plus this docs commit. No endpoint and no
+permission changed.
+
+**The file map, in prose.** `7b2e0a4` (Task 1, grants spec D1/D2) moves the
+`TenantResolutionMiddleware` registration in `Program.cs` to sit between `UseAuthentication()` and
+`UseAuthorization()`, and gives `TenantResolutionMiddleware` an early return so an anonymous caller on
+a gym route reaches the authentication challenge instead of the middleware's own answer;
+`TenantResolutionTests` and `MaintenanceModeTests` gained the assertions that hold the new order.
+`ad76bd9` (Task 2, D3/D4) splits the caller snapshot: `ICallerSnapshot` and `IIdentityQueries` in
+`Platform.Application/Identity/Abstractions/IIdentityQueries.cs` now expose `GetIdentityAsync(userId)`
+for the stamp-and-status half and `GetAsync(userId, tenantId)` for permissions;
+`Platform.Infrastructure/Identity/PermissionEvaluator.cs` holds `CallerSnapshot` with a cache keyed by
+(user, tenant); `IdentityQueries.GetEffectivePermissionsAsync(userId, tenantId)` returns platform grants
+∪ grants naming the acting tenant; `AuthenticationExtensions` reads only the identity half; and
+`PermissionEvaluatorTests` is new (171 lines). `49fff8f` (Task 3) puts `SuperAdminSeeder` inside the
+seeding lock and cuts `SeedingLocks`' documentation back to what a transaction-scoped applock gives,
+with a race test in `SuperAdminSeedingTests`. `5101939` and `06f6986` (Task 4) add
+`Platform.Infrastructure/Analytics/PlatformPopulationQueries.cs` as the one source `DailyStatsCompiler`
+and `DashboardQueries` both read, collapse the dashboard's four counts into one round trip, and
+replace the order-dependent `FindNavigation(nameof(Mrr))!` in `DailyPlatformStatsConfiguration` with
+`builder.Navigation(...).UsePropertyAccessMode(...)` after `HasMany`. `83b4f92` (Task 5) is tests only:
+analytics positive controls in `AnalyticsApiTests`, a feature fake in `GymFakes` that throws rather than
+returning an empty catalogue plus `GymTestContext.WithFeatureCatalogue()`, six-route coverage in
+`GymManagementTests`, a JPY fixture in `MonthlyRecurringRevenueTests` that can actually fail, and the
+maintainer call asserted in `DashboardApiTests`. `31d91e4` (Task 6) wraps
+`AssignSubscriptionCommandHandler`'s plan read in one transaction under `UPDLOCK` and adds
+`DiscardTrackedChanges` to `BannedSymbols.txt`. `b4f64b1` (Task 7) makes
+`ApiReferenceBrowserLauncher`'s container check injectable and stops a null `Process.Start` being logged
+as "opened". `3d52352` (Task 8) adds `FeatureExceptionLogging.LogOverridesWithdrawn` at all four call
+sites, moves the `Exception` suffix from a per-type `CA1711` suppression to `.editorconfig`'s
+`allowed_suffixes`, makes the activity feed's `EntityType` nullable, and binds every development port in
+`docker-compose.override.yml` to `127.0.0.1`. `2cd43ab` is the fix the first full suite run forced out
+of Task 3 — see "What the suite caught" below. This commit is the documents.
+
+**What the suite caught.** The first full `dotnet test GymOS.Backend.slnx` run against `3d52352` was
+red: **18 failures, every test in `TenantIsolationTests`**, each in `InitializeAsync` with
+`InvalidOperationException : Timeout expired. The timeout period elapsed prior to obtaining a connection
+from the pool.` Task 3 (`49fff8f`) had wrapped `SuperAdminSeeder.SeedAsync` in a transaction that holds
+a connection for the rest of the method, and the `ISettings<LoginPolicyOptions>.Current` read further
+down loads the settings table through its own `DbContext` — a second connection. `TenantIsolationTests`
+sets `MaxPoolSize = 1` on purpose (one physical connection is what makes
+`TheTenantDoesNotLeakIntoTheNextUseOfAPooledConnection` mean anything), so the seeder waited on itself
+and the host never booted. Fixed in `2cd43ab` by reading the login policy **before**
+`BeginTransactionAsync`; the transaction only ever needed to cover the exists-check and the insert. The
+lesson is the one this file already records about fixtures: a guard that constrains a resource to one
+is the guard that finds the code assuming two.
+
+**Two things the design got wrong and inspection corrected, before any code moved:**
+
+1. **The bearer handler reads the caller snapshot during *authentication*, before any tenant is known.**
+   The spec assumed one snapshot could simply take a tenant parameter. It cannot: the stamp-and-status
+   check runs in `OnTokenValidated`, where there is no route and therefore no gym. So the snapshot was
+   split in two — `GetIdentityAsync` (stamp + status, per user) and `GetAsync(userId, tenantId)`
+   (permissions, per (user, tenant)) — and `GetSecuritySnapshotAsync` was removed from `IIdentityQueries`
+   altogether. The result costs a gym route exactly the same two queries a platform route costs.
+2. **Anonymous gym routes were already 401, by accident of pipeline order.** The grants spec's §4 test 5
+   listed "passes today?" as no; it passed, because authorization ran before the middleware and answered
+   first. After the reorder the middleware would have answered 404, so the early return is what *keeps*
+   those routes 401 rather than what makes them so. The H1 spec was corrected before building.
+
+**Every deviation the ledger records:**
+
+1. **Churn dating was already fixed.** `ExpiredAtUtc`, `expired_gyms` keyed on it, and the filtered
+   indexes on both churn columns shipped in `7672bb6` (2026-08-14). This file's two churn paragraphs and
+   `Analytics.md` §11 were stale; H1 corrects the documents and changes no code there.
+2. **The `mrr` order finding was stale for the summary.** `MonthlyRecurringRevenue.Calculate` has sorted
+   by currency code (Ordinal) since `cdbee68` (M5). Task 4 first added a redundant `OrderBy` in
+   `DashboardQueries` and then removed it in `06f6986`; the test `TheSummarysMrrIsOrderedByCurrencyCode`
+   stays as a pin on the contract. The only real sort need was on the stored-rows path, which
+   `AnalyticsQueries` already had.
+3. **Grants spec §6's `UseRouting` claim is confirmed.**
+   `TenantResolutionTests.ARouteWithAGymIdSetsThatTenantForTheRequest` passes with the middleware in its
+   new position and no explicit `UseRouting()` call.
+4. **New owed item: the Serilog frozen-logger race.** Booting two `WebApplicationFactory<Program>` hosts
+   concurrently in one test process throws `InvalidOperationException: The logger is already frozen` from
+   `Program.cs`'s static `Serilog.Log.Logger` bootstrap (`ReloadableLogger.Freeze()`). Pre-existing;
+   found by Task 3's first race-test shape; **not fixed**, out of scope. The likely fix is
+   `preserveStaticLogger: true` or a non-static bootstrap. Task 3's race test was rewritten to race two
+   seeders from two DI scopes of one host instead.
+5. **Task 5's brief could not compile as written.** It specified a `TheoryData` over the `internal`
+   `GymTestContext`, which is CS0050 (inconsistent accessibility on a public test method). The tests use
+   `[InlineData]` route names plus a private dispatch switch — six routes, both assertions.
+6. **Task 8 found three hand constructions of `SubscriptionRenewalService`**, not the one its brief
+   named: `GymFeatureLifecycleTests`, `RenewalSweepTests` and `SubscriptionRenewalTests`. All three were
+   given `NullLogger`.
+7. **Two Minor items were parked by task reviews for the final-review fix wave**, not for H1's
+   implementation tasks: a stale "one snapshot" comment in
+   `PlatformIdentityServiceCollectionExtensions.cs:100-102`, and no unit test pinning the null-tenant
+   cache hit in `CallerSnapshot`. Both are owed until that commit lands.
 
 ### This machine, for whoever resumes here
 
@@ -1198,7 +1324,7 @@ before resuming work on any machine.
 | **F2 — billing console** (GymOS-Platform: plans, subscriptions, invoices incl. `Idempotency-Key` minting) | ✅ complete — the frontend of M3; whole-branch reviewed, recorded in `GymOS-Platform/docs/F2-AS-BUILT.md` |
 | **F3 — dashboard & analytics console** (GymOS-Platform: `/dashboard` + revenue/growth/churn screens over M5's six operations) | ✅ **merged** (`a504abb`) — **117 unit tests**, owned SVG charts with **no new runtime dependency**, chart palette validated against the repo's own surfaces in both themes · design: `GymOS-Platform/docs/F3-DESIGN.md` · **E2E seed landed 2026-08-13** — `daily_platform_stats` seeded with a deliberate one-day gap by a Playwright `globalSetup`, so D3 is proved end to end; **8/8 analytics specs, both viewports, zero skips** · ⬅ **review owed**, and `F3-AS-BUILT.md` is deliberately unwritten until it can record what the review changed |
 | **F4 — feature flags console** (GymOS-Platform: catalogue at `/features`, a Features tab on gym detail, a Features card on plan detail, over M4/M4.1's feature-flags contract) | ✅ **built and reviewed** — **198 unit tests** across 31 files (was 140 across 22 before F4), **66 E2E tests**, 0 failed, 0 skipped, across both desktop and mobile viewports (was 42 before F4) · typecheck/lint/format:check all clean · `toastApiError` finally migrated at all 41 call sites (F2 judged it earned, F3 planned but skipped it) · design: `GymOS-Platform/docs/F4-DESIGN.md` · **as built: `GymOS-Platform/docs/F4-AS-BUILT.md`** · plan: `GymOS-Platform/docs/superpowers/plans/2026-08-13-f4-feature-flags-console.md` · **review done 2026-08-14, 3 of 7 findings fixed (`2ae0445`)** — an override's reason was uncorrectable (a D6 omission, not an implementation slip), the form stayed live mid-save, and the plan card's documented permission contradicted the code. Four low findings recorded in the as-built, deliberately unfixed. **The one review still owed on this increment is nobody's: F4 is closed.** |
-| **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding remains a known open item below) |
+| **M0.X — production Docker & Compose** (multi-stage image, dev/prod overlays, hardening, `docs/Infrastructure/DOCKER.md`, CI docker job) | ✅ complete — clean clone → `docker compose up -d` → healthy + working login; production overlay smoke-tested · **reviewed** in the 2026-08-11 audit (no findings; the dev-overlay `0.0.0.0` binding was a known open item, closed in H1 — every development port now binds `127.0.0.1`) |
 | **VS Docker Compose orchestration** (`docker-compose.dcproj`, F5 → the real hardened stack, Scalar landing page) | ✅ complete (`ec47eab`, `a42eafa`) — ⚠ Visual Studio rewrites its no-build rule in `GymOS.Backend.slnx` on save, which breaks `dotnet build`/CI with NU1105; untick **Build** for `docker-compose` in Configuration Manager (Debug *and* Release) so VS owns the exclusion |
 | **M4 — feature flags** (catalogue + seeder, three-layer resolution, plan contents, per-gym overrides, gym-detail block) | ✅ complete — all six tasks on `main`, **1267 tests green**, verified live · rules in **`docs/BusinessRules/Features.md`** · single-pass reviewed, 2 findings fixed · **multi-agent whole-increment review run 2026-08-12** (1 Critical, 6 Important, 8 Minor) — fixed in **M4.1**, next row |
 | **M4.1 — M4 review fixes** (the redundant-override self-cleaning rule now maintained by construction — synchronous on a gym's own subscription change, a nightly sweep for the plan- and default-wide triggers too broad to do inline — plus the contract additions F4's console needs and the write-path/seeder races the review found) | ✅ **merged to `main`** (`e72b1f8`) — all seven tasks, **1339 tests green**, the Critical proved fixed *and* proved to fail on the pre-merge `main` · rules revised in **`docs/BusinessRules/Features.md`** · ⬅ **multi-agent review gate still owed** |
@@ -2573,7 +2699,9 @@ real subject.
    connection needs (see "Known open items"). Fails the boot; does not swallow. Skips only while
    migrations are genuinely pending, the same first-boot guard `SuperAdminSeeder` already has.
 4. **`TenantResolutionMiddleware`** (WebApi) — resolves `{gymId}` from the route after
-   `UseAuthorization()`, checks the caller's grants (`UserRole.TenantId`: `null` = platform-wide, a
+   `UseAuthorization()` (**moved in H1, 2026-09-19**: it now runs between `UseAuthentication()` and
+   `UseAuthorization()`, and returns early for an unauthenticated caller so the challenge answers),
+   checks the caller's grants (`UserRole.TenantId`: `null` = platform-wide, a
    value = that one gym), and sets the tenant. A caller with no grant for that gym, or a malformed
    `{gymId}`, gets **404, never 403** — the status code must not be an oracle for enumerating tenants.
 5. **Tests** — a test-only `platform.tenant_probe` table and 12 integration tests (8 isolation + 4
@@ -3066,11 +3194,12 @@ the first two are cheap and the third is what everything else waits on.**
    where a subtle regression would hide, and R14's whole point is that isolation is provable.
 5. **Merge to `development`, not `main`.** 60 of the 62 commits are the R14/tenancy work from
    2026-08-15; `main` has never seen them.
-6. **Two small things to fold into the review fixes:** write up the fifth engine difference (the CI
+6. ~~**Two small things to fold into the review fixes:** write up the fifth engine difference (the CI
    collation makes `idempotency_key` match case-insensitively — nothing documents it), and correct
    `IdempotencyRecordConfiguration`'s XML doc, which still claims the claim index needs a `COALESCE`
    sentinel and lives in the deleted `AddIdempotencyRecords` migration. Neither is behavioural; both are
-   the kind of comment this repo does not leave wrong.
+   the kind of comment this repo does not leave wrong.~~ **Done (H1, 2026-09-19, this docs commit):**
+   both, in `DOCKER.md`'s collation paragraph and the configuration's summary.
 
 **Everything owed before 2026-08-24 is still owed**, and none of it is affected by the migration except
 in needing to be re-run against SQL Server: M4.1's multi-agent review gate, M5's whole-branch review,
@@ -3092,14 +3221,21 @@ Working tree clean, `development` in sync with `origin`.
    that nobody has re-read with fresh eyes. The two decisions most likely to be wrong are **D7** (per-gym
    roles provisioned with the gym, seeded from a code-canonical list) and **D9** (the endpoint shape,
    `PUT /gyms/{gymId}/users/{userId}/roles`). Until that review happens the spec is one person's opinion.
-2. **Confirm the one unverified claim in it** (§6): that `WebApplication` inserts `UseRouting` at the
+2. ~~**Confirm the one unverified claim in it** (§6): that `WebApplication` inserts `UseRouting` at the
    head of the pipeline, so route values are populated at `UseAuthentication()` time. Taken from
    framework documentation, **not observed**. The whole of D1 rests on it, and D1 is the spine of the
-   design. Cheapest check: log `HttpContext.Request.RouteValues` from a middleware placed there.
-3. **Then either** start Members (which carries the grant work as steps 1–5 of that spec) **or** land
+   design. Cheapest check: log `HttpContext.Request.RouteValues` from a middleware placed there.~~
+   **Done (H1, 2026-09-19):** confirmed by
+   `TenantResolutionTests.ARouteWithAGymIdSetsThatTenantForTheRequest` passing with the middleware in
+   its new position and no explicit `UseRouting()` call; recorded in the spec's §6.
+3. ~~**Then either** start Members (which carries the grant work as steps 1–5 of that spec) **or** land
    spec steps 1–2 alone — the pipeline reorder and tenant-aware evaluation. Those two close the
    privilege-escalation risk and leave the platform exactly as capable as it is today, so they are safe
-   to ship without the rest.
+   to ship without the rest.~~ **Done (H1, 2026-09-19):** steps 1–2 landed alone, exactly as this
+   option describes — `7b2e0a4` and `ad76bd9`. Steps 3–5 stay with Members.
+
+**Item 1 is the one that remains**, and it now belongs to Members: the D7/D9 review is a review of the
+part H1 did not build.
 
 **Not verified today, and worth knowing before trusting anything above:** Docker Desktop was not running
 on this machine, so **the 312 integration tests were not run all session**. Everything reported is the
@@ -3138,12 +3274,26 @@ history means either building a recompute-and-overwrite path — which the write
 forbid, and which M5's own backfill finding independently warns against because the population counts
 are unwindowed — or accepting the step. **That is a product decision and nobody has taken it.**
 
-**Roughly 19 findings remain, none of them severe.** The largest is the maintainer's unlocked plan
-read, which is genuinely blocked rather than merely pending: three of its four callers hold no
-transaction, so a `FOR UPDATE` there would release at end-of-statement and buy nothing until those
-call sites are audited. Then the seeder lock's overstated guarantee, the `features: null` unit fake,
-`/dashboard/health` gated behind a check that itself reads the database, the duplicated `livingGyms`
-predicate, `GetSummaryAsync`'s round trips, and three API-reference items.
+**~~Roughly 19 findings remain, none of them severe.~~ — H1 (2026-09-19) closed the unblocked ones;
+four remain, plus two owner decisions.** Kept for the record, because the shape of what was left
+matters: the largest was the maintainer's unlocked plan read, then the seeder lock's overstated
+guarantee, the `features: null` unit fake, `/dashboard/health` gated behind a check that itself reads
+the database, the duplicated `livingGyms` predicate, `GetSummaryAsync`'s round trips, and three
+API-reference items. Of those, H1 closed the seeder lock (`49fff8f`), the `features: null` fake
+(`83b4f92`), the duplicated predicate and the round trips (`5101939`), and all three API-reference items
+(`b4f64b1`); `/dashboard/health`'s gate is **kept by decision**, with the reasoning at its own entry
+below.
+
+**What remains, and why each is not a fix-wave edit.** *(1)* The maintainer's unlocked plan read stays
+blocked on a call-site audit — three of its four callers hold no transaction, so a lock there would
+release at end-of-statement and buy nothing. *(2)* `GET /features`' two correlated subqueries per gym
+per feature are deliberately unoptimized and pinned by `FeatureAdoptionParityTests`; the reason to
+revisit is cost, never correctness. *(3)* The plan-edit race test detects a regression roughly one run
+in eight and wants a deterministic interleaving hook to become a gate. *(4)* The UTC-midnight race in
+`ADeletedGymLeavesThePopulationButStillCountsAsChurn` needs an `IClock` seam in
+`AuthenticationHost.Create`, shared by 15+ test files. The two owner decisions — an override recording a
+**value** versus an **intent**, and the console's `e2e` job needing a cross-repository credential — are
+unchanged and are the owner's, not the implementer's.
 
 **Two decisions are the owner's, not the implementer's.** Whether an override records a **value** or an
 **intent** — today a deny-exception ("suspended pending fraud investigation") is hard-deleted when it
@@ -3160,6 +3310,11 @@ assertion checked `GetArrayLength() > 0`, which `[{}]` satisfies; and M5's zero-
 uses JPY 12,000, a price that divides evenly and therefore cannot see the bug it guards. All three
 passed CI. The lesson is not "write more tests" — it is that a test whose fixture cannot exhibit the
 failure is indistinguishable from one that can, until someone checks.
+
+**Resolved (H1, 2026-09-19):** all three fixtures can now exhibit their failures — the API reference's
+security assertion was fixed downstream by `02bca0e`, `4ce45d0`'s unreachable catch was closed by M4.2
+(`e235807`), and H1 replaced the JPY 12,000 fixture with
+`AZeroDecimalCurrencyRoundsHalfEvenToTheWholeUnit`, whose price does not divide evenly (`83b4f92`).
 
 **Two things F4 left behind on purpose**, both recorded in its as-built: a shared `FeatureRow` shell
 is the earned extraction (the row markup is copied across all three surfaces, and the E2E journey
@@ -3389,23 +3544,30 @@ been exercised against a real grant.
   automation conditions and gateway config each need a persisted computed column and an index on that.
   All three are recorded in ADR-54; the search one is the largest and the easiest to walk into.
 
-- **The fifth engine difference is undocumented.** The database-wide `Latin1_General_100_CI_AS` collation
-  makes the **client-supplied `idempotency_key` match case-insensitively**, where the PostgreSQL cluster's
-  `lc-collate=C` compared it byte-for-byte. Two keys differing only in case now collide. Negligible in
-  practice for random keys, and the collation itself is deliberate, asserted by a test, and what now
-  provides §2's `citext` slug semantics — but the other four differences got written up where they bite
-  and this one did not. Token hashes are unaffected: the server computes lower-case hex on both sides.
+- **~~The fifth engine difference is undocumented.~~ Resolved (H1, 2026-09-19, this docs commit):** it
+  is written up where it bites, in `DOCKER.md`'s collation paragraph. Kept for the record: the
+  database-wide `Latin1_General_100_CI_AS` collation makes the **client-supplied `idempotency_key`
+  match case-insensitively**, where the PostgreSQL cluster's `lc-collate=C` compared it byte-for-byte,
+  so two keys differing only in case now collide. Negligible in practice for random keys, and the
+  collation itself is deliberate, asserted by a test, and what now provides §2's `citext` slug
+  semantics — but the other four differences got written up where they bite and this one did not.
+  Token hashes are unaffected: the server computes lower-case hex on both sides.
 
-- **`IdempotencyRecordConfiguration`'s XML doc is wrong in both its claims.** It says the unique claim
-  index needs `COALESCE` over the nullable `tenant_id` and lives in the `AddIdempotencyRecords`
-  migration. The sentinel was dropped (SQL Server treats NULLs as equal in a unique index, so the
-  collision the `COALESCE` manufactured is the default) and that migration is deleted. The accurate
-  account is in `20260823193131_RuntimeDatabaseProgrammability.cs:113`.
+- **~~`IdempotencyRecordConfiguration`'s XML doc is wrong in both its claims.~~ Resolved (H1,
+  2026-09-19, this docs commit):** the summary now points at
+  `20260823193131_RuntimeDatabaseProgrammability` and says why the sentinel is gone. Kept for the
+  record: it used to say the unique claim index needs `COALESCE` over the nullable `tenant_id` and
+  lives in the `AddIdempotencyRecords` migration. The sentinel was dropped (SQL Server treats NULLs as
+  equal in a unique index, so the collision the `COALESCE` manufactured is the default) and that
+  migration is deleted. The accurate account is in
+  `20260823193131_RuntimeDatabaseProgrammability.cs:113`.
 
-- **`docs/Infrastructure/DOCKER.md` contradicts itself about Mailpit.** Its header lists five services
-  running today including `mailpit`, and `docker-compose.override.yml` states explicitly that Mailpit has
-  no profile since ADR-53 — but the §1 architecture diagram still lists it under "profiles (off by
-  default)". The compose file is correct; the diagram is stale.
+- **~~`docs/Infrastructure/DOCKER.md` contradicts itself about Mailpit.~~ Resolved (H1, 2026-09-19,
+  this docs commit):** the §1 diagram now carries `mailpit` on its own "always on (since ADR-53)" line,
+  above the profiles line, which lists only `redis · seq · minio`. Kept for the record: the header
+  listed five services running today including `mailpit`, and `docker-compose.override.yml` states
+  explicitly that Mailpit has no profile since ADR-53 — but the diagram still listed it under "profiles
+  (off by default)". The compose file was correct; the diagram was stale.
 
 - **`docs/runbooks/managed-sqlserver-roles.md` has never been applied against a real Azure SQL
   instance.** The same was true of the PostgreSQL runbook it replaces, so this is not a regression — but
@@ -3486,7 +3648,9 @@ been exercised against a real grant.
   read the same evaluator, so they cannot disagree" unless the ordering changes first; (3) no
   tenant-scoped `Role` can exist at all, because the only `Role.Create` call in `src/` is
   `PlatformIdentitySeeder`, always `RoleScope.Platform` — a grant endpoint would have nothing to grant.
-  **Designed and approved, deliberately not built:**
+  **Designed and approved, deliberately not built** — **steps 1–2 built in H1 (2026-09-19); findings
+  (1) and (2) above are closed by `ad76bd9` and `7b2e0a4`, finding (3) is not, so no API issues a
+  gym-scoped grant and steps 3–5 stay with Members:**
   `docs/superpowers/specs/2026-08-15-gym-scoped-grants-design.md`. Ten decisions, chief among them that
   tenant resolution moves between `UseAuthentication()` and `UseAuthorization()` (its current placement
   is justified by a reason that does not hold — reading grants needs the authenticated *identity*, which
@@ -3497,7 +3661,9 @@ been exercised against a real grant.
   increment that can prove it end to end. One claim in the spec is marked as taken from framework
   documentation rather than observed (that `WebApplication` inserts `UseRouting` at the head of the
   pipeline, so route values exist at authentication time); step 1 must confirm it before the reorder is
-  trusted.
+  trusted. **Confirmed in H1 (2026-09-19):**
+  `TenantResolutionTests.ARouteWithAGymIdSetsThatTenantForTheRequest` passes with the middleware in its
+  new position and no explicit `UseRouting()` call.
 
 - ~~**`TenantScope` is owed, not built (R14 close-out).**~~ **Built 2026-08-15**, TDD, six unit tests in
   `GymOS.BuildingBlocks.UnitTests`; build 0 warnings, `dotnet format` exit 0.
@@ -3573,12 +3739,23 @@ been exercised against a real grant.
   partial indexes on it and on `canceled_at_utc`, which had none at all.
 
   **Still open from that fifteen:** `/dashboard/health` gated behind a permission check that itself
-  reads the database, so with Postgres down the panel 500s instead of reporting Unhealthy; the
+  reads the database, so with Postgres down the panel 500s instead of reporting Unhealthy —
+  **kept by decision (H1, 2026-09-19):** the gate is what stops an unauthenticated caller probing
+  database state, the cost is a 500 instead of "Unhealthy" when the database is down, and
+  `/health/ready` is the anonymous signal for exactly that case; the
   `livingGyms` predicate and the billing-contributions query duplicated verbatim between the live
   query and the nightly compiler; `GetSummaryAsync`'s six sequential round trips materialising every
   paying subscription per poll; the `Mrr` navigation's order-dependent `FindNavigation(...)!`; and
   three tests that assert less than their names claim — deleting the three `AnalyticsRead` grants
   leaves every M5 test green.
+
+  **Resolved (H1, 2026-09-19):** the duplicated `livingGyms` predicate and billing-contributions query
+  now have one source, `PlatformPopulationQueries`, which both `DailyStatsCompiler` and
+  `DashboardQueries` read, and `GetSummaryAsync`'s four counts come back in one round trip (`5101939`);
+  the order-dependent `FindNavigation(...)!` is now `builder.Navigation(...).UsePropertyAccessMode(...)`
+  placed after `HasMany`, so it no longer depends on convention discovery having run (`5101939`); and
+  the three tests gained the positive controls their names promised — deleting an `AnalyticsRead` grant
+  now fails `AnalyticsApiTests` (`83b4f92`).
 
 - **M5's multi-agent gate has now run (2026-08-14) — 15 findings, and the first one is a money bug in
   the platform's headline number. VERIFIED BY HAND, not taken on the reviewer's word.**
@@ -3597,7 +3774,9 @@ been exercised against a real grant.
   `daily_platform_stats` by the write-once nightly job**, where nothing can recompute it. `Money` has
   no `Divide` — only `Allocate` — which is how the reciprocal got written in the first place.
   `AZeroDecimalCurrencyRoundsToWholeUnits` exists and passes because its fixture is JPY 12,000, an
-  exact multiple of 12; a price that divides evenly cannot see this bug.
+  exact multiple of 12; a price that divides evenly cannot see this bug. **Resolved (H1, 2026-09-19):**
+  the fixture is now a JPY price that does not divide evenly, in
+  `AZeroDecimalCurrencyRoundsHalfEvenToTheWholeUnit` (`83b4f92`), so the test can fail.
 
   **The rest, worst first, reported and not yet verified.** `canceled_gyms`/`expired_gyms` are named,
   stored and published as *gym* counts but computed as `GymSubscription` **row** counts with no
@@ -3614,13 +3793,25 @@ been exercised against a real grant.
   writes today's counts under an old date and the write-once guard then blocks any correction.
   `/dashboard/health` is gated on a permission check that itself reads the database, and the database
   is the only registered check — so with Postgres down the panel returns a bare 500 instead of the
-  "Unhealthy" it exists to report. Plus: `mrr` is projected with no `OrderBy` so `/analytics/revenue`
+  "Unhealthy" it exists to report (**kept by decision, H1, 2026-09-19**: the gate stops an
+  unauthenticated caller probing database state; `/health/ready` is the anonymous signal for a database
+  that is down). Plus: `mrr` is projected with no `OrderBy` so `/analytics/revenue`
   and `/dashboard/summary` can disagree on currency order; the `livingGyms` predicate and the whole
   billing-contributions query are duplicated verbatim between the live query and the nightly
   compiler (only the calculator was extracted); `GetSummaryAsync` costs six sequential round trips
-  and materialises every paying subscription per poll; `canceled_at_utc` is in no index at all; and
+  and materialises every paying subscription per poll; ~~`canceled_at_utc` is in no index at all~~
+  (`canceled_at_utc` gained a filtered index in `7672bb6`); and
   three tests assert less than their names claim — deleting the three `AnalyticsRead` grants this
   increment adds leaves every M5 test green.
+
+  **Resolved (H1, 2026-09-19):** the duplicated predicate and query, and `GetSummaryAsync`'s round
+  trips, by one shared `PlatformPopulationQueries` and a single round trip for the four counts
+  (`5101939`); the three tests, by positive controls, a feature fake that cannot lie and a JPY fixture
+  that can fail (`83b4f92`). **The `mrr` ordering finding was stale for the summary:**
+  `MonthlyRecurringRevenue.Calculate` has sorted by currency code (Ordinal) since `cdbee68`, so
+  `/dashboard/summary` was already ordered; Task 4 added a redundant `OrderBy` in `DashboardQueries` and
+  then removed it (`06f6986`), keeping `TheSummarysMrrIsOrderedByCurrencyCode` as a pin on the contract.
+  The stored-rows path, `/analytics/revenue`, already sorted in `AnalyticsQueries`.
 
 - **M4.2 (2026-08-14) fixed six of M4.1's fifteen**, across `e235807`, `d8edfec` and `445be2a`.
   Closed: the sweep's missing transaction (it now opens one and reads the deciding row under a lock,
@@ -3642,6 +3833,14 @@ been exercised against a real grant.
   which leaves the new `features.read` gate unexercised on all six write routes; `DiscardTrackedChanges`
   mapping to a scope-wide `ChangeTracker.Clear()`; and the deny-exception below, which is a product
   decision rather than a defect.
+
+  **Resolved (H1, 2026-09-19):** the seeder lock and `SuperAdminSeeder`'s check-then-act, by putting the
+  seeder inside the same transaction-scoped applock and cutting `SeedingLocks`' doc back to what that
+  applock actually gives (`49fff8f`); the `features: null` fake, by a fake that throws rather than
+  returning an empty catalogue, exercised over all six write routes (`83b4f92`); and
+  `DiscardTrackedChanges`, by a `BannedSymbols.txt` entry that permits it only inside its one
+  single-attempt retry (`31d91e4`). **Still open:** the maintainer's unlocked plan read, blocked on the
+  call-site audit; the deny-exception, which is the owner's decision.
 
 - **M4.1's multi-agent gate has now run (2026-08-14) — 15 findings, none fixed at the time of
   writing, and it is the most serious review this project has had.** Two were verified by hand before being written down here;
@@ -3679,6 +3878,11 @@ been exercised against a real grant.
   leaving the new `features.read` gate unexercised on all six write routes; and `DiscardTrackedChanges`
   maps to a scope-wide `ChangeTracker.Clear()` on a shared context that `AuditTrail` stages rows into.
 
+  **Resolved (H1, 2026-09-19):** `SeedingLocks`' doc now claims only what a transaction-scoped applock
+  gives and `SuperAdminSeeder` takes that lock (`49fff8f`); the `features: null` fake now throws instead
+  of returning an empty catalogue, over all six write routes (`83b4f92`); and `DiscardTrackedChanges` is
+  in `BannedSymbols.txt` outside its one retry (`31d91e4`).
+
 - **The API reference increment's review has run (2026-08-14) — 5 findings, 2 already fixed.** Its
   Critical was that `new OpenApiSecuritySchemeReference(BearerSchemeName)` was built with no host
   document, so all 43 "secured" operations serialised as `"security": [ {} ]` — an empty requirement
@@ -3690,6 +3894,11 @@ been exercised against a real grant.
   workflow uses bare `ubuntu-latest`); a method doc claims three guards make the launcher impossible
   to misfire when `OpenApi:LaunchBrowser=true` bypasses all three and would open a 404 in Production;
   and `Process.Start` returning null still logs "API reference opened".
+
+  **Resolved (H1, 2026-09-19, `b4f64b1`):** all three. The container check is injectable, so the test no
+  longer depends on the runner not being a container; the method doc says what the
+  `OpenApi:LaunchBrowser` override actually does; and a null `Process.Start` is no longer logged as
+  "opened".
 
 - **All nine frontend findings are fixed (2026-08-14, `728157e` in GymOS-Platform).** The activation
   console's five and F3's four, in one increment. The sharpest three were user-facing: a valid
@@ -3896,16 +4105,20 @@ been exercised against a real grant.
 
 - **Five minor findings were deliberately carried out of M4.1's reviews**, each judged not worth the
   change it would cost, and recorded here so the judgement is visible rather than forgotten:
-  - **A withdrawal leaves no trace in the application log.** `WithdrawRedundantAsync` returns how many
-    exceptions it withdrew and all four synchronous callers discard it; only the sweep logs a count.
-    The `gymos.platform.gym_feature.override_cleared` event does reach the outbox, so this is
-    legibility rather than auditability — but a support engineer reading logs sees a subscription
+  - **~~A withdrawal leaves no trace in the application log.~~ Resolved (H1, 2026-09-19, `3d52352`):**
+    all four synchronous call sites now log through
+    `FeatureExceptionLogging.LogOverridesWithdrawn(ILogger, int, Guid, string)`, so the count reaches
+    the application log as well as the outbox. Kept for the record: `WithdrawRedundantAsync` returned
+    how many exceptions it withdrew and all four callers discarded it; only the sweep logged a count.
+    The `gymos.platform.gym_feature.override_cleared` event always reached the outbox, so this was
+    legibility rather than auditability — but a support engineer reading logs saw a subscription
     change with nothing saying it deleted an operator's grant.
-  - **`IUnitOfWork.DiscardTrackedChanges()` widens a core abstraction for one call site** (the
-    retry in `SetGymFeaturesCommandHandler`). The sequence is correct and the doc comment is careful,
-    but a future caller outside a bounded retry would silently drop pending state with no compiler or
-    test signal. A `BannedSymbols.txt` entry carrying "use only inside a single-attempt retry" would
-    close it without another interface.
+  - **~~`IUnitOfWork.DiscardTrackedChanges()` widens a core abstraction for one call site~~ Resolved
+    (H1, 2026-09-19, `31d91e4`):** the `BannedSymbols.txt` entry this paragraph proposed now exists, so
+    a caller outside the one retry fails the build. Kept for the record: the call site is the retry in
+    `SetGymFeaturesCommandHandler`; the sequence was correct and the doc comment careful, but a future
+    caller outside a bounded retry would have silently dropped pending state with no compiler or test
+    signal.
   - **The plan-edit race test detects a regression roughly one run in eight.** The asymmetry is the
     right way round — it cannot flake red on correct code — and it was proved able to fail by stashing
     the fix. But it is a probe, not a gate; a deterministic interleaving hook would make it one.
@@ -3914,13 +4127,17 @@ been exercised against a real grant.
     were extracted from forced one answer onto two different questions ("what does the database say
     now" versus "what will be true after this commit"), which was part of the Critical's root cause.
     Re-sharing it would reintroduce the defect.
-  - **`StoredException`'s CA1711 suppression is per-type**, while `.editorconfig` uses
-    `allowed_suffixes` for the same analyzer elsewhere. Two mechanisms for one rule; the narrower one
-    was chosen deliberately, but the inconsistency is worth knowing.
+  - **~~`StoredException`'s CA1711 suppression is per-type~~ Resolved (H1, 2026-09-19, `3d52352`):**
+    the `Exception` suffix is now allowed by `.editorconfig`'s `allowed_suffixes`, one mechanism for
+    one rule, and the per-type suppression is gone. Kept for the record: two mechanisms coexisted for
+    the same analyzer; the narrower one had been chosen deliberately, but the inconsistency was worth
+    knowing.
 
   Also unfixed at the unit-test layer: no test asserts that `DeleteGymCommandHandler` calls the
   maintainer — that wiring is covered only by its integration test, so a future regression in the
-  wiring would not fail fast.
+  wiring would not fail fast. **Resolved (H1, 2026-09-19, `83b4f92`):**
+  `DashboardApiTests.DeletingAGym_AsksTheMaintainerToWithdrawWhatThePlanMadeRedundant` now asserts the
+  maintainer call itself rather than asserting around it.
 
 
 - **Four minor findings were deliberately carried out of M5's reviews**, each judged not worth the
@@ -3929,38 +4146,34 @@ been exercised against a real grant.
     cancellation share a calendar day. The assertion is what makes the residual UTC-midnight race
     **self-diagnosing** rather than a mystery flake — but it is still a race. Closing it needs an
     `IClock` seam in `AuthenticationHost.Create`, which is shared by 15+ test files.
-  - `ActivityEntry.EntityType` coalesces null to `""` while `AuditLogQueries` projects the same
-    column as nullable, so `/dashboard/activity` and `/audit-logs` spell "none" two ways. One line
-    to reconcile, the day the console says which it wants.
+  - **~~`ActivityEntry.EntityType` coalesces null to `""`~~ Resolved (H1, 2026-09-19, `3d52352`):**
+    `EntityType` is nullable on the activity feed too, so `/dashboard/activity` and `/audit-logs` spell
+    "none" the same way; `contracts/openapi-v1.json` moved with it. Kept for the record: the coalesce
+    to `""` disagreed with `AuditLogQueries`' nullable projection of the same column, and it was one
+    line to reconcile once the console said which it wanted.
   - Three private copies of the same three-line `AppDbContext` factory exist across the integration
     tests (`AuthenticationHost.CreateDbContext`, `FeatureCatalogSeedingTests`, `PlatformStatsHost`).
     Task 0 collapsed the duplication that actually hurt — seven copies of the HTTP fixtures — and
     these three genuinely differ in what they need.
-  - `IDashboardHealthCheck`'s comments claim it is "the one place" an Application abstraction is
-    implemented in the host. That is **wrong**, not merely imprecise: `HttpCurrentUser`/`ICurrentUser`
-    is the same pattern in the same project. The reasoning the comment gives is sound; only the
-    uniqueness claim is false. Fix the sentence next time the file is opened.
+  - **~~`IDashboardHealthCheck`'s comments claim it is "the one place"~~ Resolved (H1, 2026-09-19,
+    this docs commit):** the remark now reads "one of the two places the host wires framework types
+    into Application seams, the other being the health-check registration itself". Kept for the record:
+    the uniqueness claim was **wrong**, not merely imprecise — `HttpCurrentUser`/`ICurrentUser` is the
+    same pattern in the same project — while the reasoning the comment gave was sound.
 
-- **An expiry recorded late by `RenewalJob` is lost from `expired_gyms` forever** (M5 whole-branch
-  review, deliberately deferred): `DailyStatsCompiler` keys `expired_gyms` on `CurrentPeriodEndUtc` —
-  the business date a period targets — not on when the expiry was actually noticed, because nothing on
-  `GymSubscription` records that moment. `RenewalJob` normally flips a subscription within 15 minutes
-  of its period ending, well inside the roughly 3.5–27.5 hour window before `PlatformStatsJob` compiles
-  that day at 03:30 UTC. But if `RenewalJob` lags past that window — a subscription that keeps throwing
-  inside the sweep, or a deploy window with `Jobs:Enabled=false` — the subscription is still `Active`
-  when its day is compiled, and because a stats row is written once and never revisited, that day's
-  expiry never gets counted, even after the sweep catches up correctly days later. The fix is an
-  `ExpiredAtUtc` column on `GymSubscription`, mirroring `CanceledAtUtc`, so `expired_gyms` keys on when
-  the expiry was recorded rather than the date it targets — a schema change to an M3.2 aggregate that
-  belongs in its own increment. Reasoning in `docs/BusinessRules/Analytics.md` §11.
-
-- **`canceled_gyms` and `expired_gyms` key on different clocks** (M5 whole-branch review, deliberately
-  deferred): `canceled_gyms` counts `CanceledAtUtc`, the real moment cancellation ran; `expired_gyms`
-  counts `CurrentPeriodEndUtc`, a business date rather than a moment anything ran. Two subscriptions
-  ending within minutes of each other either side of UTC midnight can land on different `stat_date`
-  rows, and `GET /analytics/churn` returns both columns plus their `total` as if they were computed the
-  same way. Harmless as a known approximation; worth knowing before treating the two columns, or their
-  sum, as aligned day-by-day. Reasoning in `docs/BusinessRules/Analytics.md` §11.
+- **~~An expiry recorded late by `RenewalJob` is lost from `expired_gyms` forever~~ / ~~the two churn
+  columns key on different clocks~~ — resolved at `7672bb6` (2026-08-14), before either was written
+  down here.** Both M5 whole-branch findings described `expired_gyms` as keyed on `CurrentPeriodEndUtc`,
+  a business date nothing stamps, and named an `ExpiredAtUtc` column as the fix. That column, the
+  `expired_gyms` count keyed on it, and filtered indexes on **both** churn columns had already shipped
+  in `7672bb6`; `AnExpiryIsCountedOnTheDayItWasApplied_NotTheDayThePeriodEnded` pins it. So the finding
+  was recorded after its own fix had landed, and these two paragraphs — and `Analytics.md` §11, which
+  still called the column "the real fix" — went on describing code that no longer existed. **H1
+  (2026-09-19) corrected the documents and changed no code.** What remains true, and is now stated as a
+  definition rather than a defect: both columns are dated by when the platform *recorded* the event, so
+  a period that ends while the sweep is disabled counts as churn on the day the sweep catches up. That
+  is also what makes a write-once stats row safe, because the recording moment cannot precede the row
+  that would count it.
 
 - **A gym feature override never expires** (M4 review, still deferred after M4.1): the aggregate
   records who granted the exception, when, and why, but nothing time-bounded. M4.1 built the
@@ -3973,10 +4186,15 @@ been exercised against a real grant.
   get told?), then `ExpiresAtUtc` plus one more predicate in the sweep that now already exists, rather
   than a new mechanism. Reasoning in `docs/BusinessRules/Features.md`.
 
-- **`AssignSubscriptionCommandHandler` decides feature redundancy against a plan read with no lock**
-  (M4.1 whole-branch review, deliberately deferred): unlike `SetGymFeaturesCommandHandler`, it opens
-  no explicit transaction and calls `IPlanRepository.FindByIdAsync`, not `FindByIdForUpdateAsync`,
-  before the synchronous `WithdrawRedundantAsync` call decides which of the gym's exceptions the new
+- **~~`AssignSubscriptionCommandHandler` decides feature redundancy against a plan read with no lock~~
+  — Resolved (H1, 2026-09-19, `31d91e4`).** Assign now opens one explicit transaction and reads the
+  plan under `UPDLOCK` inside it, the same shape already proven on `SetGymFeaturesCommandHandler`, with
+  a unit test pinning the locked read. The reasoning is kept below because it is the clearest statement
+  in this file of what the race cost and why it was narrow.
+
+  (M4.1 whole-branch review, deliberately deferred at the time): unlike `SetGymFeaturesCommandHandler`,
+  it opened no explicit transaction and called `IPlanRepository.FindByIdAsync`, not
+  `FindByIdForUpdateAsync`, before the synchronous `WithdrawRedundantAsync` call decides which of the gym's exceptions the new
   plan makes redundant. A `PUT /plans/{id}/features` that commits between that read and this
   handler's own commit can make the decision stale: T1 assigns a gym to a plan read as `crm = true`,
   T2 concurrently flips that plan's `crm` to `false`, and T1's maintainer — judging against its now-
@@ -3987,10 +4205,10 @@ been exercised against a real grant.
   still raises `GymFeatureOverrideCleared` in the outbox, exactly as an operator-driven clear would.
   **Narrow by construction**: only a plan-feature edit racing a subscription assignment/change on that
   exact plan, inside the few milliseconds between the read and the commit, can lose a capability this
-  way; every other interleaving converges to one consistent state or the other. The fix is the same
-  shape already proven on `SetGymFeaturesCommandHandler` — an explicit transaction plus
-  `FindByIdForUpdateAsync` around the plan read — sized for its own change rather than this wave,
-  since it touches the busiest handler in the subscriptions slice. Reasoning in
+  way; every other interleaving converges to one consistent state or the other. The fix was the same
+  shape already proven on `SetGymFeaturesCommandHandler` — an explicit transaction plus a locked plan
+  read — sized for its own change rather than that wave, since it touches the busiest handler in the
+  subscriptions slice; H1 took it, with `UPDLOCK` as SQL Server's spelling of `FOR UPDATE`. Reasoning in
   `docs/BusinessRules/Features.md`.
 
 - **`GET /features` computes adoption with two correlated subqueries per gym per feature**, with no
@@ -4018,12 +4236,13 @@ been exercised against a real grant.
   conflict, so `/auth/login` answered **409** on a login endpoint and `FailedLoginAttempts` advanced by
   one instead of five. The per-IP limiter still caps a single source.
 
-- **The dev overlay publishes ports on `0.0.0.0`**, so a running dev stack — with its
-  deliberately public admin credentials — is reachable from the local network, not just the
-  developer's machine. Harmless against an empty dev database; an exposure the moment a dev
-  stack holds data that matters. Fix when convenient: bind to loopback in
-  `docker-compose.override.yml` (`"127.0.0.1:5080:8080"`, and likewise postgres/pgadmin/seq/
-  minio/mailpit). Decided 2026-08-06 to defer.
+- **~~The dev overlay publishes ports on `0.0.0.0`~~ Resolved (H1, 2026-09-19, `3d52352`):** every
+  published port in `docker-compose.override.yml` now binds `127.0.0.1`, and `DOCKER.md` records the
+  override recipe — a `docker-compose.local.yml` passed with `-f`, rather than widening the committed
+  overlay. Kept for the record: a running dev stack, with its deliberately public admin credentials,
+  used to be reachable from the local network rather than just the developer's machine. Harmless
+  against an empty dev database; an exposure the moment a dev stack held data that mattered. Decided
+  2026-08-06 to defer; taken in H1.
 
 - Outbox **processor** (delivery to handlers with SKIP LOCKED claiming) not built yet —
   capture side only; lands with the first event handler need.
@@ -4045,10 +4264,12 @@ been exercised against a real grant.
 - **Permission resolution costs one query per authenticated request** (memoized per request).
   Deliberate: it buys immediate revocation. The cache-with-invalidation version belongs with
   the AD-45 settings/cache work, and should not be added before it is measured.
-- `POST /users/{id}/reset-password` (§3.6) is **not** implemented: it sends a time-boxed reset
-  link, so it needs email delivery. Invited accounts therefore cannot activate themselves yet —
-  the only way to give an account a password today is the `Seed:SuperAdmin` path. This is the
-  first thing to build when email lands.
+- **~~`POST /users/{id}/reset-password` (§3.6) is not implemented~~ — stale; implemented.** It is
+  mapped in `src/Host/GymOS.WebApi/Endpoints/UserEndpoints.cs` (`SendPasswordResetAsync`) over
+  `SendPasswordResetCommand`, and the whole flow — invitation, activation, reset, token lifetimes — is
+  written up in `docs/Engineering/ACCOUNT-ACTIVATION.md`. Kept for the record: this was written when
+  email delivery did not exist, and the `Seed:SuperAdmin` path was the only way to give an account a
+  password. Marked stale in H1 (2026-09-19).
 - Role **editing** endpoints do not exist and should not: seeded platform-role grants are
   reconciled to the code at startup. Editable roles are a tenant-scope feature.
 - `Asp.Versioning` reports API versions but only v1 exists; the deprecation registry and

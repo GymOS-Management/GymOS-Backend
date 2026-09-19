@@ -5,10 +5,11 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace GymOS.BuildingBlocks.Infrastructure.Idempotency;
 
 /// <summary>
-/// Maps platform.idempotency_records. The unique claim index is NOT declared here: it needs
-/// COALESCE over the nullable tenant_id (two NULLs must conflict), which EF cannot express —
-/// it lives as raw SQL in the AddIdempotencyRecords migration, same technique and reason as
-/// ix_plan_prices_plan_cycle_currency.
+/// Maps platform.idempotency_records. The unique claim index is declared in raw SQL in
+/// <c>20260823193131_RuntimeDatabaseProgrammability</c> (see the comment at its
+/// <c>CREATE UNIQUE INDEX</c>), not here: EF can express it, but SQL Server treats NULLs as equal in
+/// a unique index, so a plain index over the nullable tenant_id already makes two platform-scope
+/// claims with one key collide — the sentinel the PostgreSQL version needed is gone.
 /// </summary>
 internal sealed class IdempotencyRecordConfiguration : IEntityTypeConfiguration<IdempotencyRecord>
 {

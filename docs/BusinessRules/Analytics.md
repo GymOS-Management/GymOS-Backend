@@ -297,39 +297,20 @@ its data exists, not when its slot in the schema does.
 
 ## 11. Known limitations, recorded rather than hidden
 
-Two properties of the churn columns are true of what shipped and are not obvious from reading the
-endpoint table in §7. Both were found in the whole-branch review; neither blocks merge, and neither is
-fixed here.
+Two properties of the churn columns are recorded here because neither is obvious from reading the
+endpoint table in §7. Both were raised in the whole-branch review; the section was corrected in H1
+(2026-09-19), when the first of them turned out to be describing code that had already been fixed.
 
-**An expiry recorded late by `RenewalJob` is lost from `expired_gyms` forever.** `DailyStatsCompiler`
-counts a subscription as an expiry for day *D* when its status is `Expired` **and**
-`CurrentPeriodEndUtc` falls inside *D* — there is no column recording when the expiry was *noticed*,
-only the business date it targets. In the ordinary case this is invisible: `RenewalJob` runs every 15
-minutes, so a subscription is flipped to `Expired` within minutes of its period ending, long before
-`PlatformStatsJob` compiles that day. But `PlatformStatsJob` runs at 03:30 UTC and compiles
-*yesterday*, so the gap between a period ending and that day's compile ranges from about **3.5 hours**
-(a period ending at yesterday's 23:59:59 UTC) to about **27.5 hours** (a period ending at yesterday's
-00:00:00 UTC). If `RenewalJob` lags past that window — a subscription that keeps throwing inside the
-sweep, or a deploy window with `Jobs:Enabled=false` — the subscription is still `Active` when its day
-is compiled. Because a stats row is written once and never revisited (§2), that day's row is now
-permanent: when `RenewalJob` eventually catches up and correctly flips the subscription to `Expired`,
-the expiry has no day left to be counted on. The gym silently disappears from the churn series with
-nothing in either series to explain why — the same shape of problem §3 already names for `new_gyms`,
-but unresolved here because, unlike `CreatedAtUtc`, nothing on `GymSubscription` records *when* the
-expiry was recorded, only what it targets.
+**Both churn columns key on when the event was recorded — and did before this document said so.**
+`expired_gyms` counts subscriptions whose `ExpiredAtUtc` falls inside the day, exactly as
+`canceled_gyms` counts `CanceledAtUtc`: `RenewalJob` stamps `ExpiredAtUtc` when it applies the expiry
+(`7672bb6`, 2026-08-14; `AnExpiryIsCountedOnTheDayItWasApplied_NotTheDayThePeriodEnded` pins it), and
+both columns have filtered indexes. Earlier versions of this section described `expired_gyms` as keyed
+on `CurrentPeriodEndUtc` and called an `ExpiredAtUtc` column "the real fix"; that fix had shipped, and
+the section was not updated until H1 (2026-09-19).
 
-**The real fix** is an `ExpiredAtUtc` column on `GymSubscription`, set when `RenewalJob` actually flips
-the status, so `expired_gyms` can key on when the expiry was *recorded* — exactly matching how
-`canceled_gyms` already keys on `CanceledAtUtc` rather than on the period the cancellation applies to.
-That is a schema change to an M3.2 aggregate, and belongs in its own increment, not a fix folded into
-this one.
-
-**The two churn columns key on different clocks, and `/analytics/churn` presents them as symmetric.**
-`canceled_gyms` counts `CanceledAtUtc` — the real moment cancellation ran. `expired_gyms` counts
-`CurrentPeriodEndUtc` — a business date a period targets, not a moment anything ran (and, per the
-limitation above, not even reliably that). A subscription canceled at 23:58 UTC and one whose period
-ends at 00:02 UTC the same calendar day are three minutes apart in real time but land on different
-`stat_date` rows. `GET /analytics/churn` returns `canceled`, `expired`, and their `total` side by side
-as if both were counted the same way; they are not, and a caller correlating the two day-by-day, or
-summing `total` across a short window, should know the alignment between them is approximate rather
-than exact.
+**What that definition means.** A subscription whose period ends while the sweep is disabled
+(`Jobs:Enabled=false` for a deploy window) is counted as churn on the day the sweep catches up and
+records it, not on the day the period ended. That is the stated definition — churn is dated by when
+the platform recorded it — not a defect; it is also what makes a stats row safe to write once, because
+the recording moment cannot be earlier than the row that would count it.

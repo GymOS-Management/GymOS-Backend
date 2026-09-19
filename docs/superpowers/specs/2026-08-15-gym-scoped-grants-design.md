@@ -156,5 +156,11 @@ nothing at all would pass test 1 and be useless.
 Everything in §1 was read from the code on 2026-08-15 and is cited by file. §2's D1 rests on
 `WebApplication` inserting `UseRouting` at the head of the pipeline when endpoints are mapped — that is
 framework behaviour taken from documentation, **not observed here**, and step 1 must confirm route
-values are populated at that point before the reorder is trusted. Nothing in this spec has been built or
-executed.
+values are populated at that point before the reorder is trusted. Nothing in this spec had been built
+or executed when it was written.
+
+**2026-09-19 (H1):** steps 1 and 2 built on `development`; the `UseRouting` claim is confirmed by
+`TenantResolutionTests.ARouteWithAGymIdSetsThatTenantForTheRequest` passing with the middleware in its
+new position, without an explicit `UseRouting()` call. Test 5's status changed on inspection:
+anonymous gym routes were already 401 by accident of order; the early return is what keeps them 401
+after the reorder.

@@ -2,6 +2,83 @@
 
 ---
 
+## H1 — Hardening
+
+**Suggested version:** `0.9.1`
+**Status:** complete, awaiting review. Spec:
+[superpowers/specs/2026-09-19-h1-hardening-design.md](superpowers/specs/2026-09-19-h1-hardening-design.md).
+
+No new endpoint and no new permission. H1 closes the findings the M7 whole-branch review left standing,
+in nine tasks over eleven commits, and corrects the documents that had drifted away from the code.
+
+### Tenant resolution runs before authorization, and permissions are evaluated for the acting tenant
+
+`TenantResolutionMiddleware` now sits between `UseAuthentication()` and `UseAuthorization()`, so the
+endpoint policy and the pipeline behaviour both see the acting tenant, and an anonymous caller on a gym
+route is let through to the authentication challenge rather than answered from the middleware.
+`IIdentityQueries.GetEffectivePermissionsAsync(userId, tenantId)` returns platform grants ∪ grants
+naming that tenant, and `CallerSnapshot` caches identity per user and permissions per (user, tenant) —
+the bearer handler reads the identity half before any tenant is known, so the snapshot had to split in
+two. What this means in practice: **a gym-scoped grant would now hold only on that gym's routes** —
+`TenantResolutionTests` proves a SupportAgent grant scoped to one gym holds nothing on `/audit-logs`
+and `gyms.read` on that gym only. What it does **not** mean: no API issues such a grant.
+`SetUserRolesCommandHandler` still rejects every non-platform scope and writes a null
+`UserRole.TenantId`, and nothing can create a tenant-scoped `Role`. Steps 3–5 of the gym-scoped-grants design —
+per-gym roles, `SetGymUserRolesCommand` — belong to Members.
+
+### The seeder race, and one source for the analytics reads
+
+`SuperAdminSeeder` now takes the same transaction-scoped application lock the rest of seeding takes, so
+two hosts booting against one database no longer race to create the first administrator; `SeedingLocks`'
+own documentation was cut back to what a transaction-scoped applock actually guarantees. **Found while
+building, by the full suite:** that transaction held the connection while the seeder's
+`ISettings<LoginPolicyOptions>.Current` read asked for a second one, which deadlocks a host booted with
+a pool of one — the login policy is now read before the transaction opens (`2cd43ab`). On the
+analytics side, `DailyStatsCompiler` and `DashboardQueries` read the platform population and the
+billing figures through one shared `PlatformPopulationQueries` instead of two drifting copies, and the
+dashboard's four counts come back in one round trip instead of four.
+
+### The tests that could not fail
+
+Six assertions now test what their names promised.
+`AnalyticsApiTests.ARoleHoldingAnalyticsReadCanReadTheSeries` and `…CanReadTheSummary` are the positive
+controls the negative role tests never had. In `GymManagementTests`,
+`AWriterHoldingFeaturesRead_GetsTheResolvedFeaturesBack` and
+`AWriterWithoutFeaturesRead_GetsNullFeatures` run over six routes against a feature fake that throws
+rather than returning an empty catalogue, so `features: null` can no longer pass for "resolved to
+nothing".
+`MonthlyRecurringRevenueTests.AZeroDecimalCurrencyRoundsHalfEvenToTheWholeUnit` uses a JPY fixture that
+can actually fail, and
+`DashboardApiTests.DeletingAGym_AsksTheMaintainerToWithdrawWhatThePlanMadeRedundant` calls the
+maintainer instead of asserting around it. `SubscriptionAssignmentTests` gained a unit pin that assign
+reads the plan under `UPDLOCK` inside the command's transaction, and `DiscardTrackedChanges` is now in
+`BannedSymbols.txt` outside its one legitimate retry.
+
+### Small items
+
+**Development ports bind to `127.0.0.1`** — this is the one operators notice:
+`docker-compose.override.yml` publishes no service on every interface any more — SQL Server, the API,
+Mailpit, Redis, Seq and MinIO all bind the loopback address. To reach a service from another machine,
+override that one mapping in a `docker-compose.local.yml` and pass it with `-f`; do not widen the
+committed overlay. Also: withdrawn feature overrides are logged when a plan change
+makes them redundant; the `Exception` suffix is permitted by an `.editorconfig` rule rather than a
+per-type attribute; the activity feed's `EntityType` is nullable, which is what the data always was;
+and the API-reference browser launcher's container check is injectable, so a null `Process.Start` is no
+longer reported as "opened".
+
+### Corrected in the documents
+
+**Churn dating was already fixed before it was recorded as a finding.** `ExpiredAtUtc`, `expired_gyms`
+keyed on it, and filtered indexes on both churn columns shipped in `7672bb6` (2026-08-14);
+`Analytics.md` §11 and two STATUS paragraphs went on describing `expired_gyms` as keyed on
+`CurrentPeriodEndUtc` and calling the column "the real fix". H1 changes no code there — only the
+documents. The same pass corrected `TenantIsolation.md`, `DOCKER.md`'s architecture diagram (Mailpit is
+always on since ADR-53, not a profile), the collation note (the client-supplied `idempotency_key`
+compares case-insensitively), `IdempotencyRecordConfiguration`'s XML doc, and the `IDashboardHealthCheck`
+remark.
+
+---
+
 ## M7 — Settings & Hardening
 
 **Suggested version:** `0.9.0`

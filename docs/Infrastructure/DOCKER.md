@@ -45,8 +45,8 @@ roles and the migrator" below.
   │   ║      │  :1433  sqlcmd SELECT 1       │             ║             │
   │   ║      └───────────────┬───────────────┘             ║             │
   │   ║                      │                              ║            │
-  │   ║   profiles (off by default):                        ║            │
-  │   ║   redis · seq · minio · mailpit                     ║            │
+  │   ║   always on (since ADR-53):    mailpit              ║            │
+  │   ║   profiles (off by default):  redis · seq · minio   ║            │
   │   ╚══════════════════════│═════════════════════════════╝             │
   │                          ▼                                           │
   │            volume: gymos-mssql-data                                  │
@@ -86,7 +86,10 @@ change afterwards without rebuilding every character column and index. Case-**in
 deliberate change from the PostgreSQL cluster's `lc-collate=C`; the reasoning, and the one behavioural
 consequence, are in `docker/sqlserver/initdb/00-database.sql`. The instance collation matters
 separately from the database's: a mismatch makes every temp-table join throw a collation conflict
-against `tempdb`.
+against `tempdb`. The fifth behavioural difference from PostgreSQL, undocumented until H1: the
+client-supplied `idempotency_key` compares case-insensitively, so two keys differing only in case are
+one key here and were two under `lc-collate=C`. Negligible for random keys; worth knowing before
+choosing a key format.
 
 Health is a real query (`sqlcmd … -Q "SELECT 1"`), not a port probe. The engine accepts TCP
 connections seconds before it will answer a query, and `db-init` and the migrator both need a

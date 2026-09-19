@@ -318,14 +318,18 @@ removing read-time exemptions from the engine altogether.
   callers. **What a 2026-08-15 design pass found is that the write path is the small part:**
   `IdentityQueries.GetEffectivePermissionsAsync` filters on `UserId` alone and `UserSecuritySnapshot`
   has no tenant dimension, so a gym-scoped grant would confer its role's permissions on *every* route;
-  and `TenantResolutionMiddleware` runs after `UseAuthorization()`, so the endpoint policy and the
-  pipeline behavior could not both see the acting tenant. On top of that, nothing can create a
+  and `TenantResolutionMiddleware` ran after `UseAuthorization()` until H1, so the endpoint policy and
+  the pipeline behavior could not both see the acting tenant. On top of that, nothing can create a
   tenant-scoped `Role` at all — the only `Role.Create` call in `src/` is the seeder, always
   `RoleScope.Platform`.
-  **Designed, not built:** `docs/superpowers/specs/2026-08-15-gym-scoped-grants-design.md` carries the
-  decisions (tenant resolution moves between authentication and authorization; permissions become the
-  union of platform grants and grants naming the acting tenant; per-gym roles provisioned with the gym)
-  and a build order in which the escalation window never opens. The Members increment builds it.
+  **Steps 1–2 built in H1 (2026-09-19):** `TenantResolutionMiddleware` runs between
+  `UseAuthentication()` and `UseAuthorization()` and lets anonymous callers through to the challenge;
+  `IIdentityQueries.GetEffectivePermissionsAsync(userId, tenantId)` returns platform grants ∪ grants
+  naming the acting tenant; `CallerSnapshot` caches identity per user and permissions per
+  (user, tenant). `TenantResolutionTests` proves a SupportAgent grant scoped to one gym holds nothing
+  on `/audit-logs` and `gyms.read` on that gym only. Steps 3–5 (per-gym roles,
+  `SetGymUserRolesCommand`) remain designed, not built —
+  `docs/superpowers/specs/2026-08-15-gym-scoped-grants-design.md` — and belong to Members.
 - ~~**`TenantScope` is owed.**~~ **Built 2026-08-15** (`BuildingBlocks.Application/Tenancy`), six unit
   tests. It owns a DI scope per gym rather than clearing an ambient context — see "Where the tenant
   comes from", above, for why the design's "clear on dispose" could not be built as written. **It has

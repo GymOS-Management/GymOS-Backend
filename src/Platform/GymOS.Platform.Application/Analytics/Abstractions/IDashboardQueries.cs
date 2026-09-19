@@ -41,8 +41,9 @@ public interface IDashboardQueries
 /// (<c>HealthCheckService</c>/<c>HealthReport</c>) ships in the ASP.NET Core shared framework rather
 /// than a package this layer can reference: Application and Infrastructure are plain
 /// <c>Microsoft.NET.Sdk</c> projects, and only the host takes on <c>Microsoft.NET.Sdk.Web</c>. The
-/// implementation therefore lives in <c>GymOS.WebApi</c>, wired in <c>Program.cs</c> — the one place
-/// that boundary is allowed to be crossed — while the query and its handler stay here, so
+/// implementation therefore lives in <c>GymOS.WebApi</c>, wired in <c>Program.cs</c> — one of the two
+/// places the host wires framework types into Application seams, the other being the health-check
+/// registration itself — while the query and its handler stay here, so
 /// <c>/dashboard/health</c> goes through the dispatcher exactly like every other endpoint and gets
 /// AD-5's second permission check for free.</para>
 /// </summary>
