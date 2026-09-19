@@ -57,9 +57,10 @@ existing 404 for an authenticated caller with no grant is unchanged (grants spec
 **The route-values claim (grants spec §6).** D1 rests on `WebApplication` inserting `UseRouting` at the
 head of the pipeline when endpoints are mapped, so `Request.RouteValues["gymId"]` is populated by the
 time this middleware runs. That is framework behaviour the spec took from documentation. H1 proves it
-in the first test it writes (test 4 below, run before and after the move): a signed-in SuperAdmin hits
-`GET /api/v1/gyms/{gymId}` and the `ITenantContext` observer registered by
-`TenantResolutionTests`'s startup filter must report that tenant. If the claim is false the test fails
+with the test that already exists for the chain (`ARouteWithAGymIdSetsThatTenantForTheRequest`, test 4
+below): a signed-in SuperAdmin hits `GET /api/v1/gyms/{gymId}` and the `ITenantContext` observer
+registered by `TenantResolutionTests`'s startup filter must report that tenant — run against the
+reordered pipeline, that is the proof. If the claim is false the test fails
 against the reordered pipeline and the fix is an explicit `app.UseRouting()` before `UseAuthentication`
 — a one-line change the plan carries as the contingency, not as the default.
 
@@ -69,43 +70,77 @@ reads the tenant this middleware sets, and a check that depends on its own outpu
 
 ### 2.2 Tenant-aware evaluation (D3)
 
-`IIdentityQueries` gains an overload:
+`IIdentityQueries` today exposes `GetSecuritySnapshotAsync(userId)` — one call that reads the user's
+stamp and status and then the user-only permission join — and `GetEffectivePermissionsAsync(userId)`.
+Two readers depend on it: `CallerSnapshot` (for `PermissionEvaluator`) and the bearer handler's
+security-stamp check in `AuthenticationExtensions.ValidateSecurityStampAsync`, which runs **during
+authentication, before any tenant is known**, and needs only the stamp and status.
+
+H1 splits the two concerns so neither reader pays for the other:
 
 ```csharp
-Task<IReadOnlyCollection<string>> GetEffectivePermissionsAsync(
-    Guid userId, Guid? tenantId, CancellationToken cancellationToken);
-```
+public sealed record UserSecurityIdentity(Guid UserId, Guid SecurityStamp, string Status);
 
-Its predicate is `assignment.UserId == userId && (assignment.TenantId == null || assignment.TenantId == tenantId)`.
-With `tenantId` null the second disjunct is `TenantId == null`, so the result is exactly the platform
-grants — today's behaviour on every platform route, by construction rather than by a special case. The
-existing single-argument form remains and delegates with `tenantId: null`; its three callers
-(`SessionFactory`, `GetCurrentUserQueryHandler`, `UserQueries`) describe *the user*, not a request
-against a gym, and keep it.
-
-`GetSecuritySnapshotAsync` gains the same `Guid? tenantId` parameter and passes it through. The record
-gains the tenant it was computed for:
-
-```csharp
 public sealed record UserSecuritySnapshot(
     Guid UserId, Guid? TenantId, Guid SecurityStamp, string Status, IReadOnlyCollection<string> Permissions);
+
+public interface IIdentityQueries
+{
+    Task<UserProfile?> GetProfileAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// Stamp and status only — what the bearer handler needs on every request.
+    Task<UserSecurityIdentity?> GetSecurityIdentityAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// Platform grants only: describes the user, not a request. Kept for SessionFactory,
+    /// GetCurrentUserQueryHandler and UserQueries.
+    Task<IReadOnlyCollection<string>> GetEffectivePermissionsAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// Platform grants ∪ grants naming <paramref name="tenantId"/>. With null, exactly the platform grants.
+    Task<IReadOnlyCollection<string>> GetEffectivePermissionsAsync(
+        Guid userId, Guid? tenantId, CancellationToken cancellationToken);
+}
 ```
 
-### 2.3 The snapshot is keyed by (user, tenant) (D4)
+`GetSecuritySnapshotAsync` is removed from the interface; `CallerSnapshot` was its only caller. The
+tenant-aware predicate is
+`assignment.UserId == userId && (assignment.TenantId == null || assignment.TenantId == tenantId)`.
+With `tenantId` null the second disjunct is `TenantId == null`, so the result is exactly the platform
+grants — today's behaviour on every platform route, by construction rather than by a special case. The
+single-argument form delegates with `tenantId: null`.
 
-`CallerSnapshot` is scoped per request and caches one snapshot. Today it keys on `userId` alone. After
-H1 `ICallerSnapshot.GetAsync(Guid userId, Guid? tenantId, ct)` caches on the pair: a second call with a
-different tenant recomputes. In practice the tenant is fixed for a request before the first evaluation
-(the middleware runs before authorization), so the recompute path is a safety net, not a hot path — and
-it is what stops a snapshot computed for gym A ever answering for gym B if the order is ever changed
-again.
+### 2.3 The snapshot caches identity and permissions separately (D4)
 
-`PermissionEvaluator` takes `ITenantContext` alongside `ICurrentUser` and passes `tenantContext.TenantId`
-to the snapshot. `ITenantContext` is a BuildingBlocks abstraction already registered per scope; no new
-registration.
+`CallerSnapshot` is scoped per request. Today it caches one `UserSecuritySnapshot` keyed on `userId`.
+After H1:
+
+```csharp
+public interface ICallerSnapshot
+{
+    /// Used by the bearer handler's stamp check. Cached per user for the request.
+    Task<UserSecurityIdentity?> GetIdentityAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// Used by PermissionEvaluator. Identity from the same cache; permissions cached per (user, tenant).
+    Task<UserSecuritySnapshot?> GetAsync(Guid userId, Guid? tenantId, CancellationToken cancellationToken);
+}
+```
+
+The stamp check calls `GetIdentityAsync` (one query). Authorization later calls `GetAsync(userId,
+tenantContext.TenantId)`: identity comes from the cache, permissions cost one query for that (user,
+tenant) pair and are cached under it. A platform route therefore costs the same two queries it costs
+today; a gym route costs the same two, one of them tenant-aware. A second `GetAsync` for a different
+tenant in the same request recomputes — a safety net that stops a set computed for gym A ever
+answering for gym B if the pipeline order is changed again.
+
+`PermissionEvaluator` takes `ITenantContext` alongside `ICurrentUser` and passes `TenantId` through.
+`ITenantContext` is already registered per scope; no new registration.
 
 **The unchanged invariant.** `PermissionEvaluator` still returns `[]` for an unauthenticated caller and
 for any status other than `Active`. The suspension rule is not tenant-aware and must not become so.
+
+**Fakes.** `FakeIdentityQueries` (Application unit tests) gains `Identities` and a
+`(userId, tenantId)`-keyed `TenantPermissions` dictionary beside the existing `Permissions`; every
+existing test that populated `Snapshots` is rewritten against `Identities` + `Permissions`. The plan
+lists them by `grep`.
 
 ### 2.4 Tests (grants spec §4, tests 1–5)
 
@@ -120,7 +155,7 @@ same file's pattern: create a user via the API, then replace its platform grants
 | 1 | A user whose only grant is SupportAgent on gym A gets **403** from `GET /api/v1/audit-logs` (platform route, `audit.read`) | **No** — today the user-only join grants `audit.read` everywhere | F1, the escalation itself |
 | 2 | The same user gets **200** from `GET /api/v1/gyms/{A}` (`gyms.read`, which SupportAgent holds) | No — today the tenant middleware runs after authorization; with test 1's fix and no D3 the set is empty and this is 403 | D3's positive half; the negative control for test 1 |
 | 3 | The same user gets **404** from `GET /api/v1/gyms/{B}` | Yes today (the middleware's own check), and must stay so | The tenant is compared, not merely present |
-| 4 | A SuperAdmin's `GET /api/v1/gyms/{A}` sets tenant A on `ITenantContext` (the §6 claim), and a route with a policy the caller only holds *for A* is reached — i.e. test 2's route resolves its policy after the tenant is set | Half: the observer half passes today; the ordering half is test 2 | D1; fails if the middleware is moved back after authorization |
+| 4 | The existing `ARouteWithAGymIdSetsThatTenantForTheRequest` (tenant A observed on `ITenantContext` for a real route) still passes after the move — that is the §6 route-values proof; and test 2 is the ordering proof, because its policy can only be satisfied if the tenant was set before authorization | Observer half: yes; ordering half: no | D1; fails if the middleware is moved back after authorization |
 | 5 | An anonymous `GET /api/v1/gyms/{A}` is **401** with `WWW-Authenticate: Bearer`, not 404 | **No** — today 404 | D2 |
 
 Tests 1, 2 and 5 are shown failing on the unfixed code before the fix lands (the plan orders them
@@ -200,9 +235,12 @@ the change.
   `SubscriptionCommands.cs:127` becomes `FindByIdForUpdateAsync` inside it, so a concurrent plan feature
   edit cannot change what "redundant" means between the read and the withdraw. The early-return
   failures (gym not found, plan not found, inactive plan) happen before or inside the transaction and
-  simply dispose it without committing — nothing has been written. The existing assign-race test in
-  `ConcurrencyTests` is extended to run a plan feature edit concurrently and assert the exception row
-  agrees with the committed plan.
+  simply dispose it without committing — nothing has been written. **Verified by unit test**, not by a
+  racing integration test: `FakePlanRepository` records which reads were locked, and
+  `SubscriptionAssignmentTests` asserts one transaction opened and the plan read taken `ForUpdate`. A
+  race that passes whenever two requests happen to serialise proves nothing (STATUS 3897–3899 records
+  exactly that shape at 1-in-8 detection), and the interleaving hook that would make it deterministic is
+  out of scope here.
 - **`DiscardTrackedChanges`.** `BannedSymbols.txt` gains
   `M:GymOS.BuildingBlocks.Application.Abstractions.IUnitOfWork.DiscardTrackedChanges;Clears the whole scope's change tracker — only the SetGymFeatures retry may call it, see GymFeatureCommands`.
   The one call site carries `#pragma warning disable RS0030` / restore around the call with the reason
@@ -273,15 +311,16 @@ every owner item.
 
 ## 5. Verification plan
 
-**Unit.** `PermissionEvaluator` with a fake snapshot: null tenant → platform set; tenant A → union;
-suspended user → empty regardless of tenant. `CallerSnapshot`: same (user, tenant) → one query; a
-different tenant → a second query. `MonthlyRecurringRevenue` JPY 12,005 and 12,007. Summary handler
+**Unit (Infrastructure.UnitTests; `InternalsVisibleTo` exists).** `PermissionEvaluator` with a fake
+snapshot: null tenant → platform set; tenant A → union; suspended user → empty regardless of tenant.
+`CallerSnapshot` with a fake `IIdentityQueries`: `GetIdentityAsync` then `GetAsync` for the same user →
+one identity query; two `GetAsync` for the same (user, tenant) → one permissions query; a different
+tenant → a second permissions query. `SubscriptionAssignmentTests`: one transaction, plan read locked. `MonthlyRecurringRevenue` JPY 12,005 and 12,007. Summary handler
 `mrr` order. `DeleteGymCommandHandler` calls the maintainer once. Six gym write-route tests exercise
 `features.read` both ways. `ApiReferenceBrowserRegistrationTests` in/out of container.
 
 **Integration (real SQL Server, the leased-database pattern).** Grants tests 1–5 (§2.4), 1, 2 and 5
-red-first. `SuperAdminSeedingTests`: two concurrent seeders, one user. `ConcurrencyTests`: assign vs
-plan feature edit. Three `AnalyticsRead` tests with PlatformAdmin positive controls. `DashboardApiTests`
+red-first. `SuperAdminSeedingTests`: two concurrent seeders, one user. Three `AnalyticsRead` tests with PlatformAdmin positive controls. `DashboardApiTests`
 summary unchanged in values after the query rewrite (existing tests). `MaintenanceModeTests` still pass
 with the middleware order changed (SuperAdmin passes on a gym route too — one added case).
 `ApiEndpointTests` secured count stays 65. `OpenApiContractTests` snapshot updated once for
