@@ -8,6 +8,7 @@ using GymOS.Platform.Domain.Invoices;
 using GymOS.Platform.Domain.Monitoring;
 using GymOS.Platform.Domain.Subscriptions;
 using GymOS.Platform.Infrastructure.Persistence;
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Xunit;
@@ -99,6 +100,8 @@ public sealed class ConcurrencyModelTests
         // recorder's single `UPDATE … WHERE id = @id` from Running to a final status, issued without
         // loading the row and guarded by `status = Running` so a finished run is never touched again.
         [typeof(JobRun)] = "written by one host under IJobLock; finished by one UPDATE by id guarded by status = Running, never through SaveChanges",
+
+        [typeof(DataProtectionKey)] = "ASP.NET Data Protection's own key store: append-only XML rows written by the framework's key manager, never edited",
     };
 
     [Fact]

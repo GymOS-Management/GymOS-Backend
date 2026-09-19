@@ -15,6 +15,9 @@
     <!-- Argon2id password hashing (AD-4) — provider SDK, adapter-only by policy. -->
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
     <PackageReference Include="MailKit" />
+    <!-- Persists the Data Protection key ring in platform.data_protection_keys (M7, AD-9) — an
+         Infrastructure concern because the key store needs AppDbContext. -->
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

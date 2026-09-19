@@ -1276,6 +1276,76 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("job_runs", "platform");
                 });
 
+            modelBuilder.Entity("GymOS.Platform.Domain.Settings.PlatformSetting", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("id");
+
+                    b.Property<byte>("Category")
+                        .HasColumnType("tinyint")
+                        .HasColumnName("category");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("datetimeoffset")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("description");
+
+                    b.Property<bool>("IsSensitive")
+                        .HasColumnType("bit")
+                        .HasColumnName("is_sensitive");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("key");
+
+                    b.Property<string>("ProtectedValue")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("protected_value");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("row_version");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("datetimeoffset")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("updated_by");
+
+                    b.Property<string>("Value")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("value");
+
+                    b.Property<byte>("ValueType")
+                        .HasColumnType("tinyint")
+                        .HasColumnName("value_type");
+
+                    b.HasKey("Id")
+                        .HasName("pk_platform_settings");
+
+                    b.HasIndex("Key")
+                        .IsUnique()
+                        .HasDatabaseName("ux_platform_settings_key");
+
+                    b.ToTable("platform_settings", "platform", t =>
+                        {
+                            t.HasCheckConstraint("ck_platform_settings_one_value", "([value] IS NULL AND [protected_value] IS NOT NULL) OR ([value] IS NOT NULL AND [protected_value] IS NULL)");
+                        });
+                });
+
             modelBuilder.Entity("GymOS.Platform.Domain.Subscriptions.GymSubscription", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1554,6 +1624,30 @@ namespace GymOS.Platform.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_subscription_plans_code_upper", "code = upper(code)");
                         });
+                });
+
+            modelBuilder.Entity("Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("FriendlyName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .HasColumnName("friendly_name");
+
+                    b.Property<string>("Xml")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("xml");
+
+                    b.HasKey("Id")
+                        .HasName("pk_data_protection_keys");
+
+                    b.ToTable("data_protection_keys", "platform");
                 });
 
             modelBuilder.Entity("GymOS.BuildingBlocks.Infrastructure.Outbox.OutboxDelivery", b =>

@@ -3,6 +3,7 @@ using GymOS.Platform.Domain.Features;
 using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Invoices;
+using GymOS.Platform.Domain.Settings;
 using GymOS.Platform.Domain.Subscriptions;
 
 namespace GymOS.Platform.Infrastructure.Persistence.Auditing;
@@ -49,6 +50,10 @@ public static class PlatformAuditedEntities
         // not a credential — and "which payment was this recorded against" is the audit question.
         AuditedEntity.Of<Invoice>("invoice"),
         AuditedEntity.Of<InvoiceLine>("invoice_line"),
+
+        // What the platform is configured to do, and who changed it. The protected column is always
+        // redacted; the plain column is the whole point of auditing this table (M7 spec §3).
+        AuditedEntity.Of<PlatformSetting>("platform_setting", alwaysRedacted: [nameof(PlatformSetting.ProtectedValue)]),
 
         // Deliberately absent:
         //   RefreshToken — every sign-in and rotation writes one, so auditing rows here
