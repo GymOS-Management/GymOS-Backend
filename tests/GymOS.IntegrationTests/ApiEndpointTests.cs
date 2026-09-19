@@ -228,7 +228,8 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         // operations landed in the anonymous list above, which is the answer this tripwire exists
         // to make somebody check.
         // 57 → 60 in M6 task 10: the three monitoring operations (overview, jobs, job runs).
-        Assert.Equal(60, secured.Count);
+        // 60 → 62 in M7 task 7: the two settings operations (get, update).
+        Assert.Equal(62, secured.Count);
     }
 
     /// <summary>

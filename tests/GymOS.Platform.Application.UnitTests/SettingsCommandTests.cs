@@ -246,9 +246,9 @@ public sealed class SettingsCommandTests
         SettingView host = result.Value.Single(v => v.Key == "email.smtp_host");
         SettingView password = result.Value.Single(v => v.Key == "email.smtp_password");
         Assert.Equal("smtp.example.com", host.Value);
-        Assert.Equal(SettingSource.Database, host.Source);
+        Assert.Equal("Database", host.Source);
         Assert.Equal(PlatformSettingDefinitions.Mask, password.Value);
-        Assert.Equal(SettingSource.Database, password.Source);
+        Assert.Equal("Database", password.Source);
         Assert.Equal(1, fixture.Provider.Invalidations);
         Assert.Equal(1, fixture.UnitOfWork.SaveCount);
     }
@@ -264,8 +264,27 @@ public sealed class SettingsCommandTests
         Assert.True(result.IsSuccess);
         Assert.Equal(10, result.Value.Count);
         SettingView port = result.Value.Single(v => v.Key == "email.smtp_port");
-        Assert.Equal(SettingSource.Default, port.Source);
+        Assert.Equal("Default", port.Source);
         Assert.Equal("1025", port.Value);
+    }
+
+    [Fact]
+    public async Task ADuplicateKeyInOneBatchIsRefused()
+    {
+        Fixture fixture = new Fixture().ActingAs(PlatformPermissions.SettingsManage);
+
+        Result<IReadOnlyList<SettingView>> result = await fixture.Dispatcher.SendAsync(
+            new UpdateSettingsCommand(SettingCategory.Email,
+            [
+                new SettingValueWrite("email.smtp_host", "one.example.test"),
+                new SettingValueWrite("email.smtp_host", "two.example.test"),
+            ]),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("settings.duplicate_key", result.Error!.Code);
+        Assert.Empty(fixture.Repository.Rows);
+        Assert.Equal(0, fixture.UnitOfWork.SaveCount);
     }
 
     [Fact]

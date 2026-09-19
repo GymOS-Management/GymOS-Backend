@@ -2258,6 +2258,89 @@
         ],
         "type": "object"
       },
+      "SettingValueWrite": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "type": "object"
+      },
+      "SettingView": {
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "isSensitive": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "updatedAtUtc": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "updatedBy": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "valid": {
+            "type": "boolean"
+          },
+          "validationMessage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "value": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "valueType": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "category",
+          "valueType",
+          "isSensitive",
+          "description",
+          "value",
+          "source",
+          "valid",
+          "validationMessage",
+          "updatedBy",
+          "updatedAtUtc"
+        ],
+        "type": "object"
+      },
       "SignInRequest": {
         "properties": {
           "email": {
@@ -2612,6 +2695,24 @@
           "storageLimitMb",
           "sortOrder",
           "isPublic"
+        ],
+        "type": "object"
+      },
+      "UpdateSettingsRequest": {
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/SettingValueWrite"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "category",
+          "values"
         ],
         "type": "object"
       },
@@ -7089,6 +7190,153 @@
         ]
       }
     },
+    "/api/v1/settings": {
+      "get": {
+        "description": "Every declared setting, optionally narrowed to one \u0060category\u0060. \u0060source\u0060 says which layer answered: a stored row beats configuration, which beats the definition\u0027s own default. A sensitive key\u0027s value comes back as \u0022\u2022\u2022\u2022\u2022\u0022 once a row exists for it \u2014 the plaintext is never returned by this endpoint. The Maintenance category is readable here but changes only through its own endpoint, not this one\u0027s PUT.",
+        "operationId": "GetSettings",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SettingView"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The declared catalog, each key\u0027s effective value and where it came from",
+        "tags": [
+          "Settings"
+        ]
+      },
+      "put": {
+        "description": "Every key in \u0060values\u0060 must belong to \u0060category\u0060. An empty string or a null value deletes the row, returning that key to configuration or its own default; for a sensitive key, sending back \u0022\u2022\u2022\u2022\u2022\u0022 leaves the stored value unchanged. The Maintenance category is refused here (400 \u0060settings.use_maintenance_endpoint\u0060) \u2014 it changes only through its own confirmed endpoint. The whole batch is checked before anything is written: a duplicate key, an unknown key, a key from another category, a value that fails its own rule, or a would-be state that fails cross-field validation all fail the entire batch with nothing changed. Returns the category\u0027s fresh views on success.",
+        "operationId": "UpdateSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SettingView"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Write one category\u0027s batch of settings",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
     "/api/v1/users": {
       "get": {
         "description": "Paged and filterable. \u0060search\u0060 matches email, first name, and last name; \u0060status\u0060 filters on Active, Suspended, or PendingActivation. \u0060pageSize\u0060 is capped server-side.",
@@ -7872,6 +8120,9 @@
     },
     {
       "name": "Monitoring"
+    },
+    {
+      "name": "Settings"
     },
     {
       "name": "Platform users"

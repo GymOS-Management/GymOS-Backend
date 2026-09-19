@@ -363,6 +363,7 @@ try
     app.MapDashboardEndpoints();
     app.MapAnalyticsEndpoints();
     app.MapMonitoringEndpoints();
+    app.MapSettingsEndpoints();
     app.MapUserEndpoints();
     app.MapRoleEndpoints();
     app.MapAuditLogEndpoints();

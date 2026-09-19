@@ -12,12 +12,12 @@ public static class SettingViews
     public static SettingView From(EffectiveSetting effective, bool valid = true, string? validationMessage = null) =>
         new(
             effective.Definition.Key,
-            effective.Definition.Category,
-            effective.Definition.ValueType,
+            effective.Definition.Category.ToString(),
+            effective.Definition.ValueType.ToString(),
             effective.Definition.IsSensitive,
             effective.Definition.Description,
             effective.Definition.IsSensitive && effective.Value is not null ? PlatformSettingDefinitions.Mask : effective.Value,
-            effective.Source,
+            effective.Source.ToString(),
             valid,
             validationMessage,
             effective.UpdatedBy,
@@ -63,6 +63,19 @@ public sealed class SettingsWriter
     public async Task<Result<IReadOnlyList<SettingView>>> ApplyAsync(
         SettingCategory category, IReadOnlyList<SettingValueWrite> values, CancellationToken ct)
     {
+        // 0: no key may appear twice in one batch — before anything else, ordinal comparison.
+        // ISettingsRepository.FindByKeyAsync queries the database, not the change tracker, so a
+        // second occurrence of the same key would insert a second row rather than update the
+        // first, and trip the unique index instead of failing cleanly.
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (SettingValueWrite write in values)
+        {
+            if (!seenKeys.Add(write.Key))
+            {
+                return Fail(SettingErrors.DuplicateKey(write.Key));
+            }
+        }
+
         // 1-2: definitions, categories, types and ranges — before any row is touched.
         var resolved = new List<(SettingDefinition Definition, string? Value)>();
         foreach (SettingValueWrite write in values)

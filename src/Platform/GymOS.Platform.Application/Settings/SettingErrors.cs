@@ -23,6 +23,14 @@ public static class SettingErrors
     public static Error InvalidValue(string key, string rule) =>
         Error.Validation("settings.invalid_value", $"`{key}` {rule}.");
 
+    /// <summary>The same key appears more than once in one write batch.</summary>
+    public static Error DuplicateKey(string key) =>
+        Error.Validation("settings.duplicate_key", $"'{key}' appears more than once in the batch.");
+
+    /// <summary>The GET or PUT named a category the catalog does not declare.</summary>
+    public static Error UnknownCategory(string category) =>
+        Error.Validation("settings.unknown_category", $"'{category}' is not a known setting category.");
+
     /// <summary>Maintenance settings change only through the dedicated, confirmed endpoint.</summary>
     public static Error UseMaintenanceEndpoint { get; } = Error.Validation(
         "settings.use_maintenance_endpoint",

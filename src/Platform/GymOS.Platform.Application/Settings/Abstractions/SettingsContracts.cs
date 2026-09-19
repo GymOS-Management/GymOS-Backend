@@ -12,15 +12,20 @@ public enum SettingSource
 }
 
 /// <summary>A setting as the console reads it: the catalog's shape plus the value actually in effect
-/// and where it came from, and — for a value that fails its own definition's rule — why.</summary>
+/// and where it came from, and — for a value that fails its own definition's rule — why.
+///
+/// <para><c>Category</c>, <c>ValueType</c> and <c>Source</c> travel as the enum's name (e.g.
+/// <c>"Email"</c>, <c>"Int"</c>, <c>"Database"</c>), not as the enum itself: every other enum the
+/// API exposes is a plain string in its DTO, and this surface does not introduce the first
+/// exception.</para></summary>
 public sealed record SettingView(
     string Key,
-    SettingCategory Category,
-    SettingValueType ValueType,
+    string Category,
+    string ValueType,
     bool IsSensitive,
     string Description,
     string? Value,
-    SettingSource Source,
+    string Source,
     bool Valid,
     string? ValidationMessage,
     Guid? UpdatedBy,
