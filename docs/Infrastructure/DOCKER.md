@@ -58,10 +58,14 @@ Files, and which environment each applies to:
 | File | Applied | Contains |
 |---|---|---|
 | `docker-compose.yml` | always | Service topology, health checks, volumes, networks, hardening. No credentials, no published ports. |
-| `docker-compose.override.yml` | **automatically** | Development: public credentials, published ports, relaxed Argon2 cost, email on via the Mailpit sidecar. |
+| `docker-compose.override.yml` | **automatically** | Development: public credentials, ports published on loopback only, relaxed Argon2 cost, email on via the Mailpit sidecar. |
 | `docker-compose.prod.yml` | only when named | Production: required secrets, no database port, loopback binding, internal data network, resource limits. |
 | `src/Host/GymOS.WebApi/Dockerfile` | build | Three stages: restore → publish → runtime. |
 | `.env.example` | template | Every variable, with defaults. Copy to `.env` only to change something. |
+
+Every development port binds to `127.0.0.1`; to reach a service from another machine, override that
+one mapping in a `docker-compose.local.yml` and pass it with `-f` — do not widen the committed
+overlay.
 
 The asymmetry is deliberate: the *development* overlay is the automatic one, so forgetting a flag
 gives you the hardened stack on a laptop, never the laptop stack in production.

@@ -16,7 +16,6 @@ namespace GymOS.Platform.Domain.Features;
 public static class GymFeatureExceptions
 {
     /// <summary>One override as stored: which feature, and what it forces.</summary>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1711:Identifiers should not have incorrect suffix")]
     public sealed record StoredException(Guid FeatureId, bool IsEnabled);
 
     /// <param name="planOpinions">

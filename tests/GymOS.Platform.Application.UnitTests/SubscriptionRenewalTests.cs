@@ -6,6 +6,7 @@ using GymOS.Platform.Domain.Invoices;
 using GymOS.Platform.Domain.Subscriptions;
 using GymOS.SharedKernel.Currencies;
 using GymOS.TestingSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace GymOS.Platform.Application.UnitTests;
@@ -39,7 +40,8 @@ public sealed class SubscriptionRenewalTests
             Plans,
             new InvoiceIssuer(Invoices, new FakeInvoiceNumberGenerator(), Clock),
             FeatureExceptions,
-            UnitOfWork);
+            UnitOfWork,
+            NullLogger<SubscriptionRenewalService>.Instance);
 
         public SubscriptionPlan GivenPlan(string code = "PRO", int trialDays = 0, decimal amount = 49.99m)
         {

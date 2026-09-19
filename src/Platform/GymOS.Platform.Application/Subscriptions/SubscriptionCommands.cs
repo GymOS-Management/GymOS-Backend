@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
+using GymOS.Platform.Application.Features;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms;
 using GymOS.Platform.Application.Gyms.Abstractions;
@@ -12,6 +13,7 @@ using GymOS.Platform.Domain.Subscriptions;
 using GymOS.SharedKernel;
 using GymOS.SharedKernel.Currencies;
 using GymOS.SharedKernel.Results;
+using Microsoft.Extensions.Logging;
 
 namespace GymOS.Platform.Application.Subscriptions;
 
@@ -84,6 +86,7 @@ internal sealed class AssignSubscriptionCommandHandler
     private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
+    private readonly ILogger<AssignSubscriptionCommandHandler> _logger;
 
     public AssignSubscriptionCommandHandler(
         IGymRepository gyms,
@@ -93,7 +96,8 @@ internal sealed class AssignSubscriptionCommandHandler
         InvoiceIssuer issuer,
         IFeatureExceptionMaintainer featureExceptions,
         IUnitOfWork unitOfWork,
-        IClock clock)
+        IClock clock,
+        ILogger<AssignSubscriptionCommandHandler> logger)
     {
         _gyms = gyms;
         _plans = plans;
@@ -103,6 +107,7 @@ internal sealed class AssignSubscriptionCommandHandler
         _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
         _clock = clock;
+        _logger = logger;
     }
 
     public async Task<Result<SubscriptionDetail>> HandleAsync(
@@ -284,10 +289,15 @@ internal sealed class AssignSubscriptionCommandHandler
         // a brand-new assignment is an unsaved Add, invisible to any query run before this method's
         // SaveChangesAsync below. Before the same save, so the withdrawal and the change that
         // caused it commit together.
-        await _featureExceptions.WithdrawRedundantAsync(
+        int withdrawn = await _featureExceptions.WithdrawRedundantAsync(
             command.GymId,
             subscription.IsLive ? subscription.PlanId : null,
             cancellationToken);
+        if (withdrawn > 0)
+        {
+            FeatureExceptionLogging.LogOverridesWithdrawn(
+                _logger, withdrawn, command.GymId, "subscription assignment");
+        }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -347,6 +357,7 @@ internal sealed class SubscriptionStateCommandHandlers :
     private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
+    private readonly ILogger<SubscriptionStateCommandHandlers> _logger;
 
     public SubscriptionStateCommandHandlers(
         ISubscriptionRepository subscriptions,
@@ -355,7 +366,8 @@ internal sealed class SubscriptionStateCommandHandlers :
         InvoiceIssuer issuer,
         IFeatureExceptionMaintainer featureExceptions,
         IUnitOfWork unitOfWork,
-        IClock clock)
+        IClock clock,
+        ILogger<SubscriptionStateCommandHandlers> logger)
     {
         _subscriptions = subscriptions;
         _subscriptionQueries = subscriptionQueries;
@@ -364,6 +376,7 @@ internal sealed class SubscriptionStateCommandHandlers :
         _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
         _clock = clock;
+        _logger = logger;
     }
 
     public Task<Result<SubscriptionDetail>> HandleAsync(
@@ -538,10 +551,15 @@ internal sealed class SubscriptionStateCommandHandlers :
         // sets Status in memory, so a query run before the save below would still match the
         // not-yet-saved row as live and hand back the plan that is ending, not "no live plan" — the
         // gap this addendum exists to close. Before the save, same transaction.
-        await _featureExceptions.WithdrawRedundantAsync(
+        int withdrawn = await _featureExceptions.WithdrawRedundantAsync(
             gymId,
             subscription.IsLive ? subscription.PlanId : null,
             cancellationToken);
+        if (withdrawn > 0)
+        {
+            FeatureExceptionLogging.LogOverridesWithdrawn(
+                _logger, withdrawn, gymId, "subscription state change");
+        }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 

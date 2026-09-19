@@ -36,7 +36,10 @@
             "type": "string"
           },
           "entityType": {
-            "type": "string"
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "occurredAtUtc": {
             "format": "date-time",

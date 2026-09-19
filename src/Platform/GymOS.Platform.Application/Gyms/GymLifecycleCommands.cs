@@ -1,6 +1,7 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.BuildingBlocks.Application.Messaging;
 using GymOS.BuildingBlocks.Application.Security;
+using GymOS.Platform.Application.Features;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Gyms.Abstractions;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
@@ -8,6 +9,7 @@ using GymOS.Platform.Domain.Gyms;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Subscriptions;
 using GymOS.SharedKernel.Results;
+using Microsoft.Extensions.Logging;
 
 namespace GymOS.Platform.Application.Gyms;
 
@@ -234,19 +236,22 @@ internal sealed class DeleteGymCommandHandler : ICommandHandler<DeleteGymCommand
     private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
+    private readonly ILogger<DeleteGymCommandHandler> _logger;
 
     public DeleteGymCommandHandler(
         IGymRepository gyms,
         ISubscriptionRepository subscriptions,
         IFeatureExceptionMaintainer featureExceptions,
         IUnitOfWork unitOfWork,
-        IClock clock)
+        IClock clock,
+        ILogger<DeleteGymCommandHandler> logger)
     {
         _gyms = gyms;
         _subscriptions = subscriptions;
         _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
         _clock = clock;
+        _logger = logger;
     }
 
     public async Task<Result> HandleAsync(DeleteGymCommand command, CancellationToken cancellationToken)
@@ -307,7 +312,11 @@ internal sealed class DeleteGymCommandHandler : ICommandHandler<DeleteGymCommand
         // live and hand back the plan that is ending, not "no live plan" — the same reasoning the
         // other three WithdrawRedundantAsync call sites already rely on. Before the same save, so
         // the withdrawal and the deletion that caused it commit together or not at all.
-        await _featureExceptions.WithdrawRedundantAsync(command.GymId, null, cancellationToken);
+        int withdrawn = await _featureExceptions.WithdrawRedundantAsync(command.GymId, null, cancellationToken);
+        if (withdrawn > 0)
+        {
+            FeatureExceptionLogging.LogOverridesWithdrawn(_logger, withdrawn, command.GymId, "gym deletion");
+        }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 

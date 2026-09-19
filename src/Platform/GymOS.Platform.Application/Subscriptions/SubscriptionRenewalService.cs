@@ -1,9 +1,11 @@
 using GymOS.BuildingBlocks.Application.Abstractions;
+using GymOS.Platform.Application.Features;
 using GymOS.Platform.Application.Features.Abstractions;
 using GymOS.Platform.Application.Invoices;
 using GymOS.Platform.Application.Subscriptions.Abstractions;
 using GymOS.Platform.Domain.Subscriptions;
 using GymOS.SharedKernel.Currencies;
+using Microsoft.Extensions.Logging;
 
 namespace GymOS.Platform.Application.Subscriptions;
 
@@ -46,19 +48,22 @@ public sealed class SubscriptionRenewalService
     private readonly InvoiceIssuer _issuer;
     private readonly IFeatureExceptionMaintainer _featureExceptions;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ILogger<SubscriptionRenewalService> _logger;
 
     public SubscriptionRenewalService(
         ISubscriptionRepository subscriptions,
         IPlanRepository plans,
         InvoiceIssuer issuer,
         IFeatureExceptionMaintainer featureExceptions,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        ILogger<SubscriptionRenewalService> logger)
     {
         _subscriptions = subscriptions;
         _plans = plans;
         _issuer = issuer;
         _featureExceptions = featureExceptions;
         _unitOfWork = unitOfWork;
+        _logger = logger;
     }
 
     public async Task<RenewalAction> ProcessAsync(
@@ -208,6 +213,9 @@ public sealed class SubscriptionRenewalService
 
             if (withdrawn > 0)
             {
+                FeatureExceptionLogging.LogOverridesWithdrawn(
+                    _logger, withdrawn, subscription.GymId, "renewal");
+
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
             }
         }

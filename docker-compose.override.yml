@@ -34,10 +34,15 @@ services:
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-Gymos_dev_sa_password1}
 
     ports:
+      # Every published port in this overlay binds to loopback. The credentials in this file are public,
+      # so a dev stack reachable from the LAN is a dev stack anyone on the LAN can sign in to. A developer
+      # who needs another machine to reach a service overrides that one line in a docker-compose.local.yml
+      # (`- '0.0.0.0:5080:8080'`) rather than widening it for everyone.
+      #
       # Published so sqlcmd, Azure Data Studio, SSMS, EF Core migrations, and container-free local
       # runs can all reach it from the host. Production publishes nothing — see
       # docker-compose.prod.yml.
-      - '${MSSQL_PORT:-1433}:1433'
+      - '127.0.0.1:${MSSQL_PORT:-1433}:1433'
 
     # Development machines sometimes already run SQL Server (or LocalDB) on 1433; if the port is
     # taken, set MSSQL_PORT=1434 in .env rather than stopping the local service. The API is
@@ -139,7 +144,7 @@ services:
     ports:
       # 5080 matches the port `dotnet run` uses via launchSettings.json, so a URL from the README
       # or a colleague works whether the API is running in a container or on the host.
-      - '${API_PORT:-5080}:8080'
+      - '127.0.0.1:${API_PORT:-5080}:8080'
 
     # read_only stays on in development too. A setting that only applies in production is a
     # setting whose failure mode is discovered in production — if the application starts needing
@@ -198,8 +203,8 @@ services:
     # are above 1024 — so it has no reason to be root. The image defaults to root; this overrides it.
     user: '1000:1000'
     ports:
-      - '${MAILPIT_SMTP_PORT:-1025}:1025' # SMTP, for the application to send to
-      - '${MAILPIT_UI_PORT:-8025}:8025' # web UI, for a human to read
+      - '127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025' # SMTP, for the application to send to
+      - '127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025' # web UI, for a human to read
     healthcheck:
       test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:8025/readyz']
       interval: 15s
@@ -220,7 +225,7 @@ services:
 
   redis:
     ports:
-      - '${REDIS_PORT:-6379}:6379'
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
 
   seq:
     environment:
@@ -228,8 +233,8 @@ services:
       # `admin`.
       SEQ_FIRSTRUN_ADMINPASSWORD: ${SEQ_ADMIN_PASSWORD:-gymos-dev-seq}
     ports:
-      - '${SEQ_UI_PORT:-8341}:80' # web UI
-      - '${SEQ_INGEST_PORT:-5341}:5341' # ingestion, for a host-run API to log into
+      - '127.0.0.1:${SEQ_UI_PORT:-8341}:80' # web UI
+      - '127.0.0.1:${SEQ_INGEST_PORT:-5341}:5341' # ingestion, for a host-run API to log into
 
   minio:
     environment:
@@ -238,5 +243,5 @@ services:
       # is not enough on its own.
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gymos-dev-minio}
     ports:
-      - '${MINIO_API_PORT:-9000}:9000' # S3 API
-      - '${MINIO_CONSOLE_PORT:-9001}:9001' # web console
+      - '127.0.0.1:${MINIO_API_PORT:-9000}:9000' # S3 API
+      - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001' # web console

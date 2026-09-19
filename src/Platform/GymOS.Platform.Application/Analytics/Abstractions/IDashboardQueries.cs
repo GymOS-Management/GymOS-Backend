@@ -21,7 +21,7 @@ public sealed record HealthCheckStatus(string Name, string Status);
 public sealed record DashboardHealth(string Status, IReadOnlyList<HealthCheckStatus> Checks);
 
 public sealed record ActivityEntry(
-    DateTimeOffset OccurredAtUtc, string Action, string EntityType, string? UserEmail);
+    DateTimeOffset OccurredAtUtc, string Action, string? EntityType, string? UserEmail);
 
 /// <summary>
 /// Live reads for the dashboard (§3.2). Everything here queries the operational tables at request

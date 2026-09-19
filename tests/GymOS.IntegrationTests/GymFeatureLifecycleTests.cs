@@ -9,6 +9,7 @@ using GymOS.Platform.Domain.Subscriptions;
 using GymOS.Platform.Infrastructure.Invoices;
 using GymOS.Platform.Infrastructure.Persistence;
 using GymOS.Platform.Infrastructure.Persistence.Repositories;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -361,7 +362,8 @@ public sealed class GymFeatureLifecycleTests : IAsyncLifetime
             new PlanRepository(context),
             new InvoiceIssuer(new InvoiceRepository(context), new InvoiceNumberGenerator(context), Clock),
             new FeatureExceptionMaintainer(new FeatureRepository(context), new PlanRepository(context)),
-            new UnitOfWork(context));
+            new UnitOfWork(context),
+            NullLogger<SubscriptionRenewalService>.Instance);
 
         return await service.ProcessAsync(subscriptionId, Clock.UtcNow, CancellationToken.None);
     }

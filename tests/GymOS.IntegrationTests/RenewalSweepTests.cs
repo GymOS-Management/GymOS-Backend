@@ -11,6 +11,7 @@ using GymOS.Platform.Infrastructure.Persistence.Queries;
 using GymOS.Platform.Infrastructure.Persistence.Repositories;
 using GymOS.SharedKernel.Currencies;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace GymOS.IntegrationTests;
@@ -54,7 +55,8 @@ public sealed class RenewalSweepTests : IAsyncLifetime
         new InvoiceIssuer(
             new InvoiceRepository(context), new InvoiceNumberGenerator(context), Clock),
         new FeatureExceptionMaintainer(new FeatureRepository(context), new PlanRepository(context)),
-        new UnitOfWork(context));
+        new UnitOfWork(context),
+        NullLogger<SubscriptionRenewalService>.Instance);
 
     /// <summary>A gym on a monthly plan whose period began in the past — due when backdated enough.</summary>
     private async Task<Guid> SeedSubscriptionAssignedAtAsync(DateTimeOffset assignedAt)

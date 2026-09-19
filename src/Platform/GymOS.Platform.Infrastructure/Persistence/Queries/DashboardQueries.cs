@@ -58,9 +58,9 @@ internal sealed class DashboardQueries : IDashboardQueries
                 log.CreatedAtUtc,
                 log.Action,
 
-                // Explicit audit entries (a failed sign-in, for instance) carry no entity type. The
-                // feed reports that as empty rather than widening the wire contract to nullable.
-                log.EntityType ?? string.Empty,
+                // Null for explicit audit entries (a failed sign-in, for instance) — the same shape
+                // AuditLogQueries projects, so the feed and the log agree.
+                log.EntityType,
                 log.UserEmail))
             .ToListAsync(cancellationToken);
 }
