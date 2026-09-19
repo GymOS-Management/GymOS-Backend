@@ -70,6 +70,28 @@ public static class PlatformPermissions
     /// </summary>
     public const string MonitoringRead = "monitoring.read";
 
+    /// <summary>
+    /// Read the settings surface (§3.10) with sensitive values masked. Granted to PlatformAdmin and
+    /// ReadOnly: a masked read carries no secret.
+    /// </summary>
+    public const string SettingsRead = "settings.read";
+
+    /// <summary>
+    /// Change settings, test the SMTP connection, toggle maintenance mode. <b>SuperAdmin only</b>: the
+    /// category holds SMTP credentials, the lockout policy and the token lifetime — platform-level
+    /// authority, the same reasoning that keeps <c>billing.manage</c> from PlatformAdmin. The maintenance
+    /// middleware treats holding this permission as "may pass while maintenance is on" (M7 spec §6).
+    /// </summary>
+    public const string SettingsManage = "settings.manage";
+
+    /// <summary>
+    /// Export the audit log as a file. Separate from <see cref="AuditRead"/> and withheld from
+    /// SupportAgent: a bulk export of who did what, with emails and IP addresses, is personal data
+    /// leaving the system, and the person who may read a screen is not automatically the person who
+    /// may walk out with the table (M7 spec §8).
+    /// </summary>
+    public const string AuditExport = "audit.export";
+
     public static readonly IReadOnlyList<PermissionDefinition> All =
     [
         new(GymsRead, ModuleName, "View gyms and their details"),
@@ -89,5 +111,8 @@ public static class PlatformPermissions
         new(FeaturesManage, ModuleName, "Edit the feature catalogue and set or clear gym overrides"),
         new(AnalyticsRead, ModuleName, "View the dashboard summary and analytics series"),
         new(MonitoringRead, ModuleName, "View platform health, job runs and queue depth"),
+        new(SettingsRead, ModuleName, "View platform settings, sensitive values masked"),
+        new(SettingsManage, ModuleName, "Change platform settings, test email, toggle maintenance mode"),
+        new(AuditExport, ModuleName, "Export the audit log as a file"),
     ];
 }

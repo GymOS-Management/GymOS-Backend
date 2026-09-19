@@ -48,6 +48,8 @@ public static class SystemRoles
 
                 PlatformPermissions.AnalyticsRead,
                 PlatformPermissions.MonitoringRead, // M6: operational state is not commercially sensitive; see PlatformPermissions.MonitoringRead.
+                PlatformPermissions.SettingsRead, // M7: masked reads carry no secret.
+                PlatformPermissions.AuditExport, // M7: export is personal data leaving the system; PlatformAdmin, not SupportAgent.
             ]),
         new(
             SupportAgent,
@@ -97,6 +99,7 @@ public static class SystemRoles
                 PlatformPermissions.FeaturesRead,
                 PlatformPermissions.AnalyticsRead,
                 PlatformPermissions.MonitoringRead, // M6: operational state is not commercially sensitive; see PlatformPermissions.MonitoringRead.
+                PlatformPermissions.SettingsRead, // M7: masked reads carry no secret.
             ]),
     ];
 }
