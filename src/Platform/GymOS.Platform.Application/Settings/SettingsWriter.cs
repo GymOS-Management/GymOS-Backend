@@ -80,6 +80,15 @@ public sealed class SettingsWriter
         var resolved = new List<(SettingDefinition Definition, string? Value)>();
         foreach (SettingValueWrite write in values)
         {
+            // A null or whitespace key names nothing the catalog could ever declare, and
+            // PlatformSettingDefinitions.TryGet's dictionary lookup throws on a null key rather than
+            // just failing to find it — so this is checked first, and reported the same way an unknown
+            // key is.
+            if (string.IsNullOrWhiteSpace(write.Key))
+            {
+                return Fail(SettingErrors.UnknownKey(write.Key ?? string.Empty));
+            }
+
             if (!PlatformSettingDefinitions.TryGet(write.Key, out SettingDefinition definition))
             {
                 return Fail(SettingErrors.UnknownKey(write.Key));

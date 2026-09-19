@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text.Json;
+using GymOS.BuildingBlocks.Application.Abstractions;
 using GymOS.Platform.Domain.Settings;
 using GymOS.Platform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -129,6 +130,18 @@ public sealed class SettingsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AMissingValuesArrayIs400()
+    {
+        using HttpResponseMessage response = await _client.PutAsJsonAsync(
+            new Uri("/api/v1/settings", UriKind.Relative),
+            new { category = "Email" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("settings.invalid_value", body.RootElement.GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task TheMaintenanceCategoryIs400Here()
     {
         using HttpResponseMessage response = await PutAsync("Maintenance", ("maintenance.enabled", "true"));
@@ -136,6 +149,30 @@ public sealed class SettingsApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal("settings.use_maintenance_endpoint", body.RootElement.GetProperty("code").GetString());
+    }
+
+    /// <summary>
+    /// Proves the row version guards the aggregate deterministically (M7 spec §11): interleaving two
+    /// sequential contexts, not racing two HTTP calls that would not be reproducible. The HTTP 409
+    /// mapping for this same exception is already covered by <c>ConcurrencyTests</c> against a
+    /// different aggregate; this test is only about the settings write path throwing the exception the
+    /// mapping expects.
+    /// </summary>
+    [Fact]
+    public async Task AStaleWriteIsRefusedByTheRowVersion()
+    {
+        using HttpResponseMessage seed = await PutAsync("Email", ("email.smtp_host", "one"));
+        Assert.Equal(HttpStatusCode.OK, seed.StatusCode);
+
+        await using AppDbContext contextA = _host.CreateDbContext();
+        PlatformSetting row = await contextA.Set<PlatformSetting>().SingleAsync(s => s.Key == "email.smtp_host");
+
+        using HttpResponseMessage second = await PutAsync("Email", ("email.smtp_host", "two"));
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+
+        row.Set("three", null, null);
+        await Assert.ThrowsAsync<ConcurrencyConflictException>(
+            () => new UnitOfWork(contextA).SaveChangesAsync(CancellationToken.None));
     }
 
     [Fact]

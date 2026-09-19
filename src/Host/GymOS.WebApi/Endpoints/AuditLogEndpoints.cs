@@ -51,7 +51,7 @@ public static class AuditLogEndpoints
                 "filters as the list, no paging; rows stream oldest first. Nine columns; " +
                 "`oldValues`/`newValues` are not exported — read them per entry. The export " +
                 "itself is recorded in the audit log with the filter and the row count.")
-            .Produces<string>(StatusCodes.Status200OK, contentType: "text/csv")
+            .Produces<string>(StatusCodes.Status200OK, contentType: "text/csv; charset=utf-8")
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);

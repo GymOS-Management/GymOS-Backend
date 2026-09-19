@@ -3347,7 +3347,7 @@
         "responses": {
           "200": {
             "content": {
-              "text/csv": {
+              "text/csv; charset=utf-8": {
                 "schema": {
                   "type": "string"
                 }

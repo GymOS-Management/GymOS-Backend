@@ -61,6 +61,10 @@ internal sealed partial class SettingsProvider : ISettingsProvider, IDisposable
     private static partial void LogUnprotectFailed(ILogger logger, string key, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error,
+        Message = "Non-sensitive setting '{Key}' has a null value; treating it as if it had no stored value.")]
+    private static partial void LogNullValue(ILogger logger, string key);
+
+    [LoggerMessage(Level = LogLevel.Error,
         Message = "Settings reload failed; continuing to serve the previous cached snapshot.")]
     private static partial void LogReloadFailed(ILogger logger, Exception exception);
 
@@ -214,6 +218,15 @@ internal sealed partial class SettingsProvider : ISettingsProvider, IDisposable
                     // Unprotect call below throws ArgumentNullException and takes the whole reload down.
                     LogUnprotectFailed(_logger, definition.Key, new InvalidOperationException(
                         $"Sensitive setting '{definition.Key}' has a null protected value."));
+                    decrypted = false;
+                }
+                else if (!definition.IsSensitive && row.Value is null)
+                {
+                    // Mirror of the guard above, for the other half of the same check constraint: a row
+                    // for a non-sensitive definition with `protected_value` set and `value` null also
+                    // satisfies ck_platform_settings_one_value. Without this guard, ToConfigurationValue
+                    // below is called with a null value and can throw, taking the whole reload down.
+                    LogNullValue(_logger, definition.Key);
                     decrypted = false;
                 }
                 else

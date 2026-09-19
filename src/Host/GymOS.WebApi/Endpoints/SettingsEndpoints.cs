@@ -128,6 +128,11 @@ public static class SettingsEndpoints
         IDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
+        if (request is null || request.Values is null)
+        {
+            return Result.Failure(SettingErrors.InvalidValue("values", "is required")).ToProblem();
+        }
+
         if (!TryParseCategory(request.Category, out SettingCategory category))
         {
             return Result.Failure(SettingErrors.UnknownCategory(request.Category)).ToProblem();
@@ -166,8 +171,10 @@ public static class SettingsEndpoints
     }
 
     /// <summary>
-    /// Against the names, not by number: <c>Enum.TryParse</c> alone accepts any numeric string
-    /// ("999"), so <c>Enum.IsDefined</c> is required too.
+    /// Accepts the defined member names, or the numeric value of a defined member: <c>Enum.TryParse</c>
+    /// alone accepts any numeric string ("999") whether or not it names a defined member, so
+    /// <c>Enum.IsDefined</c> is required too, to reject an undefined number the same way an undefined
+    /// name is rejected.
     /// </summary>
     private static bool TryParseCategory(string value, out SettingCategory category) =>
         Enum.TryParse(value, ignoreCase: true, out category) && Enum.IsDefined(category);

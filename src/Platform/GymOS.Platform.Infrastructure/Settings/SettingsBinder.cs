@@ -19,6 +19,10 @@ public sealed record SettingsBinding<T>(string SectionName) where T : class, new
 /// process-wide cache, <see cref="IConfiguration"/> and <see cref="SettingsBinding{T}"/> are immutable,
 /// and every <see cref="IValidateOptions{T}"/> registered through <c>AddOptions&lt;T&gt;()</c>'s
 /// <c>ValidateDataAnnotations</c>/<c>Validate</c> is itself singleton.
+/// When the overlay fails validation and there is no previous valid value at all, the configuration-only
+/// fallback (below-overlay bind) is itself cached as <c>_lastValid</c> against the failing overlay's
+/// reference, so a persistently invalid overlay binds the fallback once, not on every read — a later,
+/// different overlay reference still forces a fresh bind and can supersede it.
 /// </summary>
 internal sealed partial class SettingsBinder<T> : ISettings<T> where T : class, new()
 {
@@ -88,6 +92,11 @@ internal sealed partial class SettingsBinder<T> : ISettings<T> where T : class, 
                 LogFellBackToConfiguration(_logger, typeof(T).Name, failures ?? "unknown");
                 if (belowOverlay is not null)
                 {
+                    // Cache the fallback itself: _boundOverlay above still points at the invalid overlay
+                    // that got us here, so a repeat read with that same (reference-equal) overlay is now
+                    // a cache hit instead of rebinding twice. A later, different overlay reference still
+                    // forces a fresh bind and can supersede this fallback.
+                    _lastValid = belowOverlay;
                     return belowOverlay;
                 }
 
@@ -104,6 +113,13 @@ internal sealed partial class SettingsBinder<T> : ISettings<T> where T : class, 
             .AddConfiguration(_configuration)
             .AddInMemoryCollection(overlay) // later wins: rows over configuration
             .Build();
+
+        // ConfigurationRoot registers change-token callbacks against every provider it holds, including
+        // _configuration (the host's own root, via AddConfiguration); only Dispose() releases them, and
+        // this instance is never referenced again once we've read out of it. AddConfiguration(config)
+        // does not itself dispose the inner configuration, so disposing `merged` here is safe and does
+        // not tear down the host's configuration.
+        using IDisposable _ = (IDisposable)merged;
 
         var instance = new T();
         merged.GetSection(_binding.SectionName).Bind(instance);

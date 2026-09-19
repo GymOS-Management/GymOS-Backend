@@ -211,7 +211,7 @@ public interface ISettings<T> where T : class, new()
 }
 ```
 
-`SettingsProvider` is a per-process singleton cache, TTL `Settings:CacheTtl` (default 30 seconds).
+`SettingsProvider` is a per-process singleton cache, TTL `Settings:CacheTtlSeconds` (default 30 seconds).
 `ISettings<T>` (`SettingsBinder<T>`) is **also a singleton**, guarded by a `Lock`: it binds the
 provider's overlay into the existing options class through `IConfiguration`'s own `ConfigurationBuilder`
 (rows chained over real configuration, "later wins") and runs the registered `IValidateOptions<T>`
@@ -230,6 +230,12 @@ existing snapshot immediately when one exists, kicking off at most one backgroun
 first reader already pays after start-up. The async readers (`GetEffectiveAsync`, `GetOverlayAsync`,
 used by the read/write handlers) always await a fresh load when the snapshot is stale, which is what
 lets a `PUT`'s own re-read see the row it just wrote in the same request.
+
+**The row version guards true interleaving only.** `PUT /settings` takes no `If-Match`, so two
+administrators who edit the same category one after the other — read, write, then a second read,
+write — are last-write-wins: the second `PUT` simply overwrites the first, unnoticed, because it
+never carried the first's row version to conflict against. Only two writes racing against the *same*
+already-read row version produce the `ConcurrencyConflictException` → 409 in §4 step 6.
 
 **Consumers changed type, nothing else** — `IOptions<T>` → `ISettings<T>`, `.Value` → `.Current` — in
 `SmtpEmailSender`, `ActivationLinks` (`EmailOptions`); `SignInCommandHandler`, `SessionFactory`,
@@ -309,6 +315,11 @@ request carries a subject claim; `/health*` and `/version` resolve to `RateLimit
 so a probe is never throttled. A rejection is **429** with problem details `type:
 "security.rate_limited"` and `Retry-After` in whole seconds.
 
+**The global anonymous bucket also counts `POST /auth/login`** — a sign-in attempt is an anonymous
+request before it is anything else, so it consumes from both the `sign-in` policy and the global
+anonymous one; lowering `security.anonymous_requests_per_minute` below the sign-in allowance
+therefore tightens sign-in itself, not just everything else an anonymous caller does.
+
 **`SlidingWindowRateLimiter` — the global limiter's kind — never reports `Retry-After` metadata**
 (verified against this SDK's `System.Threading.RateLimiting`; `FixedWindowRateLimiter`, which the
 sign-in policy uses, always does). `OnRejected` falls back to a fixed 10 seconds
@@ -318,6 +329,15 @@ own six-segment, one-minute window, the shortest interval guaranteed to have fre
 `UseRateLimiter()` moved to **after `UseAuthentication()`**, so the global limiter's partition factory
 can read the subject claim; the final middleware order in `Program.cs` is: `UseAuthentication` →
 `UseRateLimiter` → `MaintenanceModeMiddleware` → `UseAuthorization`.
+
+**JWT validation now runs before limiting.** `UseAuthentication()` moving ahead of `UseRateLimiter()`
+means every request pays for HMAC signature validation even when it is about to be rejected as
+over-limit — accepted, because the check is a cheap symmetric-key verification, not a database or
+network call.
+
+**The rate limiter runs before the maintenance middleware.** A polling anonymous client that keeps
+hitting the API while maintenance mode is on exhausts its bucket and sees **429**, not **503**, once
+it is over-limit — the maintenance response only reaches callers the limiter still admits.
 
 **Limits are per replica** — the in-memory limiter's honest scope. A distributed store is deferred
 (design §1); a two-replica deployment allows roughly twice the configured number in aggregate.
@@ -339,7 +359,11 @@ minus paging:
   character is `=`, `+`, `-`, `@`, tab, or carriage return is prefixed with `'` **before** quoting, so
   the guard character survives the very quote a spreadsheet strips on open (CSV-injection defence).
   Rows carry **exactly one CRLF** — the `StreamWriter`'s own `NewLine = "\r\n"`; `AuditCsv.FormatRow`
-  itself writes no line terminator, so there is never a doubled one.
+  itself writes no line terminator, so there is never a doubled one. This relies on no exported field
+  ever containing a line break of its own: ids and timestamps are formatted values, `ip_address` is a
+  parsed `IPAddress`, `action` and `entity_type` are constants from the platform's own catalog, and
+  `user_email` is validated on the way in — none of them is free-text that could smuggle a CR or LF
+  into the middle of a row.
 - **Permission `audit.export`**, new: granted to **SuperAdmin and PlatformAdmin, not SupportAgent**
   (who keeps `audit.read`) — a bulk file of who did what, with IP addresses and emails, is personal
   data under GDPR leaving the system, and the ability to read a screen is not the ability to walk out
@@ -347,9 +371,10 @@ minus paging:
 - Audited as the non-entity action `audit.exported`, with the filter and the row count, recorded
   **after** the stream completes (from inside the `Results.Stream` callback, in the same request
   scope) so the count reflects lines that actually reached the response body.
-- The OpenAPI response declares `text/csv` via `.Produces<string>(StatusCodes.Status200OK,
-  contentType: "text/csv")` — the handler's real return type is `IResult` (`Results.Stream`), and this
-  annotation exists purely to document the content type Scalar/clients should expect.
+- The OpenAPI response declares `text/csv; charset=utf-8` via `.Produces<string>(StatusCodes.Status200OK,
+  contentType: "text/csv; charset=utf-8")` — the handler's real return type is `IResult`
+  (`Results.Stream`), and this annotation exists purely to document the content type Scalar/clients
+  should expect, matching what the endpoint actually sends.
 
 ## 10. Endpoints
 
@@ -398,7 +423,7 @@ number alike is `settings.unknown_category`, 400.
 ## 13. Known limitations, recorded rather than hidden
 
 **TTL staleness is real, in two shapes.** Across replicas, a write on one replica is invisible to
-another for up to `Settings:CacheTtl` (30 seconds) — there is no cross-replica invalidation signal
+another for up to `Settings:CacheTtlSeconds` (30 seconds) — there is no cross-replica invalidation signal
 (§12). On the *same* replica, a synchronous reader (`ISettings<T>.Current`, via `GetOverlayNow()`)
 can still see the pre-write value for a moment after a successful `PUT` on that same process: the
 write path's own re-read is async and sees the fresh row immediately, but a concurrent synchronous

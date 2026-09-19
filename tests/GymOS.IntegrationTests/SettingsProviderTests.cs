@@ -154,6 +154,37 @@ public sealed class SettingsProviderTests : IAsyncLifetime
         Assert.Equal("row.example.test", refreshed["Email:Smtp:Host"]);
     }
 
+    [Fact]
+    public async Task AFreshKeyManagerDecryptsFromTheDatabaseRing()
+    {
+        using (IServiceScope scope = _host.Services.CreateScope())
+        {
+            var protector = scope.ServiceProvider.GetRequiredService<ISettingProtector>();
+            string ciphertext = protector.Protect("email.smtp_password", "s3cret");
+            await SeedRowAsync("email.smtp_password", protectedValue: ciphertext);
+        }
+
+        // A second process against the same database, from a cold start: its Data Protection key
+        // manager has never seen this ring in memory, so decrypting the row proves the ring itself —
+        // not just this process's cache of it — lives in the database (the scale-to-zero case: a new
+        // instance, or the same instance after a restart, must still be able to read what an earlier
+        // instance wrote).
+        await using AuthenticationHost second = AuthenticationHost.Create(
+            _host.ConnectionString, settings => settings["Jobs:Enabled"] = "false");
+        using (HttpClient secondClient = second.CreateClient())
+        {
+            using HttpResponseMessage ready = await secondClient.GetAsync(new Uri("/health/ready", UriKind.Relative));
+            Assert.Equal(System.Net.HttpStatusCode.OK, ready.StatusCode);
+        }
+
+        using IServiceScope secondScope = second.Services.CreateScope();
+        var provider = secondScope.ServiceProvider.GetRequiredService<ISettingsProvider>();
+        provider.Invalidate();
+        IReadOnlyList<EffectiveSetting> all = await provider.GetEffectiveAsync(CancellationToken.None);
+
+        Assert.Equal("s3cret", Find(all, "email.smtp_password").Value);
+    }
+
     private async Task SeedRowAsync(string key, string? plain = null, string? protectedValue = null)
     {
         Assert.True(PlatformSettingDefinitions.TryGet(key, out SettingDefinition definition));

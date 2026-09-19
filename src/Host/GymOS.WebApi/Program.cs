@@ -100,7 +100,13 @@ try
     // (AZURE.md §7). Inert otherwise — the config value is the switch.
     if (builder.Configuration["DataProtection:KeyVaultKeyId"] is { Length: > 0 } keyVaultKeyId)
     {
-        builder.Services.AddDataProtection().ProtectKeysWithAzureKeyVault(new Uri(keyVaultKeyId), new DefaultAzureCredential());
+        if (!Uri.TryCreate(keyVaultKeyId, UriKind.Absolute, out Uri? keyId))
+        {
+            throw new InvalidOperationException(
+                "DataProtection:KeyVaultKeyId must be an absolute URI such as https://<vault>.vault.azure.net/keys/<name>/<version>.");
+        }
+
+        builder.Services.AddDataProtection().ProtectKeysWithAzureKeyVault(keyId, new DefaultAzureCredential());
     }
 
     // `/dashboard/health` needs `HealthCheckService`, which ships in the ASP.NET Core shared

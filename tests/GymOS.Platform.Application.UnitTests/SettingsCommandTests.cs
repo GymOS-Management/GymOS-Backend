@@ -114,6 +114,21 @@ public sealed class SettingsCommandTests
     }
 
     [Fact]
+    public async Task ANullOrWhitespaceKeyIsRefusedAsUnknownAndNothingIsWritten()
+    {
+        Fixture fixture = new Fixture().ActingAs(PlatformPermissions.SettingsManage);
+
+        Result<IReadOnlyList<SettingView>> result = await fixture.Dispatcher.SendAsync(
+            new UpdateSettingsCommand(SettingCategory.Email, [new SettingValueWrite(null!, "x")]),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("settings.unknown_key", result.Error!.Code);
+        Assert.Empty(fixture.Repository.Rows);
+        Assert.Equal(0, fixture.UnitOfWork.SaveCount);
+    }
+
+    [Fact]
     public async Task AKeyFromAnotherCategoryIsRefused()
     {
         Fixture fixture = new Fixture().ActingAs(PlatformPermissions.SettingsManage);

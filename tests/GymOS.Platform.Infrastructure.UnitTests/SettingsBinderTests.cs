@@ -104,6 +104,52 @@ public sealed class SettingsBinderTests
         Assert.False(current.Enabled);
     }
 
+    /// <summary>Counts calls to <c>Validate</c> so the fallback-caching test can prove a second read
+    /// does not rebind.</summary>
+    private sealed class CountingEmailValidator : IValidateOptions<EmailOptions>
+    {
+        public int CallCount { get; private set; }
+
+        public ValidateOptionsResult Validate(string? name, EmailOptions options)
+        {
+            CallCount++;
+            return !options.Enabled || !string.IsNullOrWhiteSpace(options.Smtp.Host)
+                ? ValidateOptionsResult.Success
+                : ValidateOptionsResult.Fail("Smtp:Host is required when Enabled is true.");
+        }
+    }
+
+    [Fact]
+    public void ASecondReadOfAPersistentlyInvalidOverlayDoesNotRebindTheFallback()
+    {
+        // Configuration alone (Enabled=false) is valid; the overlay is fixed and invalid (Enabled=true,
+        // no host) and never changes reference between reads, so the second Current must be a cache hit
+        // — no further calls to Validate at all, for either the overlay bind or the fallback bind.
+        var provider = new FakeSettingsProvider
+        {
+            Overlay = new Dictionary<string, string?> { ["Email:Enabled"] = "true" },
+        };
+        IConfigurationRoot config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Email:Enabled"] = "false" })
+            .Build();
+        var validator = new CountingEmailValidator();
+
+        var settings = new SettingsBinder<EmailOptions>(
+            provider, config, new SettingsBinding<EmailOptions>(EmailOptions.SectionName),
+            [validator], NullLogger<SettingsBinder<EmailOptions>>.Instance);
+
+        EmailOptions first = settings.Current;
+        Assert.False(first.Enabled); // the cached configuration-only fallback
+
+        int callsAfterFirstRead = validator.CallCount;
+        Assert.True(callsAfterFirstRead > 0);
+
+        EmailOptions second = settings.Current;
+
+        Assert.Same(first, second);
+        Assert.Equal(callsAfterFirstRead, validator.CallCount); // no rebind on the second read
+    }
+
     [Fact]
     public void AnInvalidOverlayAfterAValidOneServesThePreviousValidOne()
     {

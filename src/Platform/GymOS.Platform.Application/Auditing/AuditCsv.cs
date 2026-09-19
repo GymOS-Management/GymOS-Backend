@@ -16,6 +16,15 @@ namespace GymOS.Platform.Application.Auditing;
 /// or a carriage return) is prefixed with <c>'</c> before quoting: the export leaves the platform as
 /// a file a human is expected to open in a spreadsheet, and a crafted user email or action must not
 /// execute there.
+///
+/// <para><b>Assumes no field can contain an embedded line break.</b> <see cref="FormatRow"/> writes no
+/// line terminator of its own and relies on the caller's <see cref="System.IO.StreamWriter"/> to write
+/// exactly one CRLF per record; <see cref="Escape"/> does not guard a CR or LF appearing anywhere but
+/// the first character of a field. That is safe only because every field here is one the platform
+/// itself controls the shape of: ids and timestamps are formatted values, the IP address is a parsed
+/// <c>IPAddress</c>, <c>action</c> and <c>entity_type</c> are constants from the platform's own
+/// catalog, and <c>user_email</c> is validated on the way in. None of them is free-text a caller could
+/// use to smuggle a line break into the middle of a row.</para>
 /// </summary>
 public static class AuditCsv
 {

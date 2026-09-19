@@ -6,8 +6,9 @@ disk the suite had outgrown, and MinIO leaving Docker Hub.** The top section is 
 session: the failure named with evidence and fixed, the UAT deploy failure diagnosed as Azure's free-tier
 cap (a decision, not code), and the resume point for M6; **M6 itself is now implemented on
 `development` at `e502a85`**, with its "what landed" subsection under that same session. **M7 —
-Settings & Hardening — is now implemented on `development` too**, eleven commits `b5dd5cb..39bb010`
-plus this docs commit, with its own "what landed" subsection alongside M6's. The sections
+Settings & Hardening — is now implemented on `development` too**, eleven commits, `b62f859..39bb010`
+(range notation excludes the base), plus this docs commit, plus the final-review fix commit that
+follows, with its own "what landed" subsection alongside M6's. The sections
 after it are the 2026-09-03 resumption and its decisions, then the merge and the two failures it
 exposed, then picking the branch up on a second machine, then everything after the SQL Server merge;
 the paragraphs beyond that describe the migration as it stood on its branch and are kept for their
@@ -51,7 +52,8 @@ one migrated database and lease only when they mutate — a performance incremen
 not a line in a workflow. The "M6 — what landed" subsection below the 2026-09-18 resumption's other
 entries has the file map and the deviations found while building it.
 **M7 — Settings & Hardening — is implemented at the head of `development`** (commits
-`b5dd5cb..39bb010`, eleven commits, against
+`b62f859..39bb010`, eleven commits (range notation excludes the base), plus the final-review fix
+commit that follows, against
 `docs/superpowers/specs/2026-09-19-m7-settings-and-hardening-design.md`), on the M6 precedent: the
 24-key declared settings catalog with `ISettingsProvider` and typed `ISettings<T>`, sensitive values
 under Data Protection with the key ring in the database, a confirmed maintenance-mode toggle, a global
@@ -343,7 +345,7 @@ flag on the DTO, not a fix-wave edit).
 
 ### M7 — what landed
 
-Eleven commits, `b5dd5cb..39bb010`, build the module bottom-up against
+Eleven commits, `b62f859..39bb010` (range notation excludes the base), build the module bottom-up against
 `docs/superpowers/specs/2026-09-19-m7-settings-and-hardening-design.md`. `b5dd5cb` declares the
 catalog — `PlatformSettingDefinitions.All`, 24 keys across five categories, each typed and ranged.
 `4b76b68` adds `platform.platform_settings` and the Data Protection key ring
@@ -359,7 +361,7 @@ setting. `39bb010` adds `GET /audit-logs/export` as streamed CSV, and its own au
 `docs/BusinessRules/Settings.md` and the release-notes section this task also writes carry the shipped
 rules in full; this is the resume summary.
 
-**Twelve things worth recording, each a controller ruling made while building rather than something
+**Thirteen things worth recording, each a controller ruling made while building rather than something
 the spec or plan got to decide in advance:**
 
 1. `security.sign_in_window_seconds` overlays a new integer path
@@ -409,6 +411,9 @@ the spec or plan got to decide in advance:**
     `Results.Stream`.
 12. Package versions pinned: `Microsoft.AspNetCore.DataProtection.EntityFrameworkCore` 10.0.11,
     `Azure.Extensions.AspNetCore.DataProtection.Keys` 1.6.4, `Azure.Identity` 1.21.0.
+13. `email.smtp_username` is non-sensitive per the spec's table, so `settings.read` (PlatformAdmin,
+    ReadOnly) sees the SMTP account name in the clear — the owner may want it sensitive; a one-row
+    catalog change.
 
 **Known limitations**, stated in full in `Settings.md` §13: TTL staleness (30 seconds across replicas,
 and for a synchronous reader on the same replica between a write's `Invalidate()` and the background
