@@ -327,6 +327,12 @@ try
 
     app.UseRateLimiter();
     app.UseAuthentication();
+
+    // M7 spec §6: after authentication, so IPermissionEvaluator can resolve who the caller is;
+    // before authorization, so a refused caller is turned away with 503 before any route policy or
+    // handler runs. Task 10 will move UseRateLimiter after authentication — untouched here.
+    app.UseMiddleware<MaintenanceModeMiddleware>();
+
     app.UseAuthorization();
 
     // After authorization, because it reads the caller's grants; before anything opens a connection,

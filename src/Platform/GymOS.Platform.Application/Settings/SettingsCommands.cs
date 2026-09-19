@@ -14,7 +14,72 @@ namespace GymOS.Platform.Application.Settings;
 [RequiresPermission(PlatformPermissions.SettingsManage)]
 public sealed record UpdateSettingsCommand(SettingCategory Category, IReadOnlyList<SettingValueWrite> Values) : ICommand<Result<IReadOnlyList<SettingView>>>;
 
-// Task 9's set-maintenance-mode command joins this file.
+/// <summary>Toggles maintenance mode (M7 spec §6). The one write the general-purpose
+/// <see cref="UpdateSettingsCommand"/> refuses: because it takes the whole platform offline for every
+/// caller but a SuperAdmin, it requires step-up confirmation (AD-6) — the literal word
+/// <c>"maintenance"</c> in <c>X-Confirm-Action</c> — on top of the permission check every settings
+/// write already requires.</summary>
+[RequiresPermission(PlatformPermissions.SettingsManage)]
+public sealed record SetMaintenanceModeCommand(bool Enabled, string? Message, string? Confirmation)
+    : ICommand<Result<IReadOnlyList<SettingView>>>;
+
+internal sealed class SetMaintenanceModeCommandHandler
+    : ICommandHandler<SetMaintenanceModeCommand, Result<IReadOnlyList<SettingView>>>
+{
+    private readonly SettingsWriter _writer;
+    private readonly IAuditTrail _auditTrail;
+    private readonly IUnitOfWork _unitOfWork;
+
+    public SetMaintenanceModeCommandHandler(SettingsWriter writer, IAuditTrail auditTrail, IUnitOfWork unitOfWork)
+    {
+        _writer = writer;
+        _auditTrail = auditTrail;
+        _unitOfWork = unitOfWork;
+    }
+
+    public async Task<Result<IReadOnlyList<SettingView>>> HandleAsync(
+        SetMaintenanceModeCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        if (string.IsNullOrWhiteSpace(command.Confirmation))
+        {
+            return Result.Failure<IReadOnlyList<SettingView>>(SettingErrors.ConfirmationRequired);
+        }
+
+        if (!string.Equals(command.Confirmation.Trim(), "maintenance", StringComparison.Ordinal))
+        {
+            return Result.Failure<IReadOnlyList<SettingView>>(SettingErrors.ConfirmationMismatch);
+        }
+
+        Result<IReadOnlyList<SettingView>> result = await _writer.ApplyAsync(
+            SettingCategory.Maintenance,
+            [
+                new SettingValueWrite("maintenance.enabled", command.Enabled ? "true" : "false"),
+                new SettingValueWrite(
+                    "maintenance.message",
+                    string.IsNullOrWhiteSpace(command.Message) ? null : command.Message),
+            ],
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result;
+        }
+
+        _auditTrail.Record(
+            "settings.maintenance_mode_changed",
+            details: new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["enabled"] = command.Enabled.ToString(),
+                ["message"] = command.Message,
+            });
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return result;
+    }
+}
 
 internal sealed class UpdateSettingsCommandHandler : ICommandHandler<UpdateSettingsCommand, Result<IReadOnlyList<SettingView>>>
 {

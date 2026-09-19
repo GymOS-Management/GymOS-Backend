@@ -290,6 +290,13 @@ public sealed class SettingsApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal("settings.email_disabled", body.RootElement.GetProperty("code").GetString());
+
+        // Refused before any connection attempt, so no `settings.email_tested` audit row exists either.
+        using HttpResponseMessage audit = await _client.GetAsync(
+            new Uri("/api/v1/audit-logs?action=settings.email_tested", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, audit.StatusCode);
+        using JsonDocument auditBody = JsonDocument.Parse(await audit.Content.ReadAsStringAsync());
+        Assert.Equal(0, auditBody.RootElement.GetProperty("items").GetArrayLength());
     }
 
     private async Task<JsonElement> TestEmailAsync()

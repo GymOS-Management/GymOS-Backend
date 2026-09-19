@@ -6,6 +6,7 @@ using GymOS.Platform.Application.Settings.Abstractions;
 using GymOS.Platform.Domain.Identity;
 using GymOS.Platform.Domain.Settings;
 using GymOS.SharedKernel.Results;
+using GymOS.WebApi.Extensions;
 
 namespace GymOS.WebApi.Endpoints;
 
@@ -81,6 +82,22 @@ public static class SettingsEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        group.MapPost("/maintenance-mode", SetMaintenanceModeAsync)
+            .RequireAuthorization(PlatformPermissions.SettingsManage)
+            .RequiresConfirmAction()
+            .WithName("SetMaintenanceMode")
+            .WithSummary("Turn maintenance mode on or off")
+            .WithDescription(
+                "Requires the `X-Confirm-Action` header carrying the literal word `maintenance` "
+                    + "(AD-6): while it is on, every caller but a SuperAdmin — holding `settings.manage` "
+                    + "— is refused with 503, so a mis-clicked toggle must not be able to close the "
+                    + "whole platform. `message` is shown to refused callers; omitting it falls back to "
+                    + "the definition's own default. Returns the Maintenance category's fresh views.")
+            .Produces<IReadOnlyList<SettingView>>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         return endpoints;
     }
 
@@ -132,6 +149,22 @@ public static class SettingsEndpoints
         return result.IsSuccess ? TypedResults.Ok(result.Value) : result.ToProblem();
     }
 
+    private static async Task<IResult> SetMaintenanceModeAsync(
+        SetMaintenanceModeRequest request,
+        HttpContext httpContext,
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        Result<IReadOnlyList<SettingView>> result = await dispatcher.SendAsync(
+            new SetMaintenanceModeCommand(
+                request.Enabled,
+                request.Message,
+                ConfirmationHeaders.ConfirmAction(httpContext.Request)),
+            cancellationToken);
+
+        return result.IsSuccess ? TypedResults.Ok(result.Value) : result.ToProblem();
+    }
+
     /// <summary>
     /// Against the names, not by number: <c>Enum.TryParse</c> alone accepts any numeric string
     /// ("999"), so <c>Enum.IsDefined</c> is required too.
@@ -142,3 +175,7 @@ public static class SettingsEndpoints
 
 /// <summary>The PUT body: a category and the batch of key/value writes for it (M7 spec §4).</summary>
 public sealed record UpdateSettingsRequest(string Category, IReadOnlyList<SettingValueWrite> Values);
+
+/// <summary>The maintenance-mode toggle's body (M7 spec §6). Confirmation travels as the
+/// <c>X-Confirm-Action</c> header, not a body field, per AD-6.</summary>
+public sealed record SetMaintenanceModeRequest(bool Enabled, string? Message);

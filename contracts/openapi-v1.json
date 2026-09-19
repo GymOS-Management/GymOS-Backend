@@ -2179,6 +2179,24 @@
         ],
         "type": "object"
       },
+      "SetMaintenanceModeRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "enabled",
+          "message"
+        ],
+        "type": "object"
+      },
       "SetPasswordRequest": {
         "properties": {
           "newPassword": {
@@ -7364,6 +7382,87 @@
           }
         ],
         "summary": "Write one category\u0027s batch of settings",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
+    "/api/v1/settings/maintenance-mode": {
+      "post": {
+        "description": "Requires the \u0060X-Confirm-Action\u0060 header carrying the literal word \u0060maintenance\u0060 (AD-6): while it is on, every caller but a SuperAdmin \u2014 holding \u0060settings.manage\u0060 \u2014 is refused with 503, so a mis-clicked toggle must not be able to close the whole platform. \u0060message\u0060 is shown to refused callers; omitting it falls back to the definition\u0027s own default. Returns the Maintenance category\u0027s fresh views.",
+        "operationId": "SetMaintenanceMode",
+        "parameters": [
+          {
+            "description": "Step-up confirmation, echoing the resource\u0027s own identifier (a gym\u0027s slug, an invoice\u0027s number). A header rather than a body field so it survives DELETE and cannot be replayed by a script that never read the resource.",
+            "in": "header",
+            "name": "X-Confirm-Action",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetMaintenanceModeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SettingView"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Turn maintenance mode on or off",
         "tags": [
           "Settings"
         ]

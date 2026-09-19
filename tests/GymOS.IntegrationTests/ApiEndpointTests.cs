@@ -230,7 +230,8 @@ public sealed class ApiEndpointTests : IAsyncLifetime
         // 57 → 60 in M6 task 10: the three monitoring operations (overview, jobs, job runs).
         // 60 → 62 in M7 task 7: the two settings operations (get, update).
         // 62 → 63 in M7 task 8: the test-email operation.
-        Assert.Equal(63, secured.Count);
+        // 63 → 64 in M7 task 9: the maintenance-mode toggle operation.
+        Assert.Equal(64, secured.Count);
     }
 
     /// <summary>
