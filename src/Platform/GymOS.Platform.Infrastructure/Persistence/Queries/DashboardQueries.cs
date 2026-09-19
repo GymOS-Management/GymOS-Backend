@@ -42,10 +42,9 @@ internal sealed class DashboardQueries : IDashboardQueries
             Living(GymStatus.Provisioning),
             liveSubscriptions,
 
-            // Ordinal by code, the order /analytics/revenue already uses, so the two surfaces agree.
-            mrr.OrderBy(amount => amount.Currency.Code, StringComparer.Ordinal)
-                .Select(amount => new MoneyDto(amount.Amount, amount.Currency.Code))
-                .ToList());
+            // Already in ordinal currency order: MonthlyRecurringRevenue.Calculate groups and sorts by
+            // code, so this and /analytics/revenue agree without a second sort here.
+            mrr.Select(amount => new MoneyDto(amount.Amount, amount.Currency.Code)).ToList());
     }
 
     public async Task<IReadOnlyList<ActivityEntry>> GetRecentActivityAsync(

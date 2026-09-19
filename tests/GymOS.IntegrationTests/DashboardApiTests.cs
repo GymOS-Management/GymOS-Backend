@@ -92,9 +92,9 @@ public sealed class DashboardApiTests : IAsyncLifetime
     [Fact]
     public async Task TheSummarysMrrIsOrderedByCurrencyCode()
     {
-        // /analytics/revenue sorts each day's currencies ordinally; the live summary did not sort at all,
-        // so the two surfaces could disagree on order for the same numbers. GBP is assigned first so an
-        // unsorted projection (insertion order) is caught.
+        // The order is a contract shared with /analytics/revenue: MonthlyRecurringRevenue.Calculate
+        // returns one entry per currency in ordinal code order, and the summary must not reorder it.
+        // GBP is assigned first so a projection that fell back to insertion order would be caught.
         PlatformApiHelpers.PlanCreated plan = await PlatformApiHelpers.CreatePlanAsync(_client, "DASHTWO", amount: 20m);
         await AddPriceAsync(plan, "GBP", 30m);
         Guid gbpGym = await PlatformApiHelpers.CreateGymAsync(_client, "gbp-gym");

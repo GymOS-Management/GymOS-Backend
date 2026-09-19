@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace GymOS.Platform.Infrastructure.Analytics;
 
 /// <summary>
-/// The reads the live dashboard (<c>DashboardQueries</c>) and the nightly compiler
+/// The reads that the live dashboard (<c>DashboardQueries</c>) and the nightly compiler
 /// (<see cref="DailyStatsCompiler"/>) must agree on. One definition each, so "living gym" and
 /// "paying subscription" cannot drift apart between the number an operator sees now and the number
 /// recorded for yesterday — the M5 whole-branch review found both duplicated verbatim.
