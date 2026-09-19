@@ -49,10 +49,12 @@ must evaluate against the caller's permissions *for this gym*.
 
 **Anonymous callers.** The middleware's first check after finding a `gymId` route value becomes: if
 `ICurrentUser.IsAuthenticated` is false, do nothing and call `_next`. Authorization then challenges as
-it does for every other anonymous request — 401 with `WWW-Authenticate: Bearer`. Today the same request
-is 404, which discloses nothing but is the wrong status for "you have not said who you are". The
-existing 404 for an authenticated caller with no grant is unchanged (grants spec D2's reasoning stands:
-404 hides the gym's existence from callers who hold nothing on it).
+it does for every other anonymous request — 401 with `WWW-Authenticate: Bearer`. Today that 401 happens
+by accident of order: authorization runs first and the middleware never sees an anonymous request.
+Moved in front of authorization without this early return, the middleware would answer 404 for every
+anonymous gym route (its grant check returns false for a null user) — the hole D2 names. The existing
+404 for an authenticated caller with no grant is unchanged (grants spec D2's reasoning stands: 404 hides
+the gym's existence from callers who hold nothing on it).
 
 **The route-values claim (grants spec §6).** D1 rests on `WebApplication` inserting `UseRouting` at the
 head of the pipeline when endpoints are mapped, so `Request.RouteValues["gymId"]` is populated by the
@@ -153,13 +155,13 @@ same file's pattern: create a user via the API, then replace its platform grants
 | # | Test | Passes today? | What it catches |
 |---|---|---|---|
 | 1 | A user whose only grant is SupportAgent on gym A gets **403** from `GET /api/v1/audit-logs` (platform route, `audit.read`) | **No** — today the user-only join grants `audit.read` everywhere | F1, the escalation itself |
-| 2 | The same user gets **200** from `GET /api/v1/gyms/{A}` (`gyms.read`, which SupportAgent holds) | No — today the tenant middleware runs after authorization; with test 1's fix and no D3 the set is empty and this is 403 | D3's positive half; the negative control for test 1 |
+| 2 | The same user gets **200** from `GET /api/v1/gyms/{A}` (`gyms.read`, which SupportAgent holds) | Yes, *through the escalation*; red if D3 were built as platform-grants-only | D3's positive half; the negative control for test 1 |
 | 3 | The same user gets **404** from `GET /api/v1/gyms/{B}` | Yes today (the middleware's own check), and must stay so | The tenant is compared, not merely present |
 | 4 | The existing `ARouteWithAGymIdSetsThatTenantForTheRequest` (tenant A observed on `ITenantContext` for a real route) still passes after the move — that is the §6 route-values proof; and test 2 is the ordering proof, because its policy can only be satisfied if the tenant was set before authorization | Observer half: yes; ordering half: no | D1; fails if the middleware is moved back after authorization |
-| 5 | An anonymous `GET /api/v1/gyms/{A}` is **401** with `WWW-Authenticate: Bearer`, not 404 | **No** — today 404 | D2 |
+| 5 | An anonymous `GET /api/v1/gyms/{A}` is **401** with `WWW-Authenticate: Bearer`, not 404 | Yes, by accident of order; **red after the reorder** until the early return lands | D2 |
 
-Tests 1, 2 and 5 are shown failing on the unfixed code before the fix lands (the plan orders them
-red-first). Test 2 is not optional: a tenant-aware evaluator that returns nothing at all would pass
+Test 1 is shown failing on the unfixed code; test 5 is shown failing after the reorder and before the
+early return; test 2 is the control that would go red under a wrong D3 (the plan orders each). Test 2 is not optional: a tenant-aware evaluator that returns nothing at all would pass
 test 1 and be useless.
 
 `ApiEndpointTests`'s secured-route tripwire (65) is untouched — H1 adds no route. The OpenAPI snapshot
@@ -254,8 +256,10 @@ the change.
   defaulting to `Environment.GetEnvironmentVariable`. `ApiReferenceBrowserRegistrationTests` gains two
   cases: in-container → not registered; not in container → registered.
 - **`Process.Start` null.** `ApiReferenceBrowserLauncher` logs `LogOpened` only when the returned
-  `Process` is non-null; a null result logs a new `LogNoHandler` warning (EventId 6103, "No browser
-  handler accepted {Url}").
+  `Process` is non-null; a null result logs a new `LogHandedToExistingHandler` line at Information
+  (EventId 6103): on Windows, `UseShellExecute` returns null whenever the URL was handed to a browser
+  that was already running, which is the common case, so this is not a warning — it is the honest
+  version of what "opened" claimed.
 - **Doc.** The method's XML comment says: three guards decide the *default*; `OpenApi:LaunchBrowser`
   set explicitly overrides all three, and that is intended — it is the switch a developer flips inside a
   container on purpose.
