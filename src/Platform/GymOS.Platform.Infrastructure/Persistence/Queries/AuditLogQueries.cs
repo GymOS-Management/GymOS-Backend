@@ -99,6 +99,58 @@ internal sealed class AuditLogQueries : IAuditLogQueries
         return new PagedResult<AuditLogListItem>(items, filter.Page.Page, filter.Page.PageSize, totalCount);
     }
 
+    public IAsyncEnumerable<AuditLogListItem> StreamAsync(AuditLogExportFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        IQueryable<AuditLog> query = _dbContext.Set<AuditLog>().AsNoTracking();
+
+        if (filter.UserId is { } userId)
+        {
+            query = query.Where(log => log.UserId == userId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.Action))
+        {
+            // Same prefix match as ListAsync (ARCHITECTURE.md §2.6) — see the remarks there for why
+            // this is EF.Functions.Like over a pre-built pattern rather than string.StartsWith.
+            string pattern = SearchPatterns.StartsWith(filter.Action.Trim());
+            query = query.Where(log =>
+                EF.Functions.Like(log.Action, pattern));
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.EntityType))
+        {
+            string entityType = filter.EntityType.Trim();
+            query = query.Where(log => log.EntityType == entityType);
+        }
+
+        if (filter.EntityId is { } entityId)
+        {
+            query = query.Where(log => log.EntityId == entityId);
+        }
+
+        query = query.Where(log => log.CreatedAtUtc >= filter.FromUtc && log.CreatedAtUtc <= filter.ToUtc);
+
+        // Oldest first, unlike ListAsync's newest-first: an export is read top to bottom as a
+        // chronology, not scanned for "what just happened". Id breaks ties within a tick so the
+        // order — and so the file — is deterministic across runs.
+        return query
+            .OrderBy(log => log.CreatedAtUtc)
+            .ThenBy(log => log.Id)
+            .Select(log => new AuditLogListItem(
+                log.Id,
+                log.UserId,
+                log.UserEmail,
+                log.IpAddress,
+                log.Action,
+                log.EntityType,
+                log.EntityId,
+                log.CorrelationId,
+                log.CreatedAtUtc))
+            .AsAsyncEnumerable();
+    }
+
     public Task<AuditLogDetail?> GetAsync(Guid auditLogId, CancellationToken cancellationToken) =>
         _dbContext.Set<AuditLog>()
             .AsNoTracking()

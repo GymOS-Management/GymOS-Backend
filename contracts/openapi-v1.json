@@ -3292,6 +3292,111 @@
         ]
       }
     },
+    "/api/v1/audit-logs/export": {
+      "get": {
+        "description": "\u0060from\u0060 and \u0060to\u0060 are required, inclusive, and at most 366 days apart. Same filters as the list, no paging; rows stream oldest first. Nine columns; \u0060oldValues\u0060/\u0060newValues\u0060 are not exported \u2014 read them per entry. The export itself is recorded in the audit log with the filter and the row count.",
+        "operationId": "ExportAuditLogs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "userId",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entityType",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entityId",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Stream the audit trail as CSV",
+        "tags": [
+          "Audit log"
+        ]
+      }
+    },
     "/api/v1/audit-logs/{auditLogId}": {
       "get": {
         "description": "\u0060oldValues\u0060 and \u0060newValues\u0060 are JSON objects of the properties that changed.",
