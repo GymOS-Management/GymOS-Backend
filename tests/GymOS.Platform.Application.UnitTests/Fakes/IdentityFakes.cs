@@ -225,6 +225,8 @@ internal sealed class FakeUnitOfWork : IUnitOfWork
 
     public int DiscardCount { get; private set; }
 
+    public int CommitCount { get; private set; }
+
     /// <summary>
     /// Exceptions for the first N saves to throw, in order — <c>null</c> entries save normally.
     /// </summary>
@@ -250,15 +252,19 @@ internal sealed class FakeUnitOfWork : IUnitOfWork
     public Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
     {
         TransactionCount++;
-        return Task.FromResult<IUnitOfWorkTransaction>(new NoOpTransaction());
+        return Task.FromResult<IUnitOfWorkTransaction>(new NoOpTransaction(this));
     }
 
     // No change tracker to clear in-memory; counted so a retry test can still assert it was asked for.
     public void DiscardTrackedChanges() => DiscardCount++;
 
-    private sealed class NoOpTransaction : IUnitOfWorkTransaction
+    private sealed class NoOpTransaction(FakeUnitOfWork owner) : IUnitOfWorkTransaction
     {
-        public Task CommitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task CommitAsync(CancellationToken cancellationToken)
+        {
+            owner.CommitCount++;
+            return Task.CompletedTask;
+        }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

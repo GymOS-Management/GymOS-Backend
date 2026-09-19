@@ -22,7 +22,7 @@ public sealed class PermissionEvaluatorTests
         var queries = new RecordingIdentityQueries { Status = "Active" };
         queries.Platform.Add("audit.read");
         queries.ForTenant[GymA] = ["gyms.read"];
-        var evaluator = Evaluator(queries, new TenantContext(), out _);
+        var evaluator = Evaluator(queries, new TenantContext());
 
         IReadOnlyCollection<string> held = await evaluator.GetPermissionsAsync(CancellationToken.None);
 
@@ -39,7 +39,7 @@ public sealed class PermissionEvaluatorTests
         queries.ForTenant[GymB] = ["billing.read"];
         var tenant = new TenantContext();
         tenant.SetTenant(GymA);
-        var evaluator = Evaluator(queries, tenant, out _);
+        var evaluator = Evaluator(queries, tenant);
 
         IReadOnlyCollection<string> held = await evaluator.GetPermissionsAsync(CancellationToken.None);
 
@@ -55,7 +55,7 @@ public sealed class PermissionEvaluatorTests
         queries.ForTenant[GymA] = ["gyms.read"];
         var tenant = new TenantContext();
         tenant.SetTenant(GymA);
-        var evaluator = Evaluator(queries, tenant, out _);
+        var evaluator = Evaluator(queries, tenant);
 
         Assert.Empty(await evaluator.GetPermissionsAsync(CancellationToken.None));
         Assert.False(await evaluator.HasPermissionAsync("gyms.read", CancellationToken.None));
@@ -104,6 +104,21 @@ public sealed class PermissionEvaluatorTests
     }
 
     [Fact]
+    public async Task APlatformRouteReadsPermissionsOnce()
+    {
+        // The endpoint policy and the pipeline behavior both check in one request with no tenant; the
+        // nullable-tuple key must treat (user, null) == (user, null) as a hit, or every platform route
+        // pays twice.
+        var queries = new RecordingIdentityQueries { Status = "Active" };
+        var snapshot = new CallerSnapshot(queries);
+
+        await snapshot.GetAsync(UserId, null, CancellationToken.None);
+        await snapshot.GetAsync(UserId, null, CancellationToken.None);
+
+        Assert.Single(queries.PermissionReads);
+    }
+
+    [Fact]
     public async Task AnUnknownUserIsNullWithoutAPermissionRead()
     {
         var queries = new RecordingIdentityQueries { Status = "Active", UserExists = false };
@@ -113,11 +128,8 @@ public sealed class PermissionEvaluatorTests
         Assert.Empty(queries.PermissionReads);
     }
 
-    private static PermissionEvaluator Evaluator(RecordingIdentityQueries queries, TenantContext tenant, out CallerSnapshot snapshot)
-    {
-        snapshot = new CallerSnapshot(queries);
-        return new PermissionEvaluator(new StubCurrentUser(UserId), tenant, snapshot);
-    }
+    private static PermissionEvaluator Evaluator(RecordingIdentityQueries queries, TenantContext tenant) =>
+        new(new StubCurrentUser(UserId), tenant, new CallerSnapshot(queries));
 
     private sealed class StubCurrentUser : ICurrentUser
     {

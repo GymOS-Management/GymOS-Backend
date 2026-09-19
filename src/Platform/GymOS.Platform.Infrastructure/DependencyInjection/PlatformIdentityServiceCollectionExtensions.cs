@@ -98,9 +98,10 @@ public static class PlatformIdentityServiceCollectionExtensions
         services.TryAddScoped<IAuditLogQueries, AuditLogQueries>();
         services.TryAddScoped<IUnitOfWork, UnitOfWork>();
 
-        // Scoped: the snapshot memoizes the caller's permissions and security stamp for one
-        // request, so the token validator, the endpoint policy, and the pipeline behavior
-        // share a single read (AD-22).
+        // Scoped: the snapshot memoizes two reads for one request — the caller's identity (stamp,
+        // status) once per user, which the bearer handler's stamp check uses, and the caller's
+        // permissions once per (user, acting tenant), which the endpoint policy and the pipeline
+        // behavior share (AD-22, grants spec D4).
         services.TryAddScoped<ICallerSnapshot, CallerSnapshot>();
         services.TryAddScoped<IPermissionEvaluator, PermissionEvaluator>();
 

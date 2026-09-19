@@ -175,6 +175,7 @@ public sealed class SubscriptionAssignmentTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(1, context.UnitOfWork.TransactionCount);
+        Assert.Equal(1, context.UnitOfWork.CommitCount);
         Assert.Equal(plan.Id, Assert.Single(context.Plans.LockedReads));
         Assert.Equal(plan.Id, Assert.Single(context.FeatureExceptions.CalledWithLivePlanIds));
     }

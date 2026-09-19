@@ -301,10 +301,15 @@ internal sealed class AssignSubscriptionCommandHandler
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // Read back before committing, not after — the SetGymFeaturesCommandHandler precedent: the
+        // body returned must be this write's state, not whatever a concurrent request committed in
+        // the gap between this commit and the read.
+        Result<SubscriptionDetail> detail = await SubscriptionWrites.ReadBackAsync(
+            _subscriptionQueries, command.GymId, cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
 
-        return await SubscriptionWrites.ReadBackAsync(
-            _subscriptionQueries, command.GymId, cancellationToken);
+        return detail;
     }
 
     /// <summary>

@@ -498,7 +498,7 @@ replace the order-dependent `FindNavigation(nameof(Mrr))!` in `DailyPlatformStat
 analytics positive controls in `AnalyticsApiTests`, a feature fake in `GymFakes` that throws rather than
 returning an empty catalogue plus `GymTestContext.WithFeatureCatalogue()`, six-route coverage in
 `GymManagementTests`, a JPY fixture in `MonthlyRecurringRevenueTests` that can actually fail, and the
-maintainer call asserted in `DashboardApiTests`. `31d91e4` (Task 6) wraps
+maintainer call asserted in `GymManagementTests`. `31d91e4` (Task 6) wraps
 `AssignSubscriptionCommandHandler`'s plan read in one transaction under `UPDLOCK` and adds
 `DiscardTrackedChanges` to `BannedSymbols.txt`. `b4f64b1` (Task 7) makes
 `ApiReferenceBrowserLauncher`'s container check injectable and stops a null `Process.Start` being logged
@@ -541,8 +541,9 @@ is the guard that finds the code assuming two.
    `Analytics.md` §11 were stale; H1 corrects the documents and changes no code there.
 2. **The `mrr` order finding was stale for the summary.** `MonthlyRecurringRevenue.Calculate` has sorted
    by currency code (Ordinal) since `cdbee68` (M5). Task 4 first added a redundant `OrderBy` in
-   `DashboardQueries` and then removed it in `06f6986`; the test `TheSummarysMrrIsOrderedByCurrencyCode`
-   stays as a pin on the contract. The only real sort need was on the stored-rows path, which
+   `DashboardQueries` and then removed it in `06f6986`; the test
+   `TheSummarysMrrIsOrderedByCurrencyCode` in `DashboardApiTests` stays as a pin on the contract. The
+   only real sort need was on the stored-rows path, which
    `AnalyticsQueries` already had.
 3. **Grants spec §6's `UseRouting` claim is confirmed.**
    `TenantResolutionTests.ARouteWithAGymIdSetsThatTenantForTheRequest` passes with the middleware in its
@@ -562,7 +563,23 @@ is the guard that finds the code assuming two.
 7. **Two Minor items were parked by task reviews for the final-review fix wave**, not for H1's
    implementation tasks: a stale "one snapshot" comment in
    `PlatformIdentityServiceCollectionExtensions.cs:100-102`, and no unit test pinning the null-tenant
-   cache hit in `CallerSnapshot`. Both are owed until that commit lands.
+   cache hit in `CallerSnapshot`. Both closed in the final-review fix commit.
+8. **The JPY fixture deviates from the spec's numbers.** The spec asked for `12,007` → `1,001` as the
+   second `MonthlyRecurringRevenueTests` fixture. `12,007 / 12 = 1,000.583`, which rounds to `1,001`
+   under every midpoint rule and so pins nothing about the direction being tested. The test instead uses
+   `12,006` → `1,000`: an exact `.5` tie, which half-even and away-from-zero decide differently, so the
+   assertion actually exercises the rounding mode `MonthlyRecurringRevenue.Calculate` documents.
+
+**Two notes for the owner, from the final review:**
+
+a. **Widening `.editorconfig`'s CA1711 `allowed_suffixes` to `Exception` repo-wide, in place of the
+   per-type `[SuppressMessage]` it replaced, was flagged by the final review as a broader grant than the
+   finding needed** — one repo-wide allowance versus one suppression scoped to the type that needed it.
+   Kept anyway because the approved spec called for it; recorded here so the disagreement is visible
+   rather than silent.
+b. **`UserSecuritySnapshot.UserId`, `.TenantId` and `.SecurityStamp` are not read by any consumer after
+   the split** — `PermissionEvaluator` reads only `.Status` and `.Permissions`. Carried on the record,
+   not trimmed, since removing them is a bigger shape change than this wave's scope.
 
 ### This machine, for whoever resumes here
 
@@ -4136,7 +4153,7 @@ been exercised against a real grant.
   Also unfixed at the unit-test layer: no test asserts that `DeleteGymCommandHandler` calls the
   maintainer — that wiring is covered only by its integration test, so a future regression in the
   wiring would not fail fast. **Resolved (H1, 2026-09-19, `83b4f92`):**
-  `DashboardApiTests.DeletingAGym_AsksTheMaintainerToWithdrawWhatThePlanMadeRedundant` now asserts the
+  `GymManagementTests.DeletingAGym_AsksTheMaintainerToWithdrawWhatThePlanMadeRedundant` now asserts the
   maintainer call itself rather than asserting around it.
 
 

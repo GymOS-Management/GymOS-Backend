@@ -70,7 +70,7 @@ public sealed partial class FeatureCatalogSeeder
 
         // Two instances booting against a fresh database both see an empty catalogue and both try
         // to insert every declared feature — one of them loses to ux_features_key. The lock is
-        // held for the life of this transaction (PostgresAdvisoryLock), so the instance that waits
+        // held for the life of this transaction (SqlServerAdvisoryLock), so the instance that waits
         // re-reads existingKeys below only after the other has committed, and finds nothing left
         // to insert. Saving through IUnitOfWork rather than the context directly also means that if
         // a race is ever lost anyway, the failure surfaces as UniquenessConflictException rather

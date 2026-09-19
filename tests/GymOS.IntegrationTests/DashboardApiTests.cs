@@ -112,9 +112,8 @@ public sealed class DashboardApiTests : IAsyncLifetime
     [Fact]
     public async Task TheSummarysMrrIsOrderedByCurrencyCode()
     {
-        // The order is a contract shared with /analytics/revenue: MonthlyRecurringRevenue.Calculate
-        // returns one entry per currency in ordinal code order, and the summary must not reorder it.
-        // GBP is assigned first so a projection that fell back to insertion order would be caught.
+        // The order is Calculate's ordinal-by-code contract, shared with /analytics/revenue, asserted
+        // here at the API boundary.
         PlatformApiHelpers.PlanCreated plan = await PlatformApiHelpers.CreatePlanAsync(_client, "DASHTWO", amount: 20m);
         await AddPriceAsync(plan, "GBP", 30m);
         Guid gbpGym = await PlatformApiHelpers.CreateGymAsync(_client, "gbp-gym");

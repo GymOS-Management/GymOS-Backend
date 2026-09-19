@@ -20,7 +20,11 @@ namespace GymOS.WebApi.Middleware;
 /// middleware, not authorization, is the first thing an anonymous caller on a gym route reaches. It sets
 /// no tenant and performs no grant check — there is no caller to check grants for — and lets the request
 /// continue so authorization still challenges it with 401. See grants spec D2 and
-/// <c>TenantResolutionTests.AnAnonymousGymRouteIsChallenged_NotHidden</c>.</para>
+/// <c>TenantResolutionTests.AnAnonymousGymRouteIsChallenged_NotHidden</c>. This early return assumes
+/// every <c>{gymId}</c> route requires authorization — a <c>{gymId}</c> route marked
+/// <c>AllowAnonymous</c> would run with no tenant and no grant check at all, and
+/// <c>ApiEndpointTests</c>'s secured-route count (65) is the tripwire that guards that
+/// assumption.</para>
 /// <para><b>404, never 403, for an authenticated caller with no grant for the gym.</b> "You may not see
 /// this gym" and "this gym does not exist" must be indistinguishable, or the status code becomes an
 /// oracle for enumerating tenants. The response carries no body written here — the framework's

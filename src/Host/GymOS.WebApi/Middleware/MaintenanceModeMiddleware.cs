@@ -9,11 +9,11 @@ namespace GymOS.WebApi.Middleware;
 /// <summary>
 /// Closes the platform to everyone but a SuperAdmin while maintenance mode is on (M7 spec §6).
 ///
-/// <para>Sits between <c>UseAuthentication</c> and <c>UseAuthorization</c> in <c>Program.cs</c>:
-/// authentication has already populated <see cref="HttpContext.User"/> by the time this runs, which is
-/// what lets <see cref="IPermissionEvaluator"/> resolve who the caller is, but no route's authorization
-/// policy has been enforced yet, so a refused caller never reaches a handler that would otherwise touch
-/// the database or start work that a 503 should preempt.</para>
+/// <para>Sits in <c>Program.cs</c> right after <see cref="TenantResolutionMiddleware"/>, which itself
+/// runs after authentication and rate limiting, and before <c>UseAuthorization</c>: authentication has
+/// already populated <see cref="HttpContext.User"/> by the time this runs, which is what lets
+/// <see cref="IPermissionEvaluator"/> resolve who the caller is, but no route's authorization policy has
+/// been enforced yet, so a refused caller reaches no endpoint handler.</para>
 ///
 /// <para><see cref="IPermissionEvaluator"/> is scoped and DB-backed with a per-request snapshot cache
 /// (<c>CallerSnapshot</c>), so the permission check costs one query per request — and only while

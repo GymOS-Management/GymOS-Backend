@@ -182,9 +182,9 @@ the change.
   concurrently against one database and asserts one user.
 - **`SeedingLocks` doc.** The comment claims one lock "covering the whole startup-sync window". An
   xact-scoped `sp_getapplock` is held for the transaction that acquired it — each seeder's own — not
-  across the seeders. Rewrite: the lock serialises *each seeder's transaction* against the same-named
-  transaction in another replica; two different seeders never contend; the guarantee is per-seeder
-  atomicity of check-and-insert, which is what each seeder needs.
+  across the seeders. Rewrite: the name is shared by all three seeders, so mutual exclusion spans all
+  three seeders and all replicas; the xact scope only narrows how long each acquisition is held, giving
+  per-seeder atomicity of check-and-insert, which is what each seeder needs.
 
 ### 3.2 Dashboard and stats queries (STATUS 3565–3567, 3606–3609)
 

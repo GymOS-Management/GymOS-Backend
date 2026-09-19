@@ -10,14 +10,15 @@ namespace GymOS.Platform.Infrastructure.Persistence.Seeding;
 /// one and not the other stops excluding those seeders from each other with no test failing, and
 /// the boot race this lock exists to close comes back unnoticed.</para>
 ///
-/// <para><b>What the lock guarantees, precisely.</b> <c>SqlServerAdvisoryLock</c> takes
-/// <c>sp_getapplock</c> with <c>@LockOwner = 'Transaction'</c>: the lock is held by the transaction
-/// that acquired it and released when that transaction commits or rolls back. Each seeder opens its
-/// own transaction and acquires inside it, so the guarantee is <em>per seeder</em>: one seeder's
-/// check-then-insert in one replica is atomic against the same seeder in another replica. It does
-/// not span the seeders and it does not cover the whole start-up window — nor does it need to: each
-/// seeder is idempotent on its own, and each one's race is only with itself. (An earlier version of
-/// this comment claimed a whole-window guarantee; the M4.1 close-out review corrected it.)</para>
+/// <para><b>What the lock guarantees, precisely.</b> The name is shared by all three seeders, so
+/// <c>sp_getapplock</c> makes every seeder in every replica mutually exclusive with every other one —
+/// mutual exclusion spans all three seeders and all replicas because the name is shared. What is
+/// narrower is the scope: <c>@LockOwner = 'Transaction'</c> means the lock is held for exactly one
+/// seeder's transaction and released when that transaction commits or rolls back, so each seeder's own
+/// check-then-insert is the atomic unit — which is the only guarantee any seeder needs. It does not
+/// cover the whole start-up window: a replica that finishes its three seeders releases the lock three
+/// times, and another replica may interleave between them, seeing committed rows each time it
+/// acquires.</para>
 /// </summary>
 internal static class SeedingLocks
 {

@@ -104,7 +104,10 @@ public sealed partial class SuperAdminSeeder
         // Read the policy before opening the transaction: ISettings<T>.Current may load the settings
         // table through its own DbContext, i.e. a second pooled connection, and a host booted with a
         // pool of one (TenantIsolationTests does this on purpose) would wait on itself forever if that
-        // read happened while this seeder's transaction held the only connection.
+        // read happened while this seeder's transaction held the only connection. This read happens on
+        // every configured boot, including the already-exists path below where the value goes unused,
+        // and that is deliberate — moving it back inside the transaction is the regression 2cd43ab
+        // fixed.
         int minimumPasswordLength = _loginPolicy.Current.MinimumPasswordLength;
 
         // The same lock, transaction and reason as PlatformIdentitySeeder and FeatureCatalogSeeder:

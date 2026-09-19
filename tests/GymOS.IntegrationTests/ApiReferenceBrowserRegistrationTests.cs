@@ -43,7 +43,8 @@ public sealed class ApiReferenceBrowserRegistrationTests
             settings: new Dictionary<string, string?> { ["OpenApi:LaunchBrowser"] = "false" }));
 
     /// <summary>
-    /// The override works in both directions, including inside a container: the three guards decide the default, and an explicit setting replaces the default.
+    /// The override works in both directions, including inside a container: the three guards decide
+    /// the default, and an explicit setting replaces the default.
     /// </summary>
     [Fact]
     public void AnExplicitTrue_OverridesTheEnvironmentDefault() =>

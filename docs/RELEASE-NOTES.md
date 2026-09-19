@@ -8,8 +8,9 @@
 **Status:** complete, awaiting review. Spec:
 [superpowers/specs/2026-09-19-h1-hardening-design.md](superpowers/specs/2026-09-19-h1-hardening-design.md).
 
-No new endpoint and no new permission. H1 closes the findings the M7 whole-branch review left standing,
-in nine tasks over eleven commits, and corrects the documents that had drifted away from the code.
+No new endpoint and no new permission. H1 closes the findings the M1–M5 whole-branch review and the
+M4.1/M5 close-out reviews left standing, in nine tasks over eleven commits, and corrects the documents
+that had drifted away from the code.
 
 ### Tenant resolution runs before authorization, and permissions are evaluated for the acting tenant
 
@@ -49,7 +50,7 @@ rather than returning an empty catalogue, so `features: null` can no longer pass
 nothing".
 `MonthlyRecurringRevenueTests.AZeroDecimalCurrencyRoundsHalfEvenToTheWholeUnit` uses a JPY fixture that
 can actually fail, and
-`DashboardApiTests.DeletingAGym_AsksTheMaintainerToWithdrawWhatThePlanMadeRedundant` calls the
+`GymManagementTests.DeletingAGym_AsksTheMaintainerToWithdrawWhatThePlanMadeRedundant` calls the
 maintainer instead of asserting around it. `SubscriptionAssignmentTests` gained a unit pin that assign
 reads the plan under `UPDLOCK` inside the command's transaction, and `DiscardTrackedChanges` is now in
 `BannedSymbols.txt` outside its one legitimate retry.
@@ -64,7 +65,9 @@ committed overlay. Also: withdrawn feature overrides are logged when a plan chan
 makes them redundant; the `Exception` suffix is permitted by an `.editorconfig` rule rather than a
 per-type attribute; the activity feed's `EntityType` is nullable, which is what the data always was;
 and the API-reference browser launcher's container check is injectable, so a null `Process.Start` is no
-longer reported as "opened".
+longer reported as "opened". **One wire-contract change:** `ActivityEntry.entityType` on
+`GET /api/v1/dashboard/activity` is now nullable (`string` → `string | null`) in
+`contracts/openapi-v1.json`; clients that assumed a string must handle null.
 
 ### Corrected in the documents
 
