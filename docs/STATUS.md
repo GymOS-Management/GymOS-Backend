@@ -71,6 +71,18 @@ have no spec yet.
 
 **The footprint fix that this section first recorded as owed is done** — see "Later the same day" below.
 
+**H1 — Hardening — is in flight on `development` (2026-09-19).** Spec
+`docs/superpowers/specs/2026-09-19-h1-hardening-design.md` (`03219d3`, corrected in `01f702f`) and plan
+`docs/superpowers/plans/2026-09-19-h1-hardening.md` (`f45b241`) are committed; nine tasks, executed
+subagent-driven with the ledger at `.superpowers/sdd/2026-09-19-h1-hardening/progress.md` (git-ignored —
+if it is gone, `git log` after `f45b241` is the record). Scope, chosen with the owner: gym-scoped-grants
+spec steps 1–2 (tenant resolution before authorization, tenant-aware permissions keyed by user and
+tenant) plus every unblocked review finding. **Found while writing the spec:** the churn-dating fix this
+file still lists as open (`ExpiredAtUtc`, the `canceled_at_utc` index) shipped in `7672bb6` on
+2026-08-14; the paragraphs below that call it open are stale until H1's docs task rewrites them. If you
+are resuming mid-H1: read the ledger, then `git log --oneline f45b241..HEAD`, and continue from the first
+task without a `complete` line.
+
 **Two things are the owner's, not code:**
 
 1. **UAT is paused, not broken.** Azure SQL error **42119**: *"This database has reached the monthly free
