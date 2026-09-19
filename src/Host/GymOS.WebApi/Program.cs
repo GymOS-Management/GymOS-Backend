@@ -1,5 +1,6 @@
 using System.Globalization;
 using Asp.Versioning;
+using Azure.Identity;
 using GymOS.BuildingBlocks.Application.DependencyInjection;
 using GymOS.BuildingBlocks.Application.Idempotency;
 using GymOS.BuildingBlocks.Application.Messaging;
@@ -22,6 +23,7 @@ using GymOS.WebApi.Extensions;
 using GymOS.WebApi.Health;
 using GymOS.WebApi.Middleware;
 using GymOS.WebApi.Monitoring;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -90,6 +92,16 @@ try
 
     // M6 monitoring: the job host's run recorder and the monitoring read side.
     builder.Services.AddPlatformMonitoring(builder.Configuration);
+
+    // M7 settings: the declared catalog over platform_settings, and Data Protection for sensitive values.
+    builder.Services.AddPlatformSettings(builder.Configuration);
+
+    // Key Vault wraps the key ring only when the owner has created the vault and set the key id
+    // (AZURE.md §7). Inert otherwise — the config value is the switch.
+    if (builder.Configuration["DataProtection:KeyVaultKeyId"] is { Length: > 0 } keyVaultKeyId)
+    {
+        builder.Services.AddDataProtection().ProtectKeysWithAzureKeyVault(new Uri(keyVaultKeyId), new DefaultAzureCredential());
+    }
 
     // `/dashboard/health` needs `HealthCheckService`, which ships in the ASP.NET Core shared
     // framework this host references — Application and Infrastructure are plain `Microsoft.NET.Sdk`
