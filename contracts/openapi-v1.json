@@ -2356,6 +2356,38 @@
         ],
         "type": "object"
       },
+      "SmtpConnectionTestResult": {
+        "properties": {
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "server": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "stage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "stage",
+          "server",
+          "error"
+        ],
+        "type": "object"
+      },
       "SubscriptionDetail": {
         "properties": {
           "amount": {
@@ -7332,6 +7364,63 @@
           }
         ],
         "summary": "Write one category\u0027s batch of settings",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
+    "/api/v1/settings/test-email": {
+      "post": {
+        "description": "Connects with the effective Email settings, authenticates if a username is configured, and issues a NOOP: the same round trips a real send would open, none of the send itself (ADR-53 stands). A refused login or an unreachable host is still a 200 \u2014 \u0060ok\u0060 is false and \u0060stage\u0060 says how far the attempt got (\u0060Connect\u0060, \u0060Tls\u0060, or \u0060Authenticate\u0060). 400 \u0060settings.email_disabled\u0060 when \u0060Email:Enabled\u0060 is false; enable and save it first.",
+        "operationId": "TestEmailConnection",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpConnectionTestResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Test the SMTP connection \u2014 sends nothing",
         "tags": [
           "Settings"
         ]

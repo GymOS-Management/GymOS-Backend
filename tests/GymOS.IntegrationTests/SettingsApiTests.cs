@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Text.Json;
 using GymOS.Platform.Domain.Settings;
 using GymOS.Platform.Infrastructure.Persistence;
@@ -211,6 +213,111 @@ public sealed class SettingsApiTests : IAsyncLifetime
         Assert.NotNull(passwordDetail);
         Assert.Contains("***REDACTED***", passwordDetail, StringComparison.Ordinal);
         Assert.DoesNotContain("hunter2", passwordDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TestEmailConnectsAuthenticatesAndReports()
+    {
+        await using var fakeSmtp = new FakeSmtpServer();
+
+        using HttpResponseMessage put = await PutAsync(
+            "Email",
+            ("email.enabled", "true"),
+            ("email.smtp_host", "127.0.0.1"),
+            ("email.smtp_port", fakeSmtp.Port.ToString(CultureInfo.InvariantCulture)),
+            ("email.smtp_username", "u"),
+            ("email.smtp_password", "p"),
+            ("email.from_address", "a@b.test"),
+            ("email.from_display_name", "GymOS"));
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        JsonElement body = await TestEmailAsync();
+        Assert.True(body.GetProperty("ok").GetBoolean());
+
+        using JsonDocument detail = await ReadFirstAuditDetailAsync("settings.email_tested");
+        Assert.Equal("True", detail.RootElement.GetProperty("ok").GetString());
+    }
+
+    [Fact]
+    public async Task ARefusedPasswordReportsTheAuthenticateStage()
+    {
+        await using var fakeSmtp = new FakeSmtpServer { RejectAuth = true };
+
+        using HttpResponseMessage put = await PutAsync(
+            "Email",
+            ("email.enabled", "true"),
+            ("email.smtp_host", "127.0.0.1"),
+            ("email.smtp_port", fakeSmtp.Port.ToString(CultureInfo.InvariantCulture)),
+            ("email.smtp_username", "u"),
+            ("email.smtp_password", "wrong"),
+            ("email.from_address", "a@b.test"),
+            ("email.from_display_name", "GymOS"));
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        JsonElement body = await TestEmailAsync();
+        Assert.False(body.GetProperty("ok").GetBoolean());
+        Assert.Equal("Authenticate", body.GetProperty("stage").GetString());
+    }
+
+    [Fact]
+    public async Task AClosedPortReportsConnect()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int closedPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+
+        using HttpResponseMessage put = await PutAsync(
+            "Email",
+            ("email.enabled", "true"),
+            ("email.smtp_host", "127.0.0.1"),
+            ("email.smtp_port", closedPort.ToString(CultureInfo.InvariantCulture)),
+            ("email.from_address", "a@b.test"),
+            ("email.from_display_name", "GymOS"));
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        JsonElement body = await TestEmailAsync();
+        Assert.False(body.GetProperty("ok").GetBoolean());
+        Assert.Equal("Connect", body.GetProperty("stage").GetString());
+    }
+
+    [Fact]
+    public async Task TestEmailIs400WhenEmailIsDisabled()
+    {
+        using HttpResponseMessage response = await _client.PostAsync(
+            new Uri("/api/v1/settings/test-email", UriKind.Relative), content: null);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("settings.email_disabled", body.RootElement.GetProperty("code").GetString());
+    }
+
+    private async Task<JsonElement> TestEmailAsync()
+    {
+        using HttpResponseMessage response = await _client.PostAsync(
+            new Uri("/api/v1/settings/test-email", UriKind.Relative), content: null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadFromJsonAsync<JsonElement>();
+    }
+
+    /// <summary>Fetches the newest audit row for <paramref name="action"/> and parses its
+    /// <c>newValues</c> — itself a JSON string, per <c>AuditTrail.Record</c> — into a document of its
+    /// own, so a caller can assert on the recorded detail fields directly.</summary>
+    private async Task<JsonDocument> ReadFirstAuditDetailAsync(string action)
+    {
+        using HttpResponseMessage list = await _client.GetAsync(
+            new Uri($"/api/v1/audit-logs?action={action}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, list.StatusCode);
+        using JsonDocument listBody = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
+        JsonElement items = listBody.RootElement.GetProperty("items");
+        Assert.True(items.GetArrayLength() > 0);
+
+        using HttpResponseMessage detail = await _client.GetAsync(
+            new Uri($"/api/v1/audit-logs/{items[0].GetProperty("id").GetGuid()}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+        using JsonDocument detailBody = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
+        string newValues = detailBody.RootElement.GetProperty("newValues").GetString()!;
+        return JsonDocument.Parse(newValues);
     }
 
     private static JsonElement Find(JsonElement views, string key) =>

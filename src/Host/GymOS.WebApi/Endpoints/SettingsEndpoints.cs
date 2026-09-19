@@ -65,6 +65,22 @@ public static class SettingsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
+        group.MapPost("/test-email", TestEmailAsync)
+            .RequireAuthorization(PlatformPermissions.SettingsManage)
+            .WithName("TestEmailConnection")
+            .WithSummary("Test the SMTP connection — sends nothing")
+            .WithDescription(
+                "Connects with the effective Email settings, authenticates if a username is "
+                    + "configured, and issues a NOOP: the same round trips a real send would open, "
+                    + "none of the send itself (ADR-53 stands). A refused login or an unreachable "
+                    + "host is still a 200 — `ok` is false and `stage` says how far the attempt got "
+                    + "(`Connect`, `Tls`, or `Authenticate`). 400 `settings.email_disabled` when "
+                    + "`Email:Enabled` is false; enable and save it first.")
+            .Produces<SmtpConnectionTestResult>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         return endpoints;
     }
 
@@ -102,6 +118,16 @@ public static class SettingsEndpoints
 
         Result<IReadOnlyList<SettingView>> result = await dispatcher.SendAsync(
             new UpdateSettingsCommand(category, request.Values), cancellationToken);
+
+        return result.IsSuccess ? TypedResults.Ok(result.Value) : result.ToProblem();
+    }
+
+    private static async Task<IResult> TestEmailAsync(
+        IDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        Result<SmtpConnectionTestResult> result =
+            await dispatcher.SendAsync(new TestEmailConnectionCommand(), cancellationToken);
 
         return result.IsSuccess ? TypedResults.Ok(result.Value) : result.ToProblem();
     }

@@ -47,6 +47,7 @@ public static class PlatformSettingsServiceCollectionExtensions
         services.AddBoundSettings<RateLimitOptions>(RateLimitOptions.SectionName);
 
         services.TryAddScoped<ISettingsValidator, OptionsSettingsValidator>();
+        services.TryAddScoped<ISmtpConnectionTester, MailKitSmtpConnectionTester>();
 
         return services;
     }
