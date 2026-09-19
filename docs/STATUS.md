@@ -48,8 +48,18 @@ teardown cost itself — the drop path could run in the background at class end,
 one migrated database and lease only when they mutate — a performance increment with its own numbers,
 not a line in a workflow. The "M6 — what landed" subsection below the 2026-09-18 resumption's other
 entries has the file map and the deviations found while building it.
-**Next: M7** — settings with consumed categories only (General, Email, Security, Maintenance, retention
-windows), maintenance mode, API rate limiting, and audit CSV export, per the 2026-09-03 decision — then
+**M7's design spec is written and awaiting the owner's review:**
+`docs/superpowers/specs/2026-09-19-m7-settings-and-hardening-design.md`, on the M6 precedent. Four
+decisions are taken and recorded in its header: sensitive values under **Data Protection with the key
+ring in the database** and Key Vault protection when the vault exists (the standing gap goes in AZURE.md
+§7); `POST /settings/test-email` **tests the SMTP connection and sends nothing**, so ADR-53 stands;
+**SuperAdmins pass in maintenance mode**, everyone else gets 503; and settings reach consumers through
+**`ISettingsProvider` + typed `ISettings<T>`** returning the existing options classes, validated by their
+existing validators at write time. Two additive deviations from §2.7 are named in §3: separate `value` /
+`protected_value` columns so the audit interceptor can redact by name, and a `Retention` category. **Next:
+the owner reads the spec, then the implementation plan** — nothing of M7 is implemented. M7 is settings
+with consumed categories only (General, Email, Security, Maintenance, Retention), maintenance mode, API
+rate limiting, and audit CSV export, per the 2026-09-03 decision — then
 the ~19 non-severe findings from the M1–M5 whole-branch review and the gym-scoped-grants spec review,
 both still unstarted. **Still owed and code, from the final review:** a job whose constructor throws at
 loop start is neither listed on the monitoring page nor recorded (`LogLoopDead`, an Error log, is the
