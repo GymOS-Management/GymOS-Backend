@@ -24,10 +24,20 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest # Docker available — Testcontainers integration tests run here
-    # A healthy run is 8-9 minutes. Without this the job inherits GitHub's 6-hour default,
-    # which is how a run whose SQL Server container died 50 seconds in went on to burn 67
-    # minutes discovering that every remaining integration test also could not connect.
-    timeout-minutes: 25
+    # Without this the job inherits GitHub's 6-hour default, which is how a run whose SQL Server
+    # container died 50 seconds in went on to burn 67 minutes discovering that every remaining
+    # integration test also could not connect.
+    #
+    # **The budget is measured, not guessed, and it moved on 2026-09-18.** A healthy run was 8-9
+    # minutes until the suite's footprint fix (`2722da2`): every integration class now drops the
+    # databases it creates, and on this runner's disk ~300 `CREATE DATABASE` + migrate + `DROP`
+    # cycles cost ~18 minutes against ~1.5 minutes spent inside test bodies. Green runs at
+    # `2722da2` and `a5fdc30` took 24m15s and 24m19s against the previous 25-minute budget; the
+    # next two pushes (`6fc53e2`, docs only, and `79cf5fa`, M6) were cancelled by the budget at
+    # 25 minutes with every test that had run passing. 40 leaves ~12 minutes of headroom for a
+    # slow runner while still killing a genuinely stuck run in well under an hour. The teardown
+    # cost itself is recorded in STATUS as owed work; this line is the budget, not the fix.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 

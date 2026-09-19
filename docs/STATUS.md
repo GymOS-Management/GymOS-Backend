@@ -33,9 +33,21 @@ docs commit (`2cd3c7e`) and a final-review fix commit that follows it.** Ten com
 endpoints and this replica's process metrics — against the spec at
 `docs/superpowers/specs/2026-09-18-m6-monitoring-design.md`. The full suite, one `dotnet test
 GymOS.Backend.slnx` run at `e502a85`: **1,514 passed, 0 failed, 0 skipped** across seven projects.
-Nothing has been pushed yet — **look at the CI run for the push first** before assuming green, the way
-the top of this section already asks for the last push. The "M6 — what landed" subsection below the
-2026-09-18 resumption's other entries has the file map and the deviations found while building it.
+Pushed as `79cf5fa` on 2026-09-19: **`Deploy to UAT` green** — `migrate` applied `AddJobRuns` after one
+paused-database retry, `deploy` and `smoke` passed, so UAT serves M6. **CI was cancelled, not failed, and
+the reason is the job budget, not the code.** `build-and-test` has `timeout-minutes` and the suite hit
+it at 25 minutes with 320 of 339 integration tests passed and nothing failing. Measured from the run
+logs: `0514367` (before the footprint fix) took 11m10s; `2722da2` and `a5fdc30` (footprint fix, same
+budget) took 24m15s and 24m19s and were green by a minute; `6fc53e2` — a docs-only push with the same
+code as `a5fdc30` — was already cancelled at 25 minutes hours before M6 landed. So the footprint fix
+(every class dropping its databases) roughly doubled the job on the runner's disk — ~1.5 minutes inside
+test bodies, ~18 minutes of `CREATE DATABASE` + migrate + `DROP` — and M6's eleven new integration
+classes made a marginal overrun a certain one. The budget is now **40 minutes** with the measurements in
+the workflow comment; the CI run for that push is the one to look at first. **Owed and code:** the
+teardown cost itself — the drop path could run in the background at class end, or classes could share
+one migrated database and lease only when they mutate — a performance increment with its own numbers,
+not a line in a workflow. The "M6 — what landed" subsection below the 2026-09-18 resumption's other
+entries has the file map and the deviations found while building it.
 **Next: M7** — settings with consumed categories only (General, Email, Security, Maintenance, retention
 windows), maintenance mode, API rate limiting, and audit CSV export, per the 2026-09-03 decision — then
 the ~19 non-severe findings from the M1–M5 whole-branch review and the gym-scoped-grants spec review,
