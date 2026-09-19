@@ -101,6 +101,12 @@ public sealed partial class SuperAdminSeeder
             return;
         }
 
+        // Read the policy before opening the transaction: ISettings<T>.Current may load the settings
+        // table through its own DbContext, i.e. a second pooled connection, and a host booted with a
+        // pool of one (TenantIsolationTests does this on purpose) would wait on itself forever if that
+        // read happened while this seeder's transaction held the only connection.
+        int minimumPasswordLength = _loginPolicy.Current.MinimumPasswordLength;
+
         // The same lock, transaction and reason as PlatformIdentitySeeder and FeatureCatalogSeeder:
         // the exists-check and the insert below are one atomic step against the same seeder in another
         // replica, so two hosts booting against one empty database produce one account and one
@@ -120,7 +126,7 @@ public sealed partial class SuperAdminSeeder
 
         // The seeded password meets the same bar as one a user would choose: a weak
         // initial credential is not less dangerous for having come from configuration.
-        Result policyCheck = PasswordPolicy.Validate(options.Password, _loginPolicy.Current.MinimumPasswordLength);
+        Result policyCheck = PasswordPolicy.Validate(options.Password, minimumPasswordLength);
         if (policyCheck.IsFailure)
         {
             LogPasswordRejected(_logger, policyCheck.Error!.Message);
