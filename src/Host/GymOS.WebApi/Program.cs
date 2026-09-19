@@ -339,18 +339,20 @@ try
     // on the client IP regardless.
     app.UseRateLimiter();
 
+    // H1 / grants spec D1: after authentication, so the caller is known; before the maintenance
+    // middleware and before authorization, because both ask IPermissionEvaluator and its answer now
+    // depends on the tenant this sets. An anonymous caller passes straight through and is challenged
+    // by authorization (401); an authenticated caller with no grant for the gym is 404. Wrong order
+    // still fails closed — no tenant, no rows — because TenantSessionInterceptor writes whatever this
+    // leaves on the context.
+    app.UseMiddleware<TenantResolutionMiddleware>();
+
     // M7 spec §6: after authentication, so IPermissionEvaluator can resolve who the caller is;
     // before authorization, so a refused caller is turned away with 503 before any route policy or
     // handler runs.
     app.UseMiddleware<MaintenanceModeMiddleware>();
 
     app.UseAuthorization();
-
-    // After authorization, because it reads the caller's grants; before anything opens a connection,
-    // because TenantSessionInterceptor writes whatever this leaves on the context. Getting the order
-    // wrong fails closed — no tenant, no rows — which is the safe direction and looks like an empty
-    // screen rather than an error.
-    app.UseMiddleware<TenantResolutionMiddleware>();
 
     app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/ready");

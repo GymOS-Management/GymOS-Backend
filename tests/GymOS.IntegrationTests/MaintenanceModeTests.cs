@@ -118,6 +118,20 @@ public sealed class MaintenanceModeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task WhenOnSuperAdminPassesOnAGymRouteToo()
+    {
+        // H1 moved TenantResolutionMiddleware in front of this one. The SuperAdmin's pass is a
+        // permission check that now runs with the tenant already set; it must still say yes.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "maintenance-gym");
+
+        using HttpResponseMessage toggle = await ToggleMaintenanceAsync(enabled: true, "maintenance window", "maintenance");
+        Assert.Equal(HttpStatusCode.OK, toggle.StatusCode);
+
+        using HttpResponseMessage response = await _client.GetAsync(new Uri($"/api/v1/gyms/{gym}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task TurningItOffRestoresService()
     {
         // SupportAgent holds monitoring.read but not settings.manage (MonitoringApiTests.

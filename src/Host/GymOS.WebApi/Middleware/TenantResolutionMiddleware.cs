@@ -11,19 +11,25 @@ namespace GymOS.WebApi.Middleware;
 /// grant for that one gym.
 /// </summary>
 /// <remarks>
-/// <para>Runs after <c>UseAuthorization()</c>, because it reads the authenticated caller's grants, and
-/// before anything opens a connection to a tenant-scoped table, because <c>TenantSessionInterceptor</c>
-/// writes whatever this leaves on <see cref="ITenantContext"/> on every connection open.</para>
-/// <para><b>Inert today.</b> No route with a <c>{gymId}</c> segment reaches a tenant-scoped table yet
-/// (the first is the Members increment), so every path through here either sets no tenant (no route
-/// value) or sets one nothing reads. The whole existing suite continuing to pass is the assertion that
-/// this stays true — see the four tests in <c>TenantResolutionTests</c>.</para>
-/// <para><b>404, never 403, for a gym the caller has no grant for.</b> "You may not see this gym" and
-/// "this gym does not exist" must be indistinguishable, or the status code becomes an oracle for
-/// enumerating tenants. The response carries no body written here — the framework's status-code-pages
-/// handler (already wired in <c>Program.cs</c> via <c>AddProblemDetails</c> +
-/// <c>UseStatusCodePages()</c>) fills in the same RFC 7807 shape a "not found" from a handler would,
-/// so a caller cannot tell the two apart from the response either.</para>
+/// <para>H1 / grants spec D1: runs after authentication and before authorization, because
+/// <c>IPermissionEvaluator</c> now depends on the tenant this sets, and both the maintenance middleware
+/// and authorization ask it. It runs before anything opens a connection to a tenant-scoped table, too,
+/// because <c>TenantSessionInterceptor</c> writes whatever this leaves on <see cref="ITenantContext"/>
+/// on every connection open.</para>
+/// <para><b>Anonymous passes through, unresolved.</b> Running ahead of authorization means this
+/// middleware, not authorization, is the first thing an anonymous caller on a gym route reaches. It sets
+/// no tenant and performs no grant check — there is no caller to check grants for — and lets the request
+/// continue so authorization still challenges it with 401. See grants spec D2 and
+/// <c>TenantResolutionTests.AnAnonymousGymRouteIsChallenged_NotHidden</c>.</para>
+/// <para><b>404, never 403, for an authenticated caller with no grant for the gym.</b> "You may not see
+/// this gym" and "this gym does not exist" must be indistinguishable, or the status code becomes an
+/// oracle for enumerating tenants. The response carries no body written here — the framework's
+/// status-code-pages handler (already wired in <c>Program.cs</c> via <c>AddProblemDetails</c> +
+/// <c>UseStatusCodePages()</c>) fills in the same RFC 7807 shape a "not found" from a handler would, so
+/// a caller cannot tell the two apart from the response either.</para>
+/// <para><b>The grant check is a raw <see cref="UserRole"/> query, and must stay one.</b> It cannot go
+/// through <c>IPermissionEvaluator</c>: that evaluator's answer now depends on the tenant this method is
+/// the one setting, so asking it here would be circular.</para>
 /// </remarks>
 public sealed class TenantResolutionMiddleware
 {
@@ -64,6 +70,15 @@ public sealed class TenantResolutionMiddleware
             return;
         }
 
+        if (!currentUser.IsAuthenticated)
+        {
+            // Grants spec D2: an anonymous caller on a gym route is challenged by authorization (401),
+            // not told the gym does not exist. Nothing is resolved here — no grant check, no tenant —
+            // because there is no caller to resolve it for.
+            await _next(context);
+            return;
+        }
+
         if (!await CallerHoldsAGrantForAsync(currentUser, dbContext, gymId, context.RequestAborted))
         {
             // 404, not 403 — see the remarks above.
@@ -81,11 +96,9 @@ public sealed class TenantResolutionMiddleware
     /// grant naming this gym specifically.
     /// </summary>
     /// <remarks>
-    /// An unauthenticated caller holds no grants. Every gym-routed endpoint today requires
-    /// authentication at the policy level, so <c>UseAuthorization()</c> — which runs before this
-    /// middleware — has already turned an anonymous request away with 401; this arm exists so that an
-    /// anonymous gym-routed endpoint, were one ever added, fails closed here too instead of reading
-    /// grants for a caller who has none.
+    /// Reached only for an authenticated caller — <see cref="InvokeAsync"/> returns before this call for
+    /// anyone else. The <c>UserId is not {}</c> guard stays anyway: it is the difference between "no
+    /// grant" and "no caller", and costs nothing to keep true if that invariant ever changes.
     /// </remarks>
     private static async Task<bool> CallerHoldsAGrantForAsync(
         ICurrentUser currentUser, AppDbContext dbContext, Guid gymId, CancellationToken cancellationToken)

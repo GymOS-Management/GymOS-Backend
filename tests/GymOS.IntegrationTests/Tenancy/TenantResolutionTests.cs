@@ -93,6 +93,9 @@ public sealed class TenantResolutionTests : IAsyncLifetime
         // green. The property the Members increment leans on hardest — the gym in the URL is the gym
         // whose rows you get — starts here, with the resolved tenant having actually reached
         // ITenantContext during the request.
+        // Since H1 this test also carries the gym-scoped-grants spec's §6 claim: the middleware now
+        // runs before authorization, so a tenant observed here proves route values are populated that
+        // early in the pipeline.
         Assert.Equal(gym.ToString(), ResolvedTenant(response));
     }
 
@@ -111,6 +114,29 @@ public sealed class TenantResolutionTests : IAsyncLifetime
 
         // And it stopped before setting anything: a refused caller must not leave a tenant behind for
         // whatever runs next in the same scope.
+        Assert.Equal(ResolvedTenantProbeStartupFilter.NoTenant, ResolvedTenant(response));
+    }
+
+    [Fact]
+    public async Task AnAnonymousGymRouteIsChallenged_NotHidden()
+    {
+        // Grants spec D2. 404 is the right answer for "you hold nothing on this gym"; it is the wrong
+        // answer for "you have not said who you are" — that is authentication's 401, and it must carry
+        // the bearer challenge every other anonymous request gets. Today this holds only because
+        // authorization runs first and the middleware never sees an anonymous request; once the
+        // middleware moves in front of authorization (H1), it has to let anonymous callers through
+        // itself, or every anonymous gym route becomes a 404.
+        Guid gym = await PlatformApiHelpers.CreateGymAsync(_client, "anonymous-route-gym");
+        using HttpClient anonymous = _host.CreateClient();
+
+        using HttpResponseMessage response = await anonymous.GetAsync(
+            new Uri($"/api/v1/gyms/{gym}", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains(response.Headers.WwwAuthenticate, challenge =>
+            string.Equals(challenge.Scheme, "Bearer", StringComparison.Ordinal));
+
+        // And nothing was resolved for nobody.
         Assert.Equal(ResolvedTenantProbeStartupFilter.NoTenant, ResolvedTenant(response));
     }
 
