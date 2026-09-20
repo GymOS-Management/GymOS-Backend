@@ -274,11 +274,18 @@ runs, and no route's own authorization has executed yet, so a refused caller nev
 Per request it reads `ISettings<MaintenanceOptions>.Current` and:
 
 - passes when `Enabled` is false;
-- always passes `/health*`, `/version`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`;
+- always passes `/health*`, `/version`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`,
+  `POST /api/v1/auth/logout`;
 - passes any caller who currently holds **`settings.manage`** (checked live through
   `IPermissionEvaluator`, scoped and DB-backed with a per-request cache);
 - otherwise short-circuits with **503**, problem details `type: "settings.maintenance"`, `title:
   "Maintenance in progress"`, `detail: <maintenance.message>`, and `Retry-After: 300`.
+
+Logout is exempt for the same reason login and refresh are, just in the other direction: a caller
+without `settings.manage` who is refused everything else must still be able to end their own
+session, or they are trapped — the console's logout call would itself be refused, the httpOnly
+refresh cookie would outlive the visit, and every reload would bootstrap the same refused session
+again with no way to sign in as someone who passes.
 
 **"SuperAdmin passes" is implemented as "holds `settings.manage`," not as a role check**, because
 `ICurrentUser`/the JWT carries no role claim at all — permissions are the only thing a token asserts.

@@ -157,6 +157,27 @@ public sealed class MaintenanceModeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task WhenOnARefusedCallerCanStillSignOut()
+    {
+        // SupportAgent holds monitoring.read but not settings.manage, so this session is
+        // genuinely refused while maintenance is on (TurningItOffRestoresService) — exactly
+        // the caller who would otherwise be trapped: the console's logout call refused, the
+        // refresh cookie surviving, every reload bootstrapping the same refused session again.
+        using HttpClient supportAgent = await PlatformApiHelpers.SignedInAsync(
+            _host, _client, "SupportAgent", "support.agent.maintenance.logout@gymos.test");
+
+        using HttpResponseMessage on = await ToggleMaintenanceAsync(enabled: true, "brb", "maintenance");
+        Assert.Equal(HttpStatusCode.OK, on.StatusCode);
+
+        using HttpResponseMessage signOut = await supportAgent.PostAsync(AuthApi.Logout, content: null);
+        Assert.Equal(HttpStatusCode.NoContent, signOut.StatusCode);
+
+        using HttpResponseMessage stillClosed = await supportAgent.GetAsync(
+            new Uri("/api/v1/monitoring/overview", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, stillClosed.StatusCode);
+    }
+
+    [Fact]
     public async Task TheToggleIsAudited()
     {
         using HttpResponseMessage toggle = await ToggleMaintenanceAsync(enabled: true, "audited change", "maintenance");

@@ -47,7 +47,10 @@ and notice can lag up to 30 s behind an administrator's own change on a multi-re
 process tile's `instance` may alternate between polls when several replicas answer (the label discloses
 it); and `GymOS/Platform-Recovery-Developer.txt` still holds a live SuperAdmin password that should be
 rotated. Owed work is unchanged by F5: the F3 review and `F3-AS-BUILT.md`, the activation-console
-review, and `GET /navigation`.
+review, and `GET /navigation`. Found while hand-testing F5: a signed-in caller refused everything else by
+maintenance mode could not sign out either, trapping them on the maintenance notice with no way to
+sign in as someone who passes — `MaintenanceModeMiddleware` now exempts `POST /auth/logout` too, in
+this commit.
 
 **CI went green at `0514367` — 322 of 322, both jobs, 11m14s — for the first time since 3 September,
 and the day did not stop there.** Three failures were stacked on `development` (the fixture racing SQL

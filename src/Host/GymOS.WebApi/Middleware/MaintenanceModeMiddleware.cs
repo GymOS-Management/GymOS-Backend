@@ -19,6 +19,10 @@ namespace GymOS.WebApi.Middleware;
 /// (<c>CallerSnapshot</c>), so the permission check costs one query per request — and only while
 /// maintenance is on and only for a caller authentication has identified; an anonymous caller's
 /// snapshot lookup short-circuits to an empty set with no query at all.</para>
+///
+/// <para>Signing out must always be possible: a refused caller's only way out of maintenance is
+/// to end their session and sign in as someone who passes, so <c>POST /api/v1/auth/logout</c> is
+/// exempt alongside login and refresh.</para>
 /// </summary>
 public sealed class MaintenanceModeMiddleware
 {
@@ -59,5 +63,6 @@ public sealed class MaintenanceModeMiddleware
         AlwaysOpen.Any(prefix => request.Path.StartsWithSegments(prefix))
         || (HttpMethods.IsPost(request.Method)
             && (request.Path.Equals("/api/v1/auth/login", StringComparison.OrdinalIgnoreCase)
-                || request.Path.Equals("/api/v1/auth/refresh", StringComparison.OrdinalIgnoreCase)));
+                || request.Path.Equals("/api/v1/auth/refresh", StringComparison.OrdinalIgnoreCase)
+                || request.Path.Equals("/api/v1/auth/logout", StringComparison.OrdinalIgnoreCase)));
 }
