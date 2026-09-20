@@ -42,9 +42,12 @@ limiters (anonymous and authenticated) needed raising on the test instance only,
 defaults named in the same paragraphs. Out-of-scope observations for the owner: client-cancelled
 requests still log as HTTP 500 via `TenantSessionInterceptor.WriteTenantAsync` (false errors in App
 Insights); F4's `PlanFeaturesList` still renders `aria-pressed` from optimistic local state rather than
-confirmed server state; and `GymOS/Platform-Recovery-Developer.txt` still holds a live SuperAdmin
-password that should be rotated. Owed work is unchanged by F5: the F3 review and `F3-AS-BUILT.md`, the
-activation-console review, and `GET /navigation`.
+confirmed server state; Settings.md §13's 30 s cross-replica settings TTL means the maintenance banner
+and notice can lag up to 30 s behind an administrator's own change on a multi-replica UAT, and the
+process tile's `instance` may alternate between polls when several replicas answer (the label discloses
+it); and `GymOS/Platform-Recovery-Developer.txt` still holds a live SuperAdmin password that should be
+rotated. Owed work is unchanged by F5: the F3 review and `F3-AS-BUILT.md`, the activation-console
+review, and `GET /navigation`.
 
 **CI went green at `0514367` — 322 of 322, both jobs, 11m14s — for the first time since 3 September,
 and the day did not stop there.** Three failures were stacked on `development` (the fixture racing SQL
